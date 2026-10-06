@@ -1,21 +1,55 @@
 ##! experimental.givens
 import "../flights.malloy"
+import "../summaries.malloy"
 
-#" Who runs late, when, and why — every US domestic flight, May–July 2026.
-# artifact { title="Flight Delays" } dashboard { columns=6 }
-query: delays is flights -> {
+#" Who runs late, when, and why: every US domestic flight, May-July 2026 (BTS on-time data). Reads the small
+#" summary files (summaries.malloy); the numbers match the `flights` source, which stays for exploration.
+# artifact { title="One flight in four arrives late, and the odds climb all day" } dashboard { columns=6 }
+query: delays is delays_summary -> {
   where:
     airline ~ $AIRLINE,
     origin ~ $ORIGIN,
-    flight_date ~ $PERIOD
+    month_label ~ $FLIGHT_MONTH
   # colspan=1
-  aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
+  aggregate:
+    # label="Flights"
+    flight_count
+    # label="Arrived 15+ min late"
+    late_rate
+    # label="Cancelled"
+    cancel_rate
+    # label="Average arrival delay (min)" number="0.0"
+    avg_arrival_delay
   # colspan=3
   nest:
     by_airline
     by_departure_hour
-    by_day
     delay_causes
-    worst_routes
     busiest_airports
+    # label="Delay hours by cause and airport size"
+    delay_causes_by_size
+}
+
+#" Chart: late rate and flights per day.
+query: delays_by_day is daily_summary -> {
+  where:
+    airline ~ $AIRLINE,
+    origin ~ $ORIGIN,
+    month_label ~ $FLIGHT_MONTH
+  group_by: flight_date
+  aggregate: flight_count, late_rate, cancellations
+  order_by: flight_date
+}
+
+#" Table: busy routes (300+ flights in the selection) with the worst late-arrival rate.
+query: delays_worst_routes is routes_summary -> {
+  where:
+    airline ~ $AIRLINE,
+    origin ~ $ORIGIN,
+    month_label ~ $FLIGHT_MONTH
+  group_by: route
+  aggregate: flight_count, late_rate, avg_arrival_delay
+  having: flight_count >= 300
+  order_by: late_rate desc
+  limit: 10
 }

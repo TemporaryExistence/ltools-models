@@ -1,0 +1,4 @@
+airport_coords.csv: latitude/longitude for the 354 origin airports in the May-July 2026 BTS flights files.
+Source: OurAirports (https://ourairports.com/data/, airports.csv as downloaded 2026-10-06), released to the public
+domain. Matched on iata_code; PBI (listed under a new IATA code) matched on ident KPBI. Used only by
+build_summaries.sh to add positions to flights_airports.parquet.

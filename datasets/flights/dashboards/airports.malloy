@@ -1,12 +1,14 @@
 ##! experimental.givens
 import "../flights.malloy"
+import "../summaries.malloy"
 
 #" How reliable is flying out of an airport, how it compares with airports of other sizes, and how far a late
-#" aircraft carries its delay through the day. Opens on RDU; pick any origin airport or size band.
-# artifact { title="Airports and Delay Chains" givens { ORIGIN="RDU" } } dashboard { columns=6 }
-query: airports is aircraft_legs -> {
+#" aircraft carries its delay through the day. Opens on RDU; pick any origin airport, size band or month. Reads the
+#" small summary files (summaries.malloy); the numbers match the `aircraft_legs` source.
+# artifact { title="Once an aircraft runs late, every later flight that day pays for it" givens { ORIGIN="RDU" } } dashboard { columns=6 }
+query: airports is legs_summary -> {
   where:
-    flight_date ~ $PERIOD,
+    month_label ~ $FLIGHT_MONTH,
     size_band ~ $SIZE_BAND
   # colspan=1
   aggregate:
@@ -17,16 +19,78 @@ query: airports is aircraft_legs -> {
     airport_cancel_rate is cancel_rate { where: origin ~ $ORIGIN }
     # percent
     airport_chain_share is chain_share { where: origin ~ $ORIGIN }
+    # percent
+    national_late_rate is late_rate
   # colspan=3
   nest:
     airport_by_hour is by_hour + { where: origin ~ $ORIGIN }
     airport_by_airline is by_airline + { where: origin ~ $ORIGIN }
-    airport_first_flight_effect is first_flight_effect + { where: origin ~ $ORIGIN }
-    airport_inbound_effect is inbound_effect + { where: origin ~ $ORIGIN }
-    airport_chain_starts is chain_starts + { where: origin ~ $ORIGIN }
-    airport_inbound_from is inbound_from + { where: origin ~ $ORIGIN }
-    airport_worst_routes is worst_routes + { where: origin ~ $ORIGIN }
     chain_by_size
     hour_by_size
+}
+
+#" Charts: late rate by leg of the aircraft's day, and how the day started, for the selected airport and nationally.
+query: airports_legs is legs_detail -> {
+  where:
+    month_label ~ $FLIGHT_MONTH,
+    size_band ~ $SIZE_BAND
+  nest:
+    airport_late_by_leg is late_by_leg + { where: origin ~ $ORIGIN }
     late_by_leg
+    airport_first_flight_effect is first_flight_effect + { where: origin ~ $ORIGIN }
+    airport_inbound_effect is inbound_effect + { where: origin ~ $ORIGIN }
+}
+
+#" Chart: one point per airport: size (departures a day), late rate, and the delay-chain cost it starts.
+query: airports_scatter is legs_summary -> {
+  where:
+    month_label ~ $FLIGHT_MONTH,
+    size_band ~ $SIZE_BAND
+  group_by:
+    origin
+    size_band
+    origin_city is airport.origin_city
+    departures_per_day is airport.departures_per_day
+    chain_cost_usd is airport.chain_cost_usd
+  aggregate: late_rate, legs
+  having: legs >= 300
+  order_by: departures_per_day desc
+}
+
+#" Table: where the selected airport's aircraft fly in from.
+query: airports_inbound is inbound_summary -> {
+  where:
+    origin ~ $ORIGIN,
+    month_label ~ $FLIGHT_MONTH,
+    size_band ~ $SIZE_BAND
+  group_by: prev_origin
+  aggregate: legs, inbound_late_rate, late_rate
+  having: legs >= 100
+  order_by: legs desc
+  limit: 15
+}
+
+#" Bars: airports whose late first flight of the day ends in a late departure from the selected airport.
+query: airports_chain_starts is chain_starts_summary -> {
+  where:
+    origin ~ $ORIGIN,
+    month_label ~ $FLIGHT_MONTH,
+    size_band ~ $SIZE_BAND
+  group_by: first_origin
+  aggregate: late_legs
+  order_by: late_legs desc
+  limit: 10
+}
+
+#" Table: the selected airport's busy routes (300+ flights) with the worst late-arrival rate.
+query: airports_routes is routes_summary -> {
+  where:
+    origin ~ $ORIGIN,
+    month_label ~ $FLIGHT_MONTH,
+    size_band ~ $SIZE_BAND
+  group_by: route
+  aggregate: flight_count, late_rate is leg_late_rate, avg_arrival_delay
+  having: flight_count >= 300
+  order_by: late_rate desc
+  limit: 10
 }

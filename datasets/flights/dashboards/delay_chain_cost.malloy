@@ -1,5 +1,6 @@
 ##! experimental.givens
 import "../flights.malloy"
+import "../summaries.malloy"
 
 #" May-July 2026. For each aircraft-day whose first flight arrived 15+ minutes late, the "late aircraft" delay
 #" minutes BTS recorded on the same aircraft's later flights that day are attributed to the first flight's airline,
@@ -7,7 +8,7 @@ import "../flights.malloy"
 #" passenger airline block-minute cost). This is attribution, not proof that every minute was avoidable; storms
 #" delay first and later flights together. Slot ranks and the top-50 share are national, so they hold when filtered.
 # artifact { title="A few early-morning departures start the most expensive delay chains" } dashboard { columns=6 }
-query: delay_chain_cost is chain_slots -> {
+query: delay_chain_cost is chain_slots_summary -> {
   where:
     airline ~ $AIRLINE,
     origin ~ $ORIGIN
@@ -60,4 +61,29 @@ query: delay_chain_cost is chain_slots -> {
       order_by: downstream_cost_usd desc
       limit: 12
     }
+}
+
+#" Map: delay-chain cost by the airport where the chain started, with the airport's position (OurAirports).
+query: chain_cost_map is chain_slots_summary -> {
+  where:
+    airline ~ $AIRLINE,
+    origin ~ $ORIGIN
+  group_by:
+    origin
+    origin_city is airport.origin_city
+    size_band
+    latitude is airport.latitude
+    longitude is airport.longitude
+  aggregate: downstream_cost_usd, late_first_legs
+  order_by: downstream_cost_usd desc
+}
+
+#" Chart: delay-chain cost by the scheduled departure hour of the late first flight.
+query: chain_cost_by_hour is chain_slots_summary -> {
+  where:
+    airline ~ $AIRLINE,
+    origin ~ $ORIGIN
+  group_by: dep_hour, hour_label
+  aggregate: downstream_cost_usd, late_first_legs
+  order_by: dep_hour
 }

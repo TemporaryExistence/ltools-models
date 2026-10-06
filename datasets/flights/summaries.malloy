@@ -1,0 +1,328 @@
+// Light sources for the flights dashboards. Each reads a small summary file (a few KB to 540 KB) built from the
+// monthly flights files by build_summaries.sh (Malloy compiles the queries in build_summaries.malloy, DuckDB writes
+// the rows once). The files hold plain counts and sums, so every rate and average here is a ratio of sums and comes
+// out the same as the heavy sources in flights.malloy (flights, aircraft_legs, chain_slots), which stay for
+// exploration. Rebuild and redeploy the files when the flights data or the method changes.
+// Time filter: the summaries are monthly (daily for flights_daily), so dashboards filter on FLIGHT_MONTH, not PERIOD.
+
+#" The airline list (13 airlines), for the Airline filter.
+source: airline_list is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_airlines.parquet')
+""") extend {
+  primary_key: airline
+}
+
+#" One row per origin airport (354): city, state, size band, departures and delay-chain minutes over May-July 2026,
+#" and latitude/longitude from OurAirports (public domain, ourairports.com).
+source: airport_list is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_airports.parquet')
+""") extend {
+  primary_key: origin
+  dimension:
+    #" "RDU · Raleigh/Durham, NC"
+    airport_label is concat(origin, ' · ', origin_city)
+    #" Delay-chain cost started at this airport over May-July 2026, at $100.76 a minute.
+    chain_cost_usd is chain_minutes * 100.76
+  measure:
+    airport_count is count()
+}
+
+#" Flights per scheduled departure hour, airline, origin airport and month (33,542 rows), with the counts and delay
+#" sums behind the `flights` measures. Same measure names and meanings as `flights`.
+source: delays_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_cube.parquet')
+""") extend {
+  join_one: airport is airport_list on origin = airport.origin
+
+  measure:
+    flight_count is n_flights.sum()
+    cancellations is n_cancelled.sum()
+    # percent
+    cancel_rate is cancellations / flight_count
+    #" Share of operated flights arriving 15+ minutes late.
+    # percent
+    late_rate is n_late.sum() / n_operated.sum()
+    #" Average arrival delay in minutes (operated flights; early arrivals count as negative).
+    avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
+    airline_delay_hours is carrier_delay_min_sum.sum() / 60
+    weather_delay_hours is weather_delay_min_sum.sum() / 60
+    air_traffic_delay_hours is nas_delay_min_sum.sum() / 60
+    security_delay_hours is security_delay_min_sum.sum() / 60
+    late_aircraft_delay_hours is late_aircraft_delay_min_sum.sum() / 60
+    # percent
+    late_aircraft_share is late_aircraft_delay_min_sum.sum()
+      / (carrier_delay_min_sum.sum() + weather_delay_min_sum.sum() + nas_delay_min_sum.sum()
+         + security_delay_min_sum.sum() + late_aircraft_delay_min_sum.sum())
+    airport_count is count(origin)
+
+  view: by_airline is {
+    group_by: airline
+    aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
+    order_by: flight_count desc
+    limit: 15
+  }
+
+  view: by_departure_hour is {
+    group_by: dep_hour
+    aggregate: late_rate, flight_count
+    order_by: dep_hour
+  }
+
+  view: delay_causes is {
+    aggregate: airline_delay_hours, late_aircraft_delay_hours, air_traffic_delay_hours, weather_delay_hours
+  }
+
+  view: busiest_airports is {
+    group_by: origin
+    aggregate: flight_count, late_rate
+    order_by: flight_count desc
+    limit: 20
+  }
+
+  view: by_size_band is {
+    group_by: size_band
+    aggregate: airport_count, flight_count, late_rate, cancel_rate, avg_arrival_delay, late_aircraft_share
+    order_by: size_band
+  }
+
+  view: delay_causes_by_size is {
+    group_by: size_band
+    aggregate: airline_delay_hours, late_aircraft_delay_hours, air_traffic_delay_hours, weather_delay_hours
+    order_by: size_band
+  }
+}
+
+#" Flights per day, airline and origin airport (122,552 rows), for day-by-day charts. Same measures as `flights`.
+source: daily_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_daily.parquet')
+""") extend {
+  measure:
+    flight_count is n_flights.sum()
+    cancellations is n_cancelled.sum()
+    # percent
+    late_rate is n_late.sum() / n_operated.sum()
+
+  view: by_day is {
+    group_by: flight_date
+    aggregate: flight_count, late_rate, cancellations
+    order_by: flight_date
+  }
+}
+
+#" The calendar months in the data, for the Month filter.
+source: month_list is daily_summary -> {
+  group_by: month_label
+  aggregate: first_day is flight_date.min()
+  order_by: first_day
+}
+
+#" The same hour/airline/airport/month rows, with the `aircraft_legs` measures (late rate over flights that operated
+#" and have a tail number; first-flight share; delay-chain share). Same measure names and meanings as `aircraft_legs`.
+source: legs_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_cube.parquet')
+""") extend {
+  join_one: airport is airport_list on origin = airport.origin
+
+  measure:
+    flight_count is n_flights.sum()
+    # percent
+    cancel_rate is n_cancelled.sum() / n_flights.sum()
+    legs is n_legs.sum()
+    late_legs is n_late_legs.sum()
+    #" Share of operated flights arriving 15+ minutes late.
+    # percent
+    late_rate is late_legs / legs
+    avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
+    #" Share of an airport's departures that are the aircraft's first flight of the day.
+    # percent
+    first_flight_share is n_first_legs.sum() / legs
+    #" Of the flights that arrived late, the share whose aircraft's previous flight that day was also late.
+    # percent
+    chain_share is n_chain_late_legs.sum() / late_legs
+    # percent
+    late_aircraft_share is late_aircraft_delay_min_sum.sum()
+      / (carrier_delay_min_sum.sum() + weather_delay_min_sum.sum() + nas_delay_min_sum.sum()
+         + security_delay_min_sum.sum() + late_aircraft_delay_min_sum.sum())
+
+  view: chain_by_size is {
+    group_by: size_band
+    aggregate: legs, late_rate, cancel_rate, first_flight_share, chain_share, late_aircraft_share
+    order_by: size_band
+  }
+
+  view: hour_by_size is {
+    where: dep_hour >= 5
+    group_by: dep_hour, size_band
+    aggregate: late_rate
+    having: legs > 0
+    order_by: dep_hour
+  }
+
+  view: by_hour is {
+    group_by: dep_hour
+    aggregate: late_rate, legs
+    having: legs > 0
+    order_by: dep_hour
+  }
+
+  view: by_airline is {
+    group_by: airline
+    aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
+    order_by: flight_count desc
+    limit: 10
+  }
+}
+
+#" Flights in a delay chain by leg of the aircraft's day (1-6, 7 = seventh or later) and, for later flights, whether
+#" the aircraft's first and previous flights that day were late (52,887 rows). Same measures as `aircraft_legs`.
+source: legs_detail is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_legs.parquet')
+""") extend {
+  dimension:
+    leg is chain_leg
+    day_start is
+      pick 'First flight of the day late' when chain_first_leg_late
+      else 'First flight of the day on time'
+    inbound is
+      pick 'Inbound aircraft late' when chain_prev_leg_late
+      else 'Inbound aircraft on time'
+  measure:
+    legs is n_legs.sum()
+    late_legs is n_late_legs.sum()
+    # percent
+    late_rate is late_legs / legs
+
+  view: first_flight_effect is {
+    where: leg > 1
+    group_by: day_start
+    aggregate: legs, late_rate
+    order_by: day_start desc
+  }
+
+  view: inbound_effect is {
+    where: leg > 1
+    group_by: inbound
+    aggregate: legs, late_rate
+    order_by: inbound desc
+  }
+
+  view: late_by_leg is {
+    group_by: leg
+    aggregate: late_rate, legs
+    order_by: leg
+  }
+}
+
+#" Flights per route, airline and month (28,966 rows): `late_rate` as in `flights` (late / operated), `leg_late_rate`
+#" as in `aircraft_legs` (late / operated with a tail number).
+source: routes_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_routes.parquet')
+""") extend {
+  measure:
+    flight_count is n_flights.sum()
+    # percent
+    late_rate is n_late.sum() / n_operated.sum()
+    # percent
+    leg_late_rate is n_late_legs.sum() / n_legs.sum()
+    avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
+
+  view: worst_routes is {
+    group_by: route
+    aggregate: flight_count, late_rate, avg_arrival_delay
+    having: flight_count >= 300
+    order_by: late_rate desc
+    limit: 15
+  }
+
+  view: worst_routes_legs is {
+    group_by: route
+    aggregate: flight_count, late_rate is leg_late_rate, avg_arrival_delay
+    having: flight_count >= 300
+    order_by: late_rate desc
+    limit: 10
+  }
+}
+
+#" Later flights of the day by the airport the aircraft flew in from (32,548 rows).
+source: inbound_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_inbound.parquet')
+""") extend {
+  measure:
+    legs is n_legs.sum()
+    # percent
+    inbound_late_rate is n_inbound_late_legs.sum() / legs
+    # percent
+    late_rate is n_late_legs.sum() / legs
+
+  view: inbound_from is {
+    group_by: prev_origin
+    aggregate: legs, inbound_late_rate, late_rate
+    having: legs >= 100
+    order_by: legs desc
+    limit: 15
+  }
+}
+
+#" Late later flights whose aircraft's late first flight of the day left from another airport, by that airport
+#" (39,986 rows).
+source: chain_starts_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_chain_starts.parquet')
+""") extend {
+  measure:
+    late_legs is n_late_legs.sum()
+
+  view: chain_starts is {
+    group_by: first_origin
+    aggregate: late_legs
+    order_by: late_legs desc
+    limit: 10
+  }
+}
+
+#" The same slot rows as `chain_slots`, read from a small materialised file (4,497 rows, about 35 KB) instead of being
+#" recomputed from 1.85M flights. Built from the `chain_slots` source by build_summaries.sh (Malloy compiles the
+#" query, DuckDB writes the rows), so the numbers are identical; rebuild it when the flights data or the chain method
+#" changes. Dashboards read this; use `chain_slots` / `delay_chains` / `aircraft_legs` to explore the method.
+source: chain_slots_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/chain_slots.parquet')
+""") extend {
+  join_one: airport is airport_list on origin = airport.origin
+
+  dimension:
+    #" Departure time of the slot as a label, e.g. "7am".
+    hour_label is
+      pick '12am' when dep_hour = 0
+      pick concat(dep_hour::"INTEGER"::string, 'am') when dep_hour < 12
+      pick '12pm' when dep_hour = 12
+      else concat((dep_hour - 12)::"INTEGER"::string, 'pm')
+    #" The slot is among the 50 most costly nationally.
+    in_top_50 is slot_rank <= 50
+
+  measure:
+    slot_count is count()
+    late_first_legs is slot_late_first_legs.sum()
+    downstream_legs is slot_downstream_legs.sum()
+    downstream_late_aircraft_minutes is slot_minutes.sum()
+    #" Downstream minutes at $100.76 per minute: Airlines for America, average 2024 US passenger airline block-minute cost.
+    downstream_cost_usd is downstream_late_aircraft_minutes * 100.76
+    #" Share of the downstream cost carried by the 50 most costly slots nationally.
+    # percent
+    top_50_share is downstream_late_aircraft_minutes { where: in_top_50 } / downstream_late_aircraft_minutes
+
+  #" The most costly slots: where a spare aircraft, more turn time or priority handling would pay back first.
+  view: top_slots is {
+    group_by: slot_rank, airline, origin, hour_label
+    aggregate: late_first_legs, downstream_late_aircraft_minutes, downstream_cost_usd
+    order_by: slot_rank
+    limit: 25
+  }
+
+  #" Delay-chain cost by the airport where the chain started.
+  # bar_chart { x=origin y=downstream_cost_usd }
+  view: cost_by_airport is {
+    group_by: origin
+    aggregate: downstream_cost_usd, late_first_legs
+    order_by: downstream_cost_usd desc
+    limit: 15
+  }
+}

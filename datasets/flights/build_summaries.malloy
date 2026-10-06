@@ -1,0 +1,117 @@
+##! experimental { givens }
+// Queries that build the small summary files the flights dashboards read (see build_summaries.sh). Each query is
+// compiled to SQL by Malloy and run once by DuckDB; the rows land in public-data/datasets/flights/ and are served
+// next to the monthly flights files. Every column is a plain count or a sum, so the dashboards' rates and averages
+// (ratios of sums) come out the same as when they read the 1.85M flights directly. Not part of index.malloy.
+
+import "flights.malloy"
+
+#" aircraft_legs plus the calendar month, for the month-level summaries.
+source: legs_by_month is aircraft_legs extend {
+  dimension:
+    #" First day of the flight's month.
+    month_start is flight_date.month
+    #" Calendar month, e.g. "June 2026".
+    month_label is concat(
+      month(flight_date) ?
+        pick 'January' when 1 pick 'February' when 2 pick 'March' when 3 pick 'April' when 4
+        pick 'May' when 5 pick 'June' when 6 pick 'July' when 7 pick 'August' when 8
+        pick 'September' when 9 pick 'October' when 10 pick 'November' when 11 else 'December',
+      ' ', year(flight_date)::"INTEGER"::string)
+    #" Leg of the aircraft's day (1-6, 7 = seventh or later) for flights in a chain; null otherwise.
+    chain_leg is pick leg when in_chain else null
+    #" For later flights in a chain: whether the aircraft's first flight of the day arrived late.
+    chain_first_leg_late is pick first_leg_late when in_chain and leg_number > 1 else null
+    #" For later flights in a chain: whether the aircraft's previous flight that day arrived late.
+    chain_prev_leg_late is pick prev_leg_late when in_chain and leg_number > 1 else null
+
+  measure:
+    n_flights is count()
+    n_cancelled is count() { where: cancelled }
+    n_operated is count() { where: not cancelled and not diverted }
+    n_late is count() { where: arrived_late }
+    arr_delay_min_sum is arr_delay_min.sum()
+    n_arr_delay is count() { where: arr_delay_min is not null }
+    carrier_delay_min_sum is carrier_delay_min.sum()
+    weather_delay_min_sum is weather_delay_min.sum()
+    nas_delay_min_sum is nas_delay_min.sum()
+    security_delay_min_sum is security_delay_min.sum()
+    late_aircraft_delay_min_sum is late_aircraft_delay_min.sum()
+    n_first_legs is count() { where: in_chain and leg_number = 1 }
+    n_chain_late_legs is count() { where: in_chain and arrived_late and prev_leg_late }
+    n_inbound_late_legs is count() { where: in_chain and prev_leg_late }
+    n_legs is legs
+    n_late_legs is late_legs
+}
+
+#" flights_cube.parquet: month x airline x origin x scheduled departure hour (every flight).
+query: build_flights_cube is legs_by_month -> {
+  group_by: month_start, month_label, carrier, airline, origin, size_band, dep_hour
+  aggregate:
+    n_flights, n_cancelled, n_operated, n_late, arr_delay_min_sum, n_arr_delay,
+    carrier_delay_min_sum, weather_delay_min_sum, nas_delay_min_sum, security_delay_min_sum,
+    late_aircraft_delay_min_sum, n_legs, n_late_legs, n_first_legs, n_chain_late_legs
+  order_by: month_start, carrier, origin, dep_hour
+}
+
+#" flights_legs.parquet: flights in a chain, by leg of the aircraft's day and (later flights) how the day started.
+query: build_flights_legs is legs_by_month -> {
+  where: in_chain
+  group_by: month_start, month_label, carrier, airline, origin, size_band, chain_leg, chain_first_leg_late, chain_prev_leg_late
+  aggregate: n_legs, n_late_legs
+  order_by: month_start, carrier, origin, chain_leg
+}
+
+#" flights_daily.parquet: date x airline x origin, for the day-by-day chart.
+query: build_flights_daily is legs_by_month -> {
+  group_by: flight_date, month_label, carrier, airline, origin, size_band
+  aggregate: n_flights, n_cancelled, n_operated, n_late
+  order_by: flight_date, carrier, origin
+}
+
+#" flights_routes.parquet: month x airline x route.
+query: build_flights_routes is legs_by_month -> {
+  group_by: month_start, month_label, carrier, airline, origin, size_band, dest, route
+  aggregate:
+    n_flights, n_operated, n_late, arr_delay_min_sum, n_arr_delay, n_legs, n_late_legs
+  order_by: month_start, carrier, origin, dest
+}
+
+#" flights_inbound.parquet: later flights of the day, by the airport the aircraft flew in from.
+query: build_flights_inbound is legs_by_month -> {
+  where: in_chain and leg_number > 1
+  group_by: month_start, month_label, carrier, airline, origin, size_band, prev_origin
+  aggregate: n_legs, n_inbound_late_legs, n_late_legs
+  order_by: month_start, carrier, origin, prev_origin
+}
+
+#" flights_chain_starts.parquet: late later flights whose aircraft's late first flight left from another airport.
+query: build_flights_chain_starts is legs_by_month -> {
+  where: in_chain and leg_number > 1 and first_leg_late and origin != first_origin
+  group_by: month_start, month_label, carrier, airline, origin, size_band, first_origin
+  aggregate: n_late_legs
+  order_by: month_start, carrier, origin, first_origin
+}
+
+#" flights_airlines.parquet: the airline list (for the Airline filter).
+query: build_flights_airlines is flights -> {
+  group_by: carrier, airline
+  aggregate: n_flights is flight_count
+  order_by: n_flights desc
+}
+
+#" Per origin airport over the whole period: city, state, departures, size band (airport list half 1).
+query: build_airport_profile is flights -> {
+  group_by: origin, size_band
+  aggregate:
+    origin_city is origin_city.max()
+    origin_state is origin_state.max()
+    departures is flight_count
+  order_by: departures desc
+}
+
+#" Per origin airport: delay-chain minutes started there (airport list half 2).
+query: build_airport_chains is chain_slots -> {
+  group_by: origin
+  aggregate: chain_minutes is downstream_late_aircraft_minutes
+}

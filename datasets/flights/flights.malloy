@@ -7,14 +7,16 @@
 // can be followed through its day (see aircraft_legs below).
 
 given:
-  # label="Airline" control=select suggest { source=flights dimension=airline }
+  # label="Airline" control=select suggest { source=airline_list dimension=airline }
   AIRLINE :: filter<string> is f''
-  # label="Origin airport" suggest { source=flights dimension=origin }
+  # label="Origin airport" suggest { source=airport_list dimension=origin }
   ORIGIN :: filter<string> is f''
   # label="Flight date"
   PERIOD :: filter<date> is f''
-  # label="Airport size" control=select suggest { source=flights dimension=size_band }
+  # label="Airport size" control=select suggest { source=airport_list dimension=size_band }
   SIZE_BAND :: filter<string> is f''
+  # label="Month" control=select suggest { source=month_list dimension=month_label }
+  FLIGHT_MONTH :: filter<string> is f''
 
 #" One row per scheduled US domestic flight, before the airport-size join. Use `flights`.
 source: flights_base is duckdb.sql("""
