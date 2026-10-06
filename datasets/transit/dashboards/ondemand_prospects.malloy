@@ -1,31 +1,82 @@
 ##! experimental.givens
 import "../transit.malloy"
 
-#" On-demand transit: which agencies are scaling it. Demand-response vehicle revenue hours in calendar 2019 against
-#" the latest 12 months (September 2025 to August 2026), nationally and per agency; the ranked list keeps agencies
-#" above 20,000 hours in 2019. The agencies adding the most hours are prospects for microtransit software and
-#" vehicle vendors.
-#" Limit: demand response includes mandated ADA paratransit, so not all growth is discretionary microtransit; the
-#" monthly file cannot separate the two.
-# artifact { title="On-demand transit: who is scaling" givens { STATE="" } } dashboard { columns=6 }
+#" Demand-response vehicle revenue hours, calendar 2019 against the latest 12 months (September 2025 to August
+#" 2026). Agency rankings keep agencies above 20,000 hours in 2019. Demand response includes mandated ADA
+#" paratransit, so not all growth is discretionary microtransit; the monthly file cannot separate the two.
+# artifact { title="On-demand transit is flat nationally, but a few agencies are scaling it fast" givens { STATE="" } } dashboard { columns=6 }
 query: ondemand_prospects is transit -> {
   where:
     is_demand_response,
     state ~ $STATE
-  # colspan=1
+  # colspan=2
   aggregate:
-    #" Agencies running on-demand service in the latest 12 months.
+    # label="Agencies running on-demand"
     ondemand_agencies is agencies_12m
-    #" On-demand vehicle revenue hours, latest 12 months.
+    # label="On-demand hours, last 12 months" number="0.0a"
     ondemand_hours_now is revenue_hours_12m
-    #" On-demand vehicle revenue hours, calendar 2019.
+    # label="On-demand hours, 2019" number="0.0a"
     ondemand_hours_2019 is revenue_hours_2019
-    # percent
+    # label="Change since 2019" percent
     ondemand_change_vs_2019 is revenue_hours_change_pct
-    #" On-demand trips, latest 12 months.
+    # label="On-demand trips, last 12 months" number="0.0a"
     ondemand_trips_now is trips_latest_12m
   # colspan=6
   nest:
-    ondemand_added_hours
-    ondemand_scaling
+    # label="Agencies ranked by on-demand hours added since 2019"
+    ondemand_scaling is {
+      where: is_demand_response
+      group_by:
+        # label="Agency"
+        agency is agency_label
+      aggregate:
+        # label="Hours, 2019" number="0.0a"
+        hours_2019 is revenue_hours_2019
+        # label="Hours, last 12 months" number="0.0a"
+        hours_now is revenue_hours_12m
+        # label="Hours added" number="0.0a"
+        hours_added is revenue_hours_change
+        # label="Growth" percent
+        growth is revenue_hours_change_pct
+        # label="Trips, last 12 months" number="0.0a"
+        trips_now is trips_latest_12m
+      having: revenue_hours_2019 > 20000
+      order_by: hours_added desc
+      limit: 20
+    }
+}
+
+#" The agencies with the fastest on-demand growth since 2019 (above 20,000 hours in 2019).
+query: ondemand_fastest is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE
+  group_by: agency is agency_label
+  aggregate:
+    hours_2019 is revenue_hours_2019
+    hours_now is revenue_hours_12m
+    growth is revenue_hours_change_pct
+  having: revenue_hours_2019 > 20000
+  order_by: growth desc
+  limit: 12
+}
+
+#" The ten agencies that added the most on-demand hours since 2019, combined, and how many agencies grew or shrank.
+query: ondemand_contrast is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE
+  group_by: ntd_id
+  aggregate: revenue_hours_2019, revenue_hours_12m, revenue_hours_change
+  having: revenue_hours_2019 > 20000
+  calculate: added_rank is row_number() { order_by: revenue_hours_change desc }
+} -> {
+  aggregate:
+    ranked_agencies is count()
+    growing_agencies is count() { where: revenue_hours_change > 0 }
+    shrinking_agencies is count() { where: revenue_hours_change < 0 }
+    top10_hours_2019 is revenue_hours_2019.sum() { where: added_rank <= 10 }
+    top10_hours_now is revenue_hours_12m.sum() { where: added_rank <= 10 }
+    top10_hours_added is revenue_hours_change.sum() { where: added_rank <= 10 }
+    top10_growth is revenue_hours_12m.sum() { where: added_rank <= 10 } / nullif(revenue_hours_2019.sum() { where: added_rank <= 10 }, 0) - 1
 }

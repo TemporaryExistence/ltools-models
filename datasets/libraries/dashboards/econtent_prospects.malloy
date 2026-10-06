@@ -1,8 +1,11 @@
 ##! experimental.givens
 import "../libraries.malloy"
 
-#" Which library systems borrow less digitally than is typical for their size, and how much collection budget that gap represents (FY2024). Method: digital share = digital borrowing / all borrowing; the typical share is the median for the system's size band (population served) across all US systems, whatever state is picked; room = collection budget x (band median - own share), for systems below their band median. Limit: it assumes peers' digital share is the right target, and some communities borrow more print by choice. Pick a state (blank = all US) and a size band.
-# artifact { title="Digital content: which libraries to pitch" givens { STATE="" } } dashboard { columns=6 }
+#" FY2024. Digital share = digital borrowing / all borrowing. The typical share is the median for the system's
+#" size band (population served) across all US systems, whatever state is picked. Room = collection budget x (band
+#" median - own share), for systems below their band median. It assumes peers' digital share is the right target;
+#" some communities borrow more print by choice.
+# artifact { title="Library digital content: the biggest room to grow sits in a few large systems" givens { STATE="" } } dashboard { columns=6 }
 query: econtent_prospects_dashboard is econtent_prospects -> {
   where:
     state ~ $STATE,
@@ -16,44 +19,72 @@ query: econtent_prospects_dashboard is econtent_prospects -> {
     // Position in the picked selection, for the median KPI (Malloy has no median aggregate).
     selection_position is row_number() { order_by: own_digital_share }
     selection_count is sum_window(one_system)
+    // Rank by room, for the concentration KPI.
+    room_rank is row_number() { order_by: total_room desc }
 } -> {
   # colspan=2
   aggregate:
+    # label="Systems benchmarked"
+    systems_benchmarked is count()
+    # label="Systems below typical for their size"
     systems_below_band is count() { where: is_below_band }
-    # currency
+    # label="Collection budget that could move to digital" currency
     total_room is total_room.sum()
+    # label="Room held by the top 25 prospects" currency
+    top_25_room is total_room.sum() { where: room_rank <= 25 }
     #" Median digital share of the systems picked.
-    # percent
+    # label="Median digital share" percent
     median_digital_share is own_digital_share.avg() {
       where: selection_position >= selection_count / 2 and selection_position <= selection_count / 2 + 1
     }
   # colspan=6
   nest:
     #" Systems below their size band's typical digital share, ranked by room.
+    # label="Prospects, ranked by room"
     prospects is {
       where: is_below_band
       group_by:
+        # label="State"
         state
+        # label="System"
         system is library_name
+        # label="Size"
         band is size_band
       aggregate:
-        # currency
+        # label="Collection budget" currency
         collection_budget is collection_budget.sum()
-        # percent
+        # label="Digital share" percent
         digital_share is own_digital_share.max()
-        # percent
+        # label="Typical for size" percent
         typical_for_band is typical_digital_share.max()
-        # currency
+        # label="Room" currency
         room is total_room.sum()
       order_by: room desc
       limit: 50
     }
-    #" Room by state, top 15.
-    # bar_chart { x=state y=room }
-    room_by_state is {
-      group_by: state
+    #" Room by system size.
+    # label="Room by system size"
+    room_by_size is {
+      group_by:
+        # label="Size"
+        band is size_band
       aggregate:
-        # currency
+        # label="Room" currency
+        room is total_room.sum()
+        # label="Systems below typical"
+        systems is count() { where: is_below_band }
+        # label="Typical digital share" percent
+        typical_for_band is typical_digital_share.max()
+      order_by: band
+    }
+    #" Room by state, top 15.
+    # label="Room by state"
+    room_by_state is {
+      group_by:
+        # label="State"
+        state
+      aggregate:
+        # label="Room" currency
         room is total_room.sum()
       order_by: room desc
       limit: 15

@@ -1,27 +1,63 @@
 ##! experimental.givens
 import "../flights.malloy"
 
-#" Which first-of-the-day departures start the most expensive delay chains, May-July 2026. Method: for each
-#" aircraft-day whose first flight arrived 15+ minutes late, the "late aircraft" delay minutes BTS recorded on the
-#" same aircraft's later flights that day are attributed to the first flight's airline, origin airport and
-#" scheduled hour, and costed at $100.76 a minute (Airlines for America, average 2024 US passenger airline
-#" block-minute cost). Limit: this is attribution, not proof that every minute was avoidable; storms delay first
-#" and later flights together. Slot ranks and the top-50 share are national, so they hold when filtered.
-# artifact { title="Delay chains: which departures cost the most" } dashboard { columns=6 }
+#" May-July 2026. For each aircraft-day whose first flight arrived 15+ minutes late, the "late aircraft" delay
+#" minutes BTS recorded on the same aircraft's later flights that day are attributed to the first flight's airline,
+#" origin airport and scheduled hour, and costed at $100.76 a minute (Airlines for America, average 2024 US
+#" passenger airline block-minute cost). This is attribution, not proof that every minute was avoidable; storms
+#" delay first and later flights together. Slot ranks and the top-50 share are national, so they hold when filtered.
+# artifact { title="A few early-morning departures start the most expensive delay chains" } dashboard { columns=6 }
 query: delay_chain_cost is chain_slots -> {
   where:
     airline ~ $AIRLINE,
     origin ~ $ORIGIN
   # colspan=2
   aggregate:
-    # currency
+    # label="Cost of delay chains" currency
     total_downstream_cost is downstream_cost_usd
+    # label="Departure slots that started one"
     slots is slot_count
-    # percent
+    # label="Share in the 50 costliest slots" percent
     share_in_top_50_slots is top_50_share
+    # label="Cost in the 50 costliest slots" currency
+    cost_in_top_50_slots is downstream_cost_usd { where: in_top_50 }
+    # label="Share started 5-8am" percent
+    share_started_5_to_8am is downstream_late_aircraft_minutes { where: dep_hour >= 5 and dep_hour <= 8 }
+      / nullif(downstream_late_aircraft_minutes, 0)
   # colspan=6
   nest:
-    most_costly_slots is top_slots
-    # bar_chart { x=origin y=downstream_cost_usd }
-    cost_by_airport
+    # label="Most costly departure slots"
+    most_costly_slots is {
+      group_by:
+        # label="Rank"
+        slot_rank
+        # label="Airline"
+        airline
+        # label="Airport"
+        origin
+        # label="Departs"
+        hour_label
+      aggregate:
+        # label="Late first flights"
+        late_first_legs
+        # label="Delay minutes on later flights" number="#,##0"
+        downstream_late_aircraft_minutes
+        # label="Cost" currency
+        downstream_cost_usd
+      order_by: slot_rank
+      limit: 25
+    }
+    # label="Cost by airport where the chain started"
+    cost_by_airport is {
+      group_by:
+        # label="Airport"
+        origin
+      aggregate:
+        # label="Cost" currency
+        downstream_cost_usd
+        # label="Late first flights"
+        late_first_legs
+      order_by: downstream_cost_usd desc
+      limit: 12
+    }
 }
