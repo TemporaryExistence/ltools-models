@@ -1,6 +1,6 @@
 ##" Every US public library system and branch in the IMLS Public Libraries Survey: FY2023 in detail, plus every system FY2018 - FY2024 and US Census county population 2010 - 2025, so library use can be read per county resident and against population growth. Defaults to North Carolina; pick any state.
 ## dataset { title="US Public Libraries (FY2018 - FY2024)" }
 
-import { library_systems, library_branches, library_years, county_population, county_libraries, STATE, SIZE_BAND } from 'libraries.malloy'
+import { library_systems, library_branches, library_years, county_population, county_libraries, econtent_prospects, STATE, SIZE_BAND } from 'libraries.malloy'
 
-export { library_systems, library_branches, library_years, county_population, county_libraries, STATE, SIZE_BAND }
+export { library_systems, library_branches, library_years, county_population, county_libraries, econtent_prospects, STATE, SIZE_BAND }

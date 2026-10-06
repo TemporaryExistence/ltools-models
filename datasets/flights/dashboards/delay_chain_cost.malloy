@@ -1,0 +1,27 @@
+##! experimental.givens
+import "../flights.malloy"
+
+#" Which first-of-the-day departures start the most expensive delay chains, May-July 2026. Method: for each
+#" aircraft-day whose first flight arrived 15+ minutes late, the "late aircraft" delay minutes BTS recorded on the
+#" same aircraft's later flights that day are attributed to the first flight's airline, origin airport and
+#" scheduled hour, and costed at $100.76 a minute (Airlines for America, average 2024 US passenger airline
+#" block-minute cost). Limit: this is attribution, not proof that every minute was avoidable; storms delay first
+#" and later flights together. Slot ranks and the top-50 share are national, so they hold when filtered.
+# artifact { title="Delay chains: which departures cost the most" } dashboard { columns=6 }
+query: delay_chain_cost is chain_slots -> {
+  where:
+    airline ~ $AIRLINE,
+    origin ~ $ORIGIN
+  # colspan=2
+  aggregate:
+    # currency
+    total_downstream_cost is downstream_cost_usd
+    slots is slot_count
+    # percent
+    share_in_top_50_slots is top_50_share
+  # colspan=6
+  nest:
+    most_costly_slots is top_slots
+    # bar_chart { x=origin y=downstream_cost_usd }
+    cost_by_airport
+}

@@ -1,0 +1,61 @@
+##! experimental.givens
+import "../libraries.malloy"
+
+#" Which library systems borrow less digitally than is typical for their size, and how much collection budget that gap represents (FY2024). Method: digital share = digital borrowing / all borrowing; the typical share is the median for the system's size band (population served) across all US systems, whatever state is picked; room = collection budget x (band median - own share), for systems below their band median. Limit: it assumes peers' digital share is the right target, and some communities borrow more print by choice. Pick a state (blank = all US) and a size band.
+# artifact { title="Digital content: which libraries to pitch" givens { STATE="" } } dashboard { columns=6 }
+query: econtent_prospects_dashboard is econtent_prospects -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  group_by: library_id, state, library_name, size_band, own_digital_share, typical_digital_share, is_below_band
+  aggregate:
+    one_system is count()
+    collection_budget
+    total_room
+  calculate:
+    // Position in the picked selection, for the median KPI (Malloy has no median aggregate).
+    selection_position is row_number() { order_by: own_digital_share }
+    selection_count is sum_window(one_system)
+} -> {
+  # colspan=2
+  aggregate:
+    systems_below_band is count() { where: is_below_band }
+    # currency
+    total_room is total_room.sum()
+    #" Median digital share of the systems picked.
+    # percent
+    median_digital_share is own_digital_share.avg() {
+      where: selection_position >= selection_count / 2 and selection_position <= selection_count / 2 + 1
+    }
+  # colspan=6
+  nest:
+    #" Systems below their size band's typical digital share, ranked by room.
+    prospects is {
+      where: is_below_band
+      group_by:
+        state
+        system is library_name
+        band is size_band
+      aggregate:
+        # currency
+        collection_budget is collection_budget.sum()
+        # percent
+        digital_share is own_digital_share.max()
+        # percent
+        typical_for_band is typical_digital_share.max()
+        # currency
+        room is total_room.sum()
+      order_by: room desc
+      limit: 50
+    }
+    #" Room by state, top 15.
+    # bar_chart { x=state y=room }
+    room_by_state is {
+      group_by: state
+      aggregate:
+        # currency
+        room is total_room.sum()
+      order_by: room desc
+      limit: 15
+    }
+}

@@ -67,6 +67,11 @@ source: transit is ntd_rows extend {
       pick 'Triangle' when urban_area = 'Raleigh, NC' or urban_area = 'Durham, NC'
       pick 'Charlotte' when urban_area = 'Charlotte, NC--SC'
       else 'Rest of NC'
+    #" On-demand service: the NTD mode 'Demand response' (dial-a-ride, microtransit and ADA paratransit together;
+    #" the monthly file does not separate them). It is a mode, not a mode_group.
+    is_demand_response is mode = 'Demand response'
+    #" Agency name with its state, for chart labels (trailing spaces in eight NTD names trimmed).
+    agency_label is concat(trim(agency_name), ' (', state, ')')
 
   measure:
     #" Unlinked passenger trips (boardings).
@@ -107,6 +112,13 @@ source: transit is ntd_rows extend {
     #" Service now as a share of 2019 service. Compare with recovery_vs_2019: did riders follow the buses?
     # percent
     service_vs_2019 is revenue_hours_12m / nullif(revenue_hours_2019, 0)
+    #" Vehicle revenue hours added since 2019: latest 12 months minus calendar 2019 (negative = service cut).
+    revenue_hours_change is revenue_hours_12m - revenue_hours_2019
+    #" Percent change in vehicle revenue hours, latest 12 months vs calendar 2019.
+    # percent
+    revenue_hours_change_pct is revenue_hours_12m / nullif(revenue_hours_2019, 0) - 1
+    #" Agencies that ran service in the latest 12 months (any row with revenue hours, September 2025 – August 2026).
+    agencies_12m is count(ntd_id) { where: report_month >= @2025-09-01 and report_month < @2026-09-01 and vehicle_revenue_hours > 0 }
 
     #" People living in the urbanized areas in view (2020 Census), each area counted once.
     residents is uza.population.sum()
@@ -233,6 +245,29 @@ source: transit is ntd_rows extend {
       share_of_band is trips_latest_12m / all(trips_latest_12m, size_band)
     having: trips_latest_12m > 0
     order_by: size_band, trips_latest_12m desc
+  }
+
+  #" On-demand transit, who is scaling: agencies with more than 20,000 demand-response vehicle revenue hours in
+  #" 2019, ranked by hours added since (latest 12 months vs calendar 2019). Demand response includes mandated ADA
+  #" paratransit, so not all growth is discretionary microtransit.
+  view: ondemand_scaling is {
+    where: is_demand_response
+    group_by: state, agency is trim(agency_name), ntd_id
+    aggregate: revenue_hours_2019, revenue_hours_12m, revenue_hours_change, revenue_hours_change_pct, trips_latest_12m
+    having: revenue_hours_2019 > 20000
+    order_by: revenue_hours_change desc
+  }
+
+  #" The 15 agencies that added the most on-demand (demand-response) vehicle revenue hours since 2019, among those
+  #" above 20,000 hours in 2019.
+  # bar_chart { x=agency_label y=revenue_hours_change }
+  view: ondemand_added_hours is {
+    where: is_demand_response
+    group_by: agency_label
+    aggregate: revenue_hours_change
+    having: revenue_hours_2019 > 20000
+    order_by: revenue_hours_change desc
+    limit: 15
   }
 
   #" The largest agencies by 2019 trips, with recovery, service and productivity.

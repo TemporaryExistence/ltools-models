@@ -248,6 +248,114 @@ given:
   # label="System size" control=select suggest { source=library_years dimension=size_band }
   SIZE_BAND :: filter<string> is f''
 
+// ---------------------------------------------------------------------------------------------
+// E-content prospects (FY2024). Which systems borrow less digitally than is typical for their size,
+// and how much collection budget that gap represents. Method: own digital share = digital_circulation /
+// circulation; the size band's typical share is the MEDIAN across the band; "room" = collection_spend x
+// (band median - own share) for systems below their band's median. Malloy has no median aggregate
+// (median!() is rejected as a scalar), so the median is taken in two query stages: rank each system
+// within its band with row_number, then average the one or two middle rows.
+// Bands are the model's size_band, so the 5 "Not comparable" systems are left out (3 of them pass the
+// filters below and would otherwise sit in the 100k-500k band).
+// ---------------------------------------------------------------------------------------------
+
+#" FY2024 systems whose digital share can be benchmarked: they meet the public-library definition, sit in a
+#" comparable size band, report borrowing (more than zero) and digital borrowing, and spend on their collection.
+source: econtent_systems is library_years extend {
+  where:
+    fiscal_year = 2024
+    and meets_public_library_definition = 'Y'
+    and size_band != '6 Not comparable' and size_band != 'Unknown'
+    and circulation > 0
+    and digital_circulation is not null
+    and collection_spend > 0
+  dimension:
+    #" This system's share of borrowing that is digital.
+    # percent
+    own_digital_share is digital_circulation / circulation
+}
+
+// Stage 1 of the band median: each system's position within its band, ordered by digital share.
+source: econtent_band_ranks is econtent_systems -> {
+  group_by: size_band, library_id, own_digital_share
+  aggregate: one_system is count()
+  calculate:
+    band_position is row_number() { partition_by: size_band order_by: own_digital_share }
+    band_count is sum_window(one_system) { partition_by: size_band }
+}
+
+#" Typical (median) FY2024 digital share for each size band: the middle system, or the average of the two
+#" middle systems when the band has an even count.
+source: econtent_band_typical is econtent_band_ranks -> {
+  where: band_position >= band_count / 2 and band_position <= band_count / 2 + 1
+  group_by: size_band
+  aggregate:
+    band_median_share is own_digital_share.avg()
+    systems_in_band is band_count.max()
+} extend {
+  primary_key: size_band
+}
+
+#" E-content prospects, FY2024: each benchmarkable system with its size band's typical (median) digital share
+#" and its "room", the collection budget that would move to digital if it matched that typical share.
+#" Assumes peers' share is the right target; some communities borrow more print by choice.
+source: econtent_prospects is econtent_systems extend {
+  join_one: band_typical is econtent_band_typical with size_band
+  dimension:
+    #" Median digital share of systems in the same size band (FY2024).
+    # percent
+    typical_digital_share is band_typical.band_median_share
+    is_below_band is own_digital_share < typical_digital_share
+    #" Collection spend x (band median share - own share) for systems below their band median; 0 otherwise.
+    # currency
+    system_room is pick collection_spend * (typical_digital_share - own_digital_share) when is_below_band else 0
+
+  measure:
+    benchmarked_systems is count()
+    systems_below_band is count() { where: is_below_band }
+    #" Collection budget that would move to digital if every system below its band's median matched it.
+    # currency
+    total_room is system_room.sum()
+    #" Collection (materials) spend, US dollars as reported for FY2024.
+    # currency
+    collection_budget is collection_spend.sum()
+
+  #" Systems below their size band's typical digital share, ranked by room.
+  view: prospect_list is {
+    where: is_below_band
+    group_by: state, library_name, size_band
+    aggregate:
+      collection_budget
+      digital_share
+      # percent
+      typical_for_band is typical_digital_share.max()
+      room is total_room
+    order_by: room desc
+    limit: 25
+  }
+
+  #" Room by state: collection budget that would move to digital, top 15 states.
+  # bar_chart { x=state y=total_room }
+  view: room_by_state is {
+    group_by: state
+    aggregate: total_room, systems_below_band
+    order_by: total_room desc
+    limit: 15
+  }
+
+  #" Each size band's typical digital share and its room.
+  view: room_by_band is {
+    group_by: size_band
+    aggregate:
+      benchmarked_systems
+      # percent
+      typical_for_band is typical_digital_share.max()
+      systems_below_band
+      total_room
+    order_by: size_band
+  }
+}
+
 #" US Census county population estimates (1 July), 2010 – 2025. 2010–2019 from Vintage 2020, 2020–2025 from Vintage 2025.
 source: county_population is duckdb.table('https://tabblabs.net/datasets/libraries/county_population.parquet') extend {
   primary_key: county_year_id

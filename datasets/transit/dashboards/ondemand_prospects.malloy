@@ -1,0 +1,31 @@
+##! experimental.givens
+import "../transit.malloy"
+
+#" On-demand transit: which agencies are scaling it. Demand-response vehicle revenue hours in calendar 2019 against
+#" the latest 12 months (September 2025 to August 2026), nationally and per agency; the ranked list keeps agencies
+#" above 20,000 hours in 2019. The agencies adding the most hours are prospects for microtransit software and
+#" vehicle vendors.
+#" Limit: demand response includes mandated ADA paratransit, so not all growth is discretionary microtransit; the
+#" monthly file cannot separate the two.
+# artifact { title="On-demand transit: who is scaling" givens { STATE="" } } dashboard { columns=6 }
+query: ondemand_prospects is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE
+  # colspan=1
+  aggregate:
+    #" Agencies running on-demand service in the latest 12 months.
+    ondemand_agencies is agencies_12m
+    #" On-demand vehicle revenue hours, latest 12 months.
+    ondemand_hours_now is revenue_hours_12m
+    #" On-demand vehicle revenue hours, calendar 2019.
+    ondemand_hours_2019 is revenue_hours_2019
+    # percent
+    ondemand_change_vs_2019 is revenue_hours_change_pct
+    #" On-demand trips, latest 12 months.
+    ondemand_trips_now is trips_latest_12m
+  # colspan=6
+  nest:
+    ondemand_added_hours
+    ondemand_scaling
+}

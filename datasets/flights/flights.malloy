@@ -377,3 +377,102 @@ source: aircraft_legs is flights -> {
     limit: 10
   }
 }
+
+#" One row per aircraft-day (tail number + date, operated flights only), carrying the first flight of the day's
+#" airline, origin, scheduled hour and arrival delay, and what the same aircraft's later flights that day logged.
+#" Used to put a cost on delay chains: when the first flight arrives 15+ minutes late, the "late aircraft" delay
+#" minutes BTS records on that aircraft's later flights that day are attributed to the first flight's airline,
+#" origin airport and scheduled departure hour. Cancelled and diverted flights and flights with no tail number are
+#" left out. This is attribution, not proof: storms delay first and later flights together, so not every minute
+#" was avoidable by fixing the first departure.
+source: delay_chains is aircraft_legs -> {
+  where: in_chain
+  group_by: tail_number, flight_date
+  aggregate:
+    first_carrier is carrier.max() { where: leg_number = 1 }
+    first_airline is airline.max() { where: leg_number = 1 }
+    first_origin is origin.max() { where: leg_number = 1 }
+    first_size_band is size_band.max() { where: leg_number = 1 }
+    first_dep_hour is dep_hour.max() { where: leg_number = 1 }
+    first_arr_delay is arr_delay_min.max() { where: leg_number = 1 }
+    later_legs is count() { where: leg_number > 1 }
+    later_late_aircraft_min is late_aircraft_delay_min.sum() { where: leg_number > 1 }
+} extend {
+  dimension:
+    #" Carrier code of the aircraft's first flight of the day.
+    carrier is first_carrier
+    #" Airline of the aircraft's first flight of the day.
+    airline is first_airline
+    #" Origin airport of the aircraft's first flight of the day.
+    origin is first_origin
+    #" Size band of that origin airport.
+    size_band is first_size_band
+    #" Scheduled departure hour (local, 0-23) of the aircraft's first flight of the day.
+    dep_hour is first_dep_hour
+    #" The first flight of the day arrived 15+ minutes late and the aircraft flew again that day.
+    late_start is first_arr_delay >= 15 and later_legs > 0
+
+  measure:
+    aircraft_days is count()
+    #" Aircraft-days whose first flight arrived 15+ minutes late and that had at least one later flight.
+    late_first_legs is count() { where: late_start }
+    #" Later flights of those aircraft-days (the flights that could inherit the delay).
+    downstream_legs is later_legs.sum() { where: late_start }
+    #" "Late aircraft" delay minutes BTS recorded on the later flights of aircraft-days that started late.
+    downstream_late_aircraft_minutes is later_late_aircraft_min.sum() { where: late_start }
+    #" Those minutes at $100.76 per minute: Airlines for America, average 2024 US passenger airline block-minute cost.
+    downstream_cost_usd is downstream_late_aircraft_minutes * 100.76
+}
+
+#" The "protect these departures" list: one row per airline x first-flight origin x scheduled hour slot that started
+#" at least one late delay chain over May-July 2026, ranked by the cost of its chains (slot_rank 1 = most costly,
+#" ranked across all airlines and airports, so filtering keeps the national rank). Same method and limit as
+#" delay_chains: the downstream minutes are attributed to the slot, not proven avoidable.
+source: chain_slots is delay_chains -> {
+  where: late_start
+  group_by: carrier, airline, origin, size_band, dep_hour
+  aggregate:
+    slot_late_first_legs is late_first_legs
+    slot_downstream_legs is downstream_legs
+    slot_minutes is downstream_late_aircraft_minutes
+  calculate:
+    slot_rank is row_number() { order_by: slot_minutes desc, carrier, origin, dep_hour }
+} extend {
+  dimension:
+    #" Departure time of the slot as a label, e.g. "7am".
+    hour_label is
+      pick '12am' when dep_hour = 0
+      pick concat(dep_hour::"INTEGER"::string, 'am') when dep_hour < 12
+      pick '12pm' when dep_hour = 12
+      else concat((dep_hour - 12)::"INTEGER"::string, 'pm')
+    #" The slot is among the 50 most costly nationally.
+    in_top_50 is slot_rank <= 50
+
+  measure:
+    slot_count is count()
+    late_first_legs is slot_late_first_legs.sum()
+    downstream_legs is slot_downstream_legs.sum()
+    downstream_late_aircraft_minutes is slot_minutes.sum()
+    #" Downstream minutes at $100.76 per minute: Airlines for America, average 2024 US passenger airline block-minute cost.
+    downstream_cost_usd is downstream_late_aircraft_minutes * 100.76
+    #" Share of the downstream cost carried by the 50 most costly slots nationally.
+    # percent
+    top_50_share is downstream_late_aircraft_minutes { where: in_top_50 } / downstream_late_aircraft_minutes
+
+  #" The most costly slots: where a spare aircraft, more turn time or priority handling would pay back first.
+  view: top_slots is {
+    group_by: slot_rank, airline, origin, hour_label
+    aggregate: late_first_legs, downstream_late_aircraft_minutes, downstream_cost_usd
+    order_by: slot_rank
+    limit: 25
+  }
+
+  #" Delay-chain cost by the airport where the chain started.
+  # bar_chart { x=origin y=downstream_cost_usd }
+  view: cost_by_airport is {
+    group_by: origin
+    aggregate: downstream_cost_usd, late_first_legs
+    order_by: downstream_cost_usd desc
+    limit: 15
+  }
+}
