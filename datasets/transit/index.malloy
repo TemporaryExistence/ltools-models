@@ -1,6 +1,7 @@
-##" Monthly ridership for every US transit agency reporting to the FTA National Transit Database, 2002 – August 2026: trips, service hours and miles, peak vehicles, growth and recovery since 2019, by agency, mode and month. Defaults to North Carolina (GoRaleigh, GoTriangle, Charlotte CATS); pick any state.
+##" US public transit from the FTA National Transit Database. Two sources. `transit`: monthly ridership and service for every US agency, 2002 to August 2026 (trips, service hours, recovery since 2019, the Triangle against Sun Belt peers, big vs small agencies). `ondemand_annual`: on-demand service 2022 to 2024 split into ADA paratransit and general-public on-demand (microtransit), with operating spend; use it for any microtransit, paratransit or on-demand vendor question. Playbook views answer buyer questions directly: ondemand_annual -> agencies_scaling_microtransit (who a microtransit company should call first), microtransit_market_size (the money), mostly_paratransit_agencies, paratransit_without_microtransit; transit -> does_restoring_service_bring_riders_back, triangle_vs_peer_metros, nc_agencies_below_2019, goraleigh_138_percent_check. Defaults to North Carolina on dashboards; pick any state.
 ## dataset { title="US Transit Ridership (NTD Monthly)" }
 
 import { transit, STATE, AGENCY, MODE_GROUP, SIZE_BAND } from 'transit.malloy'
+import { ondemand_annual } from 'ondemand.malloy'
 
-export { transit, STATE, AGENCY, MODE_GROUP, SIZE_BAND }
+export { transit, ondemand_annual, STATE, AGENCY, MODE_GROUP, SIZE_BAND }

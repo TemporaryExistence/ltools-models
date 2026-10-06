@@ -77,6 +77,13 @@ query: build_flights_routes is legs_by_month -> {
   order_by: month_start, carrier, origin, dest
 }
 
+#" flights_route_hours.parquet: month x airline x route x scheduled departure hour (for the best time to fly a route).
+query: build_flights_route_hours is legs_by_month -> {
+  group_by: month_start, month_label, carrier, airline, origin, size_band, dest, route, dep_hour
+  aggregate: n_flights, n_cancelled, n_operated, n_late, arr_delay_min_sum, n_arr_delay
+  order_by: month_start, carrier, origin, dest, dep_hour
+}
+
 #" flights_inbound.parquet: later flights of the day, by the airport the aircraft flew in from.
 query: build_flights_inbound is legs_by_month -> {
   where: in_chain and leg_number > 1
@@ -113,5 +120,7 @@ query: build_airport_profile is flights -> {
 #" Per origin airport: delay-chain minutes started there (airport list half 2).
 query: build_airport_chains is chain_slots -> {
   group_by: origin
-  aggregate: chain_minutes is downstream_late_aircraft_minutes
+  aggregate:
+    chain_minutes is downstream_late_aircraft_minutes
+    chain_minutes_next_leg is next_leg_late_aircraft_minutes
 }

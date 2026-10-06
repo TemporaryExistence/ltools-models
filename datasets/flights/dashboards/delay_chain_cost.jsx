@@ -76,6 +76,12 @@ const compact = (n) => {
   return String(Math.round(n));
 };
 const money = (n) => (n == null || isNaN(n) ? "–" : "$" + compact(n));
+// A cost range, conservative to upper bound: "$101M–$370M" (whole millions above $10M so the tile fits).
+const range = (lo, hi) => {
+  if (lo == null || hi == null || isNaN(lo) || isNaN(hi)) return "–";
+  const f = (n) => (Math.abs(n) >= 1e7 ? "$" + Math.round(n / 1e6) + "M" : money(n));
+  return f(lo) + "–" + f(hi);
+};
 const share = (p) => (p == null || isNaN(p) ? "–" : Math.round(p * 100) + "%");
 const pct1 = (p) => (p == null || isNaN(p) ? "–" : (p * 100).toFixed(1) + "%");
 const whole = (n) => (n == null || isNaN(n) ? "–" : Math.round(n).toLocaleString());
@@ -315,15 +321,15 @@ export default function Dashboard({ dashboard, givens }) {
       <div className={q.loading ? "loading" : ""}>
         <div className="od-kpis">
           <div className="od-kpi">
-            <div className="v">{money(k.total_downstream_cost)}</div>
+            <div className="v">{range(k.total_conservative_cost, k.total_downstream_cost)}</div>
             <div className="l">Cost of delay chains, May–July 2026</div>
-            <div className="s">Late-aircraft minutes on the later flights of aircraft that started the day late</div>
+            <div className="s">Conservative (next flight only, $69.07/min) to upper bound (every later flight, $100.76/min)</div>
           </div>
           <div className="od-kpi hot">
             <div className="v">{share(k.share_in_top_50_slots)}</div>
             <div className="l">Started by just 50 departure slots</div>
             <div className="s">
-              {money(k.cost_in_top_50_slots)} from 50 of {k.slots != null ? k.slots.toLocaleString() : "–"} slots
+              {range(k.conservative_cost_in_top_50_slots, k.cost_in_top_50_slots)} from 50 of {k.slots != null ? k.slots.toLocaleString() : "–"} slots
             </div>
           </div>
           <div className="od-kpi">
@@ -332,7 +338,7 @@ export default function Dashboard({ dashboard, givens }) {
             <div className="s">First flights scheduled 5:00 to 8:59am</div>
           </div>
           <div className="od-kpi">
-            <div className="v">{money(slots[0] && slots[0].downstream_cost_usd)}</div>
+            <div className="v">{slots[0] ? range(slots[0].conservative_cost_usd, slots[0].downstream_cost_usd) : "–"}</div>
             <div className="l">Costliest single slot</div>
             <div className="s">{slots[0] ? slotName(slots[0]) : "–"}</div>
           </div>
@@ -348,12 +354,12 @@ export default function Dashboard({ dashboard, givens }) {
           <Card title="The early bank sets up the day" sub="Delay-chain cost by the scheduled hour of the late first flight">
             <div className="od-vega"><VegaChart spec={hourSpec} data={h.rows || []} /></div>
           </Card>
-          <Card title="The costliest departure slots" sub="Airline · first-flight airport · scheduled hour, ranked nationally">
+          <Card title="The costliest departure slots" sub="Airline · first-flight airport · scheduled hour, ranked nationally; bar = upper bound, label = conservative–upper">
             <Bars
               rows={slots.slice(0, narrow ? 8 : 10).map((r) => ({ ...r, name: `${r.slot_rank}. ${slotName(r)}` }))}
               value="downstream_cost_usd"
               label="name"
-              right={(r) => money(r.downstream_cost_usd)}
+              right={(r) => range(r.conservative_cost_usd, r.downstream_cost_usd)}
               note={(r) => `${r.late_first_legs} late starts`}
             />
           </Card>
@@ -368,7 +374,8 @@ export default function Dashboard({ dashboard, givens }) {
                   <th className="name">Slot</th>
                   <th className="hide-sm">Late first flights</th>
                   <th className="hide-sm">Later-flight delay min</th>
-                  <th>Cost</th>
+                  <th>Cost, conservative</th>
+                  <th>Upper bound</th>
                 </tr>
               </thead>
               <tbody>
@@ -378,6 +385,7 @@ export default function Dashboard({ dashboard, givens }) {
                     <td className="name">{slotName(r)}</td>
                     <td className="hide-sm">{r.late_first_legs.toLocaleString()}</td>
                     <td className="hide-sm">{Math.round(r.downstream_late_aircraft_minutes).toLocaleString()}</td>
+                    <td>{money(r.conservative_cost_usd)}</td>
                     <td className="up">{money(r.downstream_cost_usd)}</td>
                   </tr>
                 ))}
@@ -389,9 +397,12 @@ export default function Dashboard({ dashboard, givens }) {
       <p className="foot">
         Source: BTS on-time performance, May–July 2026. When an aircraft's first flight of the day arrived 15+ minutes
         late, the late-aircraft delay minutes on its later flights that day are attributed to that first flight's
-        airline, airport and scheduled hour, at $100.76 a minute (Airlines for America, 2024 average block-minute
-        cost). Attribution, not proof every minute was avoidable: storms delay first and later flights together. Slot
-        ranks and the top-50 share are national, so they hold when filtered. Map: airport positions from OurAirports
+        airline, airport and scheduled hour. Costs are a range. Conservative: only the next flight's late-aircraft
+        minutes, at $69.07 a minute (Airlines for America 2025 block-minute cost, $98.41, less fuel, $29.34, since a
+        plane held at the gate burns little fuel). Upper bound: every later flight's minutes, at $100.76 a minute
+        (A4A 2024 block-minute cost). Charts and ranks use the upper bound. Attribution, not proof every minute was
+        avoidable: storms delay first and later flights together. Slot ranks and the top-50 share are national, so
+        they hold when filtered. Map: airport positions from OurAirports
         (public domain); state outlines from us-atlas (US Census Bureau cartographic boundaries, simplified).
       </p>
     </div>

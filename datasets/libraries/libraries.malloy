@@ -1,8 +1,17 @@
 ##! experimental { givens }
 
-// US public libraries, IMLS Public Libraries Survey FY2023 (US public data).
+// US public libraries, IMLS Public Libraries Survey (US public data, public domain).
 // One row per library system (administrative entity) and one per branch/outlet.
 // Survey codes for "missing" (negative numbers) were converted to null when the Parquet was built.
+//
+// Questions this dataset answers, and where to start (the "playbook" views carry who acts and what to do):
+//   Which libraries should an e-book / e-audio vendor call first?  econtent_prospects -> libraries_to_pitch_digital_content
+//   Which libraries buy e-content through a shared/consortium collection?  econtent_prospects -> consortium_buyers_to_check
+//   How big and how fast-growing is library e-content spending?  library_years -> econtent_market_by_year
+//   Which fast-growing counties spend least on their libraries, and what would closing the gap cost?
+//       county_spend_gap -> fast_growing_counties_underfunding_libraries / cost_to_reach_state_median
+//   Do small or large systems give more per dollar?  library_years -> systems_by_size_value_per_dollar
+//   Has library use recovered since the pandemic?  library_years -> library_use_recovery_since_2019
 
 given:
   # label="State" control=select suggest { source=library_systems dimension=state }
@@ -10,7 +19,9 @@ given:
 
 source: branches_table is duckdb.table('https://tabblabs.net/datasets/libraries/library_branches.parquet')
 
-#" One row per public library system in FY2023 (July 2022 – June 2023 for most states).
+#" FY2023 snapshot: one row per US public library system (fiscal year ending mid-2023 for most states), from the
+#" IMLS Public Libraries Survey. For trends, FY2024 figures and money questions use library_years instead.
+#" Dollars are US dollars as reported. population_served is the library's legal service area, not county residents.
 source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries/library_systems.parquet') extend {
   primary_key: library_id
   dimension:
@@ -23,9 +34,13 @@ source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries
       else 'Unknown'
 
   measure:
+    #" Number of library systems (administrative entities), FY2023.
     systems is count()
+    #" In-person library visits, FY2023.
     total_visits is visits.sum()
+    #" Items borrowed (print + digital checkouts and renewals), FY2023.
     total_circulation is circulation.sum()
+    #" People in the libraries' legal service areas, FY2023.
     total_population is population_served.sum()
     #" Visits per person in the area served.
     visits_per_capita is total_visits / nullif(total_population, 0)
@@ -40,11 +55,15 @@ source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries
     #" Operating spend per visit, US dollars.
     # currency
     cost_per_visit is operating_spend.sum() / nullif(total_visits, 0)
+    #" People attending library programs (story times, classes, events), FY2023.
     total_program_attendance is program_attendance.sum()
+    #" Sessions on the libraries' public computers, FY2023.
     computer_sessions_total is computer_sessions.sum()
+    #" Share of library income that comes from local government (city/county), FY2023.
     # percent
     local_funding_share is local_gov_income.sum() / nullif(total_income.sum(), 0)
 
+  #" The 15 library systems with the most in-person visits, FY2023.
   # bar_chart { x=library_name y=total_visits }
   view: busiest_systems is {
     group_by: library_name, city
@@ -53,7 +72,7 @@ source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries
     limit: 15
   }
 
-  #" Small systems often out-perform big ones per person.
+  #" Systems serving 20,000+ people ranked by visits per person, FY2023. Small systems often out-perform big ones.
   view: most_used_per_person is {
     where: population_served >= 20000
     group_by: library_name, city
@@ -62,6 +81,7 @@ source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries
     limit: 15
   }
 
+  #" Use, spend and digital share by city / suburb / town / rural setting, FY2023.
   # bar_chart { x=setting y=visits_per_capita }
   view: by_setting is {
     group_by: setting
@@ -69,6 +89,7 @@ source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries
     order_by: visits_per_capita desc
   }
 
+  #" Every state's library use and spend per person, FY2023.
   view: by_state is {
     group_by: state
     aggregate: systems, total_visits, visits_per_capita, circulation_per_capita, spend_per_capita, digital_share
@@ -76,12 +97,15 @@ source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries
   }
 }
 
-#" One row per library building or bookmobile in FY2023.
+#" One row per library building or bookmobile in FY2023, joined to its library system.
 source: library_branches is branches_table extend {
   join_one: library_systems with library_id
   dimension:
+    #" Hours open per week (yearly hours ÷ weeks open).
     weekly_hours is hours_per_year / nullif(weeks_open, 0)
+    #" The library system this building belongs to.
     system_name is library_systems.library_name
+    #" Central library, branch, bookmobile or books-by-mail.
     outlet_kind is outlet_type ?
       pick 'Central library' when 'CE'
       pick 'Branch' when 'BR'
@@ -89,11 +113,14 @@ source: library_branches is branches_table extend {
       pick 'Books-by-mail' when 'BM'
       else outlet_type
   measure:
+    #" Number of buildings / bookmobiles.
     outlets is count()
+    #" Total floor area, square feet.
     total_square_feet is square_feet.sum()
     #" Average hours open per week (yearly hours ÷ weeks open).
     avg_weekly_hours is weekly_hours.avg()
 
+  #" Systems with the most buildings, FY2023.
   view: by_system is {
     group_by: system_name
     aggregate: outlets, total_square_feet, avg_weekly_hours
@@ -109,8 +136,8 @@ source: library_branches is branches_table extend {
 // ebooks, kids_circulation and website_visits (FY2024).
 // ---------------------------------------------------------------------------------------------
 
-#" One row per public library system per fiscal year, FY2018 – FY2024 (fiscal year = the year it ends, mostly June).
-source: library_years is duckdb.table('https://tabblabs.net/datasets/libraries/library_systems_by_year.parquet') extend {
+// Undocumented base (so sources built on it don't inherit library_years' description; see friction log).
+source: library_years_base is duckdb.table('https://tabblabs.net/datasets/libraries/library_systems_by_year.parquet') extend {
   primary_key: system_year_id
   dimension:
     #" Size band by population served that year. Cut points from the FY2024 distribution of 9,209 systems:
@@ -120,6 +147,9 @@ source: library_years is duckdb.table('https://tabblabs.net/datasets/libraries/l
     #" definition, plus five that serve 100k+ on paper but report under 0.05 visits per person in FY2024 because
     #" they are a statewide special service (Maryland Library for the Blind, 6.2M "served") or coordinating bodies
     #" whose member libraries report their own visits (Cheaha, Horseshoe Bend, Arrowhead, Ilumina).
+    #" Leave band 6 out of comparisons. Exact values: '1 Very large (500k+)', '2 Large (100k–500k)', '3 Medium (25k–100k)',
+    #" '4 Small (5k–25k)', '5 Very small (under 5k)', '6 Not comparable', and 'Unknown' (no population reported; a
+    #" handful of rows, leave out).
     size_band is
       pick '6 Not comparable' when meets_public_library_definition = 'N'
         or library_id = 'MD9005' or library_id = 'AL0010' or library_id = 'AL0048'
@@ -141,8 +171,11 @@ source: library_years is duckdb.table('https://tabblabs.net/datasets/libraries/l
     buildings is coalesce(central_libraries, 0) + coalesce(branches, 0) + coalesce(bookmobiles, 0)
 
   measure:
+    #" Number of library system-years (one per system per fiscal year; filter to one year to count systems).
     systems is count()
+    #" In-person library visits.
     total_visits is visits.sum()
+    #" People in the libraries' legal service areas.
     total_population is population_served.sum()
     // Every per-person measure divides by the population of the systems that REPORTED that figure, so a
     // system with a missing value doesn't drag the rate down (FY2024: 2,791 systems left circulation unreported).
@@ -156,27 +189,99 @@ source: library_years is duckdb.table('https://tabblabs.net/datasets/libraries/l
     #" Share of borrowing that is e-books, e-audio and other digital items (systems that reported both).
     # percent
     digital_share is digital_circulation.sum() / nullif(circulation.sum() { where: digital_circulation is not null }, 0)
+    #" Visits in FY2019, the last full year before the pandemic (see the Durham caveat on the source).
     visits_fy2019 is total_visits { where: fiscal_year = 2019 }
+    #" Visits in FY2024, the latest year.
     visits_fy2024 is total_visits { where: fiscal_year = 2024 }
+    #" Visits per person served, FY2019.
     visits_per_capita_fy2019 is visits_per_capita { where: fiscal_year = 2019 }
+    #" Visits per person served, FY2024.
     visits_per_capita_fy2024 is visits_per_capita { where: fiscal_year = 2024 }
     #" Change in visits, FY2024 against FY2019 (the last year before the pandemic).
     # percent
     visits_change_vs_fy2019 is visits_fy2024 / nullif(visits_fy2019, 0) - 1
-    #" Operating spend per visit, US dollars as reported that year.
+    #" Operating spend per visit, US dollars as reported that year (systems reporting both).
     # currency
     cost_per_visit is operating_spend.sum() { where: visits is not null } / nullif(visits.sum() { where: operating_spend is not null }, 0)
+    #" Operating spend per item borrowed, US dollars as reported that year (systems reporting both).
+    # currency
+    cost_per_checkout is operating_spend.sum() { where: circulation > 0 } / nullif(circulation.sum() { where: operating_spend is not null }, 0)
+    #" Visits for every $1,000 of operating spend (systems reporting both): a value-for-money measure.
+    visits_per_1k_dollars is visits.sum() { where: operating_spend > 0 } * 1000 / nullif(operating_spend.sum() { where: visits is not null }, 0)
     #" Paid staff (full-time equivalent) per 10,000 people served.
     staff_per_10k is staff_fte.sum() * 10000 / nullif(population_served.sum() { where: staff_fte is not null }, 0)
     #" Average hours open per week per building (yearly public service hours ÷ buildings incl. bookmobiles ÷ 52).
     weekly_hours_per_building is hours_open.sum() / nullif(buildings.sum() { where: hours_open is not null }, 0) / 52
     #" Yearly public service hours per 1,000 people served.
     hours_per_1k_people is hours_open.sum() * 1000 / nullif(population_served.sum() { where: hours_open is not null }, 0)
+    #" Collection (materials) budget, US dollars as reported: print + e-content + other materials.
+    # currency
+    collection_budget is collection_spend.sum()
+    #" E-content spend: e-books, e-audio, e-video, databases and e-serials, US dollars as reported. This is the
+    #" market e-content vendors (OverDrive, hoopla, Boundless and others) sell into. A library whose e-books are
+    #" bought by a state or consortium shows little or none here.
+    # currency
+    econtent_budget is econtent_spend.sum()
+    #" Print materials spend, US dollars as reported.
+    # currency
+    print_budget is print_spend.sum()
+    #" Share of the collection budget spent on e-content (systems that reported both).
+    # percent
+    econtent_share_of_collection is econtent_spend.sum() / nullif(collection_spend.sum() { where: econtent_spend is not null }, 0)
+    #" E-content dollars per digital checkout (systems with both > 0). An upper bound on what a digital loan costs,
+    #" because e-content spend also buys databases and e-serials that are not checked out.
+    # currency
+    econtent_spend_per_digital_checkout is econtent_spend.sum() { where: digital_circulation > 0 } / nullif(digital_circulation.sum() { where: econtent_spend > 0 }, 0)
 
+}
+
+#" One row per US public library system per fiscal year, FY2018 – FY2024 (IMLS Public Libraries Survey; fiscal
+#" year = the year it ends, mostly June). Use this source for trends, FY2024 figures and money questions.
+#" Money columns (US dollars as reported, not inflation-adjusted): operating_spend (total operating budget),
+#" collection_spend (materials budget = print_spend + econtent_spend + other materials), econtent_spend (e-books,
+#" e-audio, e-video, databases, e-serials), print_spend. Use columns: visits, circulation (all borrowing),
+#" digital_circulation, physical_circulation. population_served is the legal service area.
+#" CAVEATS: (1) FY2024: 2,791 systems left total and digital borrowing unreported (incl. Chicago, Miami-Dade,
+#" Broward); per-person measures divide only by systems that reported, so FY2024 totals of borrowing undercount but
+#" rates do not. (2) Durham County Library (NC) reported 1.33M visits in FY2019 against 746k in FY2018 and 500k in
+#" FY2024; FY2019 looks like a counting change, so Durham's change since FY2019 is overstated. (3) Size bands and
+#" "not comparable" systems: see size_band.
+source: library_years is library_years_base extend {
+  // Views live here, not on library_years_base, so sources built on the base (econtent_*) don't inherit them.
+  #" National trend, one row per fiscal year: use, spend and digital share.
   # line_chart { x=fiscal_year y=visits_per_capita }
   view: visits_by_year is {
     group_by: fiscal_year
     aggregate: visits_per_capita, circulation_per_capita, spend_per_capita, digital_share, total_visits, systems
+    order_by: fiscal_year
+  }
+
+  #" PLAYBOOK. Has library use recovered since the pandemic? One row per fiscal year FY2018 – FY2024: visits,
+  #" visits per person, borrowing per person and the digital share. Answer: visits are still about 30% below FY2019
+  #" while digital borrowing keeps growing. Use per-person rates, not the FY2024 borrowing total (2,791 systems did
+  #" not report borrowing in FY2024). Who acts: library directors and boards planning hours and branches.
+  # line_chart { x=fiscal_year y=visits_per_capita }
+  view: library_use_recovery_since_2019 is {
+    where: size_band != '6 Not comparable'
+    group_by: fiscal_year
+    aggregate:
+      total_visits
+      visits_per_capita
+      circulation_per_capita
+      digital_share
+      # percent
+      visits_vs_fy2019 is total_visits / nullif(all(visits_fy2019), 0) - 1
+    order_by: fiscal_year
+  }
+
+  #" PLAYBOOK. How big and how fast-growing is the library e-content market? One row per fiscal year: e-content
+  #" spend, print spend, the whole collection budget and e-content's share of it (all systems that reported).
+  #" Answer: $419M (FY2018) to $724M (FY2024), +73%, now 45% of collection budgets and about level with print.
+  #" Who acts: e-content vendors sizing the market; library boards setting the print/digital split.
+  # line_chart { x=fiscal_year y=econtent_budget }
+  view: econtent_market_by_year is {
+    group_by: fiscal_year
+    aggregate: econtent_budget, print_budget, collection_budget, econtent_share_of_collection, digital_share
     order_by: fiscal_year
   }
 
@@ -190,6 +295,7 @@ source: library_years is duckdb.table('https://tabblabs.net/datasets/libraries/l
     limit: 15
   }
 
+  #" Each state's visits per person, FY2019 and FY2024, and the change.
   view: change_by_state is {
     group_by: state
     aggregate: visits_per_capita_fy2019, visits_per_capita_fy2024, visits_change_vs_fy2019
@@ -213,6 +319,30 @@ source: library_years is duckdb.table('https://tabblabs.net/datasets/libraries/l
       weekly_hours_per_building_fy2024 is weekly_hours_per_building { where: fiscal_year = 2024 }
       visits_per_capita_fy2019
       visits_change_vs_fy2019
+    order_by: size_band
+  }
+
+  #" PLAYBOOK. Do small or large library systems give more per dollar? FY2024, one row per size band (comparable
+  #" systems only): spend per person, cost per visit, cost per item borrowed, visits per $1,000. Answer (FY2024):
+  #" it depends on the yardstick. Small systems spend MORE per person ($58 under 5k vs $50 at 500k+) but get far
+  #" more visits per dollar ($13.86 per visit vs $23.42; 72 vs 43 visits per $1,000). Per item borrowed the
+  #" 100k–500k band is cheapest ($7.39 vs $8.77 for the smallest). Who acts: county and city budget offices weighing
+  #" a merger into a regional system, and state library agencies setting aid formulas.
+  # bar_chart { x=size_band y=cost_per_visit_fy2024 }
+  view: systems_by_size_value_per_dollar is {
+    where: fiscal_year = 2024 and size_band != '6 Not comparable' and size_band != 'Unknown'
+    group_by: size_band
+    aggregate:
+      systems_fy2024 is systems
+      people_served_fy2024 is total_population
+      # currency
+      spend_per_capita_fy2024 is spend_per_capita
+      # currency
+      cost_per_visit_fy2024 is cost_per_visit
+      # currency
+      cost_per_checkout_fy2024 is cost_per_checkout
+      visits_per_1k_dollars_fy2024 is visits_per_1k_dollars
+      visits_per_capita_fy2024
     order_by: size_band
   }
 
@@ -249,19 +379,19 @@ given:
   SIZE_BAND :: filter<string> is f''
 
 // ---------------------------------------------------------------------------------------------
-// E-content prospects (FY2024). Which systems borrow less digitally than is typical for their size,
-// and how much collection budget that gap represents. Method: own digital share = digital_circulation /
-// circulation; the size band's typical share is the MEDIAN across the band; "room" = collection_spend x
-// (band median - own share) for systems below their band's median. Malloy has no median aggregate
-// (median!() is rejected as a scalar), so the median is taken in two query stages: rank each system
-// within its band with row_number, then average the one or two middle rows.
-// Bands are the model's size_band, so the 5 "Not comparable" systems are left out (3 of them pass the
-// filters below and would otherwise sit in the 100k-500k band).
+// E-content prospects (FY2024). Which libraries buy less e-content than is typical for their size, and how many
+// dollars that is. Two signals must agree before a library counts as a prospect:
+//   (1) its digital share of BORROWING is below the median for its size band (patron demand), and
+//   (2) its e-content share of its COLLECTION BUDGET is below the median for its size band (spending).
+// The gap = collection budget x (band median e-content share - own e-content share): the extra e-content dollars a
+// year it would spend at the typical share. Libraries whose own e-content spend per digital checkout is under half
+// the band's typical are flagged as likely buying through a shared/consortium collection (their gap may be
+// illusory; the buyer is the consortium). Malloy has no median aggregate (median!() is rejected as a scalar), so each
+// median is taken in two query stages: rank each system within its band with row_number, then average the one or
+// two middle rows. Bands are the model's size_band, so the 5 "Not comparable" systems are left out.
 // ---------------------------------------------------------------------------------------------
 
-#" FY2024 systems whose digital share can be benchmarked: they meet the public-library definition, sit in a
-#" comparable size band, report borrowing (more than zero) and digital borrowing, and spend on their collection.
-source: econtent_systems is library_years extend {
+source: econtent_candidates_base is library_years_base extend {
   where:
     fiscal_year = 2024
     and meets_public_library_definition = 'Y'
@@ -270,104 +400,237 @@ source: econtent_systems is library_years extend {
     and digital_circulation is not null
     and collection_spend > 0
   dimension:
-    #" This system's share of borrowing that is digital.
-    # percent
-    own_digital_share is digital_circulation / circulation
+    #" 'Benchmarked', '0 digital loans reported' (383 systems FY2024: almost certainly a non-report, since nearly
+    #" every US library offers e-books) or 'No own e-content spend' (754: they lend e-books bought by a state or
+    #" consortium, e.g. much of Kansas, Tennessee and Pennsylvania, so their own budget can't be benchmarked).
+    benchmark_status is
+      pick '0 digital loans reported' when digital_circulation = 0
+      pick 'No own e-content spend' when econtent_spend is null or econtent_spend = 0
+      else 'Benchmarked'
+  measure:
+    #" Number of library systems.
+    candidate_systems is count()
+
+  #" How many FY2024 systems were left out of the e-content benchmark, and why, with their collection budgets.
+  view: who_was_left_out is {
+    group_by: benchmark_status
+    aggregate: candidate_systems, collection_budget
+    order_by: candidate_systems desc
+  }
 }
 
-// Stage 1 of the band median: each system's position within its band, ordered by digital share.
+#" FY2024 library systems that could in principle be benchmarked on digital content (meet the public-library
+#" definition, comparable size band, report borrowing and digital borrowing, spend on their collection), with
+#" benchmark_status saying whether each one was used. Use who_was_left_out to see how many were dropped and why.
+source: econtent_candidates is econtent_candidates_base extend {}
+
+// FY2024 systems benchmarked on digital content: candidates with more than 0 digital loans and their own e-content
+// spend (5,218 systems).
+source: econtent_systems is econtent_candidates_base extend {
+  where: benchmark_status = 'Benchmarked'
+  dimension:
+    #" This system's share of borrowing that is digital, FY2024.
+    # percent
+    own_digital_share is digital_circulation / circulation
+    #" This system's share of its collection budget spent on e-content, FY2024.
+    # percent
+    own_econtent_share is econtent_spend / collection_spend
+    #" This system's e-content dollars per digital checkout, FY2024.
+    # currency
+    own_econtent_per_digital_checkout is econtent_spend / digital_circulation
+}
+
+// Stage 1 of the band medians: each system's position within its band on each of the three ratios.
 source: econtent_band_ranks is econtent_systems -> {
-  group_by: size_band, library_id, own_digital_share
+  group_by: size_band, library_id, own_digital_share, own_econtent_share, own_econtent_per_digital_checkout
   aggregate: one_system is count()
   calculate:
     band_position is row_number() { partition_by: size_band order_by: own_digital_share }
+    econtent_position is row_number() { partition_by: size_band order_by: own_econtent_share }
+    per_checkout_position is row_number() { partition_by: size_band order_by: own_econtent_per_digital_checkout }
     band_count is sum_window(one_system) { partition_by: size_band }
 }
 
-#" Typical (median) FY2024 digital share for each size band: the middle system, or the average of the two
-#" middle systems when the band has an even count.
+#" Typical (median) FY2024 ratios for each size band: digital share of borrowing, e-content share of the collection
+#" budget, and e-content dollars per digital checkout. Median = the middle system, or the average of the two middle
+#" systems when the band has an even count.
 source: econtent_band_typical is econtent_band_ranks -> {
-  where: band_position >= band_count / 2 and band_position <= band_count / 2 + 1
   group_by: size_band
   aggregate:
-    band_median_share is own_digital_share.avg()
+    band_median_share is own_digital_share.avg() { where: band_position >= band_count / 2 and band_position <= band_count / 2 + 1 }
+    band_median_econtent_share is own_econtent_share.avg() { where: econtent_position >= band_count / 2 and econtent_position <= band_count / 2 + 1 }
+    band_median_per_checkout is own_econtent_per_digital_checkout.avg() { where: per_checkout_position >= band_count / 2 and per_checkout_position <= band_count / 2 + 1 }
     systems_in_band is band_count.max()
 } extend {
   primary_key: size_band
 }
 
-#" E-content prospects, FY2024: each benchmarkable system with its size band's typical (median) digital share
-#" and its "room", the collection budget that would move to digital if it matched that typical share.
-#" Assumes peers' share is the right target; some communities borrow more print by choice.
+#" E-content prospects, FY2024: who to call to sell e-books / e-audio to public libraries, and how many dollars are at
+#" stake. Each benchmarked system (5,218) with its size band's typical (median) digital share of borrowing and
+#" e-content share of collection budget. prospect_type: 'Pitch the library' = below typical on BOTH and pays for its
+#" own digital loans; 'Check the consortium' = below on both but spends under half the typical e-content dollars per
+#" digital checkout, so a state/consortium collection likely supplies its e-books; 'Not a prospect' otherwise.
+#" econtent_gap = the extra e-content dollars a year the library would spend at its band's typical share. HONEST
+#" LIMITS: library collection budgets are roughly fixed, so this is budget that would SHIFT from print to digital,
+#" not new money for the library; for an e-content vendor it is share-of-wallet (revenue taken from print). Peers'
+#" share may not be the right target (some communities prefer print). The incumbent (OverDrive) already sees each
+#" library's own spend; the list is most useful to challengers and to library boards benchmarking themselves.
 source: econtent_prospects is econtent_systems extend {
   join_one: band_typical is econtent_band_typical with size_band
   dimension:
-    #" Median digital share of systems in the same size band (FY2024).
+    #" Median digital share of borrowing for systems in the same size band (FY2024, all US).
     # percent
     typical_digital_share is band_typical.band_median_share
+    #" Median e-content share of collection budget for systems in the same size band (FY2024, all US).
+    # percent
+    typical_econtent_share is band_typical.band_median_econtent_share
+    #" Median e-content dollars per digital checkout for systems in the same size band (FY2024, all US).
+    # currency
+    typical_econtent_per_digital_checkout is band_typical.band_median_per_checkout
+    #" True when the system's digital share of borrowing is below its band's median.
     is_below_band is own_digital_share < typical_digital_share
-    #" Collection spend x (band median share - own share) for systems below their band median; 0 otherwise.
+    #" True when the system's e-content share of its collection budget is below its band's median.
+    is_below_on_econtent_spend is own_econtent_share < typical_econtent_share
+    #" True when the system spends under half its band's typical e-content dollars per digital checkout: its e-books
+    #" are likely bought in part by a state or consortium shared collection (inferred from the numbers, not checked).
+    is_shared_collection_likely is own_econtent_per_digital_checkout < 0.5 * typical_econtent_per_digital_checkout
+    #" 'Pitch the library', 'Check the consortium' or 'Not a prospect' (see the source description).
+    prospect_type is
+      pick 'Pitch the library' when is_below_band and is_below_on_econtent_spend and not is_shared_collection_likely
+      pick 'Check the consortium' when is_below_band and is_below_on_econtent_spend
+      else 'Not a prospect'
+    #" Extra e-content dollars a year at the band's typical e-content share, for systems below typical on both
+    #" borrowing and spend; 0 otherwise. US dollars, FY2024.
+    # currency
+    system_econtent_gap is pick collection_spend * (typical_econtent_share - own_econtent_share)
+      when is_below_band and is_below_on_econtent_spend else 0
+    #" Earlier, borrowing-only method (kept for comparison): collection budget x (band median digital share - own
+    #" digital share) for systems below their band's median digital share; 0 otherwise.
     # currency
     system_room is pick collection_spend * (typical_digital_share - own_digital_share) when is_below_band else 0
 
   measure:
+    #" Number of systems benchmarked.
     benchmarked_systems is count()
+    #" Systems whose digital share of borrowing is below their size band's median.
     systems_below_band is count() { where: is_below_band }
-    #" Collection budget that would move to digital if every system below its band's median matched it.
+    #" Systems to pitch directly: below typical on both borrowing and e-content spend, paying for their own loans.
+    libraries_to_pitch is count() { where: prospect_type = 'Pitch the library' }
+    #" Systems below typical on both signals that likely get e-books through a shared/consortium collection.
+    consortium_checks is count() { where: prospect_type = 'Check the consortium' }
+    #" E-content dollars a year the 'Pitch the library' systems would add at their band's typical share (FY2024).
+    # currency
+    pitchable_econtent_gap is system_econtent_gap.sum() { where: prospect_type = 'Pitch the library' }
+    #" E-content dollars a year at the typical share, for every system below on both signals (incl. consortium checks).
+    # currency
+    total_econtent_gap is system_econtent_gap.sum()
+    #" Borrowing-only method total (earlier version of this play, kept for comparison).
     # currency
     total_room is system_room.sum()
-    #" Collection (materials) spend, US dollars as reported for FY2024.
-    # currency
-    collection_budget is collection_spend.sum()
+    #" Pitchable e-content gap as a share of the collection budget of the systems benchmarked: how under-digitised a
+    #" place's libraries are relative to what they spend, independent of how big the place is.
+    # percent
+    gap_share_of_collection_budget is pitchable_econtent_gap / nullif(collection_budget, 0)
 
-  #" Systems below their size band's typical digital share, ranked by room.
-  view: prospect_list is {
-    where: is_below_band
+  #" PLAYBOOK. Which libraries should an e-book / e-audio vendor call first, and why? FY2024 systems below the
+  #" typical for their size on BOTH digital borrowing and e-content spending, paying for their own digital loans,
+  #" ranked by econtent_gap (the extra e-content dollars a year at the typical share). Who acts: a vendor's library
+  #" sales team (call the collection-development manager with the peer benchmark); library boards (benchmark the
+  #" print/digital split). Filter by state to get a territory list. Returns the top 50; for a count or a total use
+  #" the measures libraries_to_pitch and pitchable_econtent_gap, and for more rows refine with + { limit: N }.
+  view: libraries_to_pitch_digital_content is {
+    where: prospect_type = 'Pitch the library'
     group_by: state, library_name, size_band
+    // Ranking measure first: a `+ { limit: N }` refinement drops order_by and sorts by the first aggregate (friction log).
     aggregate:
+      # currency
+      econtent_gap is pitchable_econtent_gap
       collection_budget
+      econtent_budget
+      econtent_share_of_collection
+      # percent
+      typical_econtent_share_for_size is typical_econtent_share.max()
       digital_share
       # percent
-      typical_for_band is typical_digital_share.max()
-      room is total_room
-    order_by: room desc
+      typical_digital_share_for_size is typical_digital_share.max()
+    order_by: econtent_gap desc
+    limit: 50
+  }
+
+  #" PLAYBOOK. Libraries below typical on both signals whose e-books are likely bought through a state or consortium
+  #" shared collection (they spend under half the typical e-content dollars per digital checkout). Who acts: a
+  #" vendor should find the consortium or state library that buys for them before calling the library itself.
+  view: consortium_buyers_to_check is {
+    where: prospect_type = 'Check the consortium'
+    group_by: state, library_name, size_band
+    aggregate:
+      #" E-content gap at the typical share, counting the consortium-supplied library too (total_econtent_gap).
+      # currency
+      consortium_gap is total_econtent_gap
+      collection_budget
+      econtent_budget
+      econtent_spend_per_digital_checkout
+      # currency
+      typical_per_checkout_for_size is typical_econtent_per_digital_checkout.max()
+    order_by: consortium_gap desc
     limit: 25
   }
 
-  #" Room by state: collection budget that would move to digital, top 15 states.
-  # bar_chart { x=state y=total_room }
-  view: room_by_state is {
+  #" The e-content gap by state, normalised: pitchable gap as a share of the state's benchmarked collection budget
+  #" (so big states don't win just for being big), with the dollars and the number of libraries to pitch.
+  view: econtent_gap_by_state is {
     group_by: state
-    aggregate: total_room, systems_below_band
-    order_by: total_room desc
-    limit: 15
+    aggregate: gap_share_of_collection_budget, pitchable_econtent_gap, libraries_to_pitch, benchmarked_systems
+    order_by: gap_share_of_collection_budget desc
   }
 
-  #" Each size band's typical digital share and its room.
-  view: room_by_band is {
+  #" Each size band's typical digital share, typical e-content share and the e-content gap.
+  view: econtent_gap_by_size is {
     group_by: size_band
     aggregate:
       benchmarked_systems
       # percent
-      typical_for_band is typical_digital_share.max()
-      systems_below_band
-      total_room
+      typical_digital_share_for_size is typical_digital_share.max()
+      # percent
+      typical_econtent_share_for_size is typical_econtent_share.max()
+      libraries_to_pitch
+      pitchable_econtent_gap
     order_by: size_band
+  }
+
+  #" Earlier, borrowing-only prospect list (kept for comparison; superseded by libraries_to_pitch_digital_content).
+  view: prospect_list is {
+    where: is_below_band
+    group_by: state, library_name, size_band
+    aggregate:
+      room is total_room
+      collection_budget
+      digital_share
+      # percent
+      typical_for_band is typical_digital_share.max()
+    order_by: room desc
+    limit: 25
   }
 }
 
 #" US Census county population estimates (1 July), 2010 – 2025. 2010–2019 from Vintage 2020, 2020–2025 from Vintage 2025.
+#" Connecticut is planning regions from 2020 on (a Census change), counties before.
 source: county_population is duckdb.table('https://tabblabs.net/datasets/libraries/county_population.parquet') extend {
   primary_key: county_year_id
   measure:
+    #" County residents (Census estimate, 1 July of pop_year).
     residents is population.sum()
+    #" Residents on 1 July 2020.
     residents_2020 is residents { where: pop_year = 2020 }
+    #" Residents on 1 July 2024.
     residents_2024 is residents { where: pop_year = 2024 }
+    #" People added, 1 July 2020 to 1 July 2024.
     people_added_2020_2024 is residents_2024 - residents_2020
-    #" Population growth from 1 July 2020 to 1 July 2024 (both from Vintage 2025).
+    #" Population growth from 1 July 2020 to 1 July 2024 (both from Vintage 2025). US: +2.54%.
     # percent
     growth_2020_2024 is residents_2024 / nullif(residents_2020, 0) - 1
 
+  #" The 15 fastest-growing counties, 2020 – 2024.
   # bar_chart { x=county_name y=growth_2020_2024 }
   view: fastest_growing is {
     group_by: county_name
@@ -376,6 +639,7 @@ source: county_population is duckdb.table('https://tabblabs.net/datasets/librari
     limit: 15
   }
 
+  #" Population growth by state, 2020 – 2024.
   view: growth_by_state is {
     group_by: state
     aggregate: residents_2024, people_added_2020_2024, growth_2020_2024
@@ -383,21 +647,32 @@ source: county_population is duckdb.table('https://tabblabs.net/datasets/librari
   }
 }
 
-#" One row per library system x county it has a building in x fiscal year. A regional system (several
-#" counties) is shared out across its counties by population (pop_weight), so counties can be compared
-#" per resident. Every system in a county counts toward it (e.g. Orange = Orange County + Chapel Hill).
+#" Library use and spend per COUNTY RESIDENT: one row per library system x county it has a building in x fiscal
+#" year (FY2018 – FY2024). A regional system (several counties) is shared out across its counties by population
+#" (pop_weight), so counties can be compared per resident. Every system in a county counts toward it (e.g. Orange
+#" County NC = Orange County Public Library + Chapel Hill Public Library). Dollars as reported, not inflation-adjusted.
+#" CAVEATS: Durham FY2019 visits look inflated (see library_years); FY2024 borrowing is unreported for many systems.
+#" For "what would it cost to close the gap" questions use county_spend_gap.
 source: county_libraries is duckdb.table('https://tabblabs.net/datasets/libraries/library_counties.parquet') extend {
   join_one: sys is library_years on system_year_id = sys.system_year_id
   join_one: cp is county_population on county_year_id = cp.county_year_id
   dimension:
+    #" County name as the Census writes it (e.g. 'Johnston County').
     county_name is cp.county_name
+    #" The library system's name (same as system_name; matches library_name in the other sources).
+    library_name is sys.library_name
+    #" The library system's name.
     system_name is sys.library_name
     #" The county's share of this system's visits: visits x pop_weight.
     shared_visits is sys.visits * pop_weight
+    #" The county's share of this system's operating spend: operating_spend x pop_weight, US dollars.
     shared_spend is sys.operating_spend * pop_weight
 
   measure:
+    #" Library visits allocated to the county.
     allocated_visits is shared_visits.sum()
+    #" Library operating spend allocated to the county, US dollars as reported.
+    # currency
     allocated_spend is shared_spend.sum()
     #" County residents (Census), counted once per county per year however many systems serve it.
     residents is cp.population.sum()
@@ -406,20 +681,31 @@ source: county_libraries is duckdb.table('https://tabblabs.net/datasets/librarie
     #" Library operating spend per county resident, US dollars as reported that year.
     # currency
     spend_per_resident is allocated_spend / nullif(residents, 0)
+    #" Visits per county resident, FY2019.
     visits_per_resident_fy2019 is visits_per_resident { where: fiscal_year = 2019 }
+    #" Visits per county resident, FY2024.
     visits_per_resident_fy2024 is visits_per_resident { where: fiscal_year = 2024 }
+    #" Library spend per county resident, FY2019, US dollars.
     # currency
     spend_per_resident_fy2019 is spend_per_resident { where: fiscal_year = 2019 }
+    #" Library spend per county resident, FY2024, US dollars.
     # currency
     spend_per_resident_fy2024 is spend_per_resident { where: fiscal_year = 2024 }
+    #" Change in visits per county resident, FY2024 against FY2019.
     # percent
     visits_per_resident_change is visits_per_resident_fy2024 / nullif(visits_per_resident_fy2019, 0) - 1
+    #" County residents, 1 July 2020.
     residents_2020 is residents { where: fiscal_year = 2020 }
+    #" County residents, 1 July 2024.
     residents_2024 is residents { where: fiscal_year = 2024 }
     #" County population growth, 1 July 2020 to 1 July 2024.
     # percent
     population_growth_2020_2024 is residents_2024 / nullif(residents_2020, 0) - 1
+    #" Library operating spend allocated to the county, FY2024, US dollars.
+    # currency
+    allocated_spend_fy2024 is allocated_spend { where: fiscal_year = 2024 }
 
+  #" One row per fiscal year: visits and spend per county resident.
   # line_chart { x=fiscal_year y=visits_per_resident }
   view: by_year is {
     group_by: fiscal_year
@@ -440,6 +726,7 @@ source: county_libraries is duckdb.table('https://tabblabs.net/datasets/librarie
     limit: 20
   }
 
+  #" Every county's visits and spend per resident, FY2024.
   # bar_chart { x=county_name y=visits_per_resident_fy2024 }
   view: visits_per_resident_by_county is {
     group_by: county_name
@@ -455,5 +742,135 @@ source: county_libraries is duckdb.table('https://tabblabs.net/datasets/librarie
       buildings is outlets.sum()
       share_of_system is pop_weight.max()
     order_by: system_name, share_of_system desc
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// County spend gap (FY2024): each county's library spend per resident against the MEDIAN county in its state,
+// and what it would cost a year to reach that median. Same two-stage median as the e-content benchmark.
+// ---------------------------------------------------------------------------------------------
+
+// Stage 1: one row per county (FY2024 spend, growth, use), ranked within its state by spend per resident.
+source: county_spend_base is county_libraries -> {
+  where: county_fips is not null
+  group_by: state, county_fips, county_name
+  aggregate:
+    residents_2020
+    residents_2024
+    population_growth_2020_2024
+    spend_per_resident_fy2019
+    spend_per_resident_fy2024
+    allocated_spend_fy2024
+    visits_per_resident_fy2019
+    visits_per_resident_fy2024
+    one_county is count(county_fips)
+  having: spend_per_resident_fy2024 is not null and residents_2020 > 0
+  calculate:
+    spend_position is row_number() { partition_by: state order_by: spend_per_resident_fy2024 }
+    counties_in_state is sum_window(one_county) { partition_by: state }
+}
+
+// Stage 2: the median county's spend per resident in each state.
+source: state_county_median is county_spend_base -> {
+  group_by: state
+  aggregate:
+    median_spend_per_resident is spend_per_resident_fy2024.avg() {
+      where: spend_position >= counties_in_state / 2 and spend_position <= counties_in_state / 2 + 1
+    }
+    counties is counties_in_state.max()
+} extend {
+  primary_key: state
+}
+
+#" One row per US county (FY2024): library operating spend per resident (all systems serving the county, regional
+#" systems shared by population), population growth 2020 – 2024, visits per resident, and the cost a year to bring
+#" the county up to the MEDIAN county in its own state. Use it for "which growing counties underfund their
+#" libraries" and "what would it cost county X to reach the state median". Example: Johnston County NC spends $8.60
+#" per resident (lowest in NC; the NC median county spends $23.71), so reaching the median would cost about $3.8M a
+#" year on top of the ~$2.1M allocated today (two systems serve it: Public Library of Johnston County & Smithfield,
+#" and Hocutt-Ellington Memorial Library). Dollars as reported, FY2024. HONEST LIMITS: the median is a peer
+#" benchmark, not a standard of need; spend is operating spend (not buildings/capital); counties are compared within
+#" their own state only.
+source: county_spend_gap is county_spend_base extend {
+  join_one: state_median is state_county_median with state
+  dimension:
+    #" FY2024 library spend per resident of the median county in the same state, US dollars.
+    # currency
+    state_median_spend_per_resident is state_median.median_spend_per_resident
+    #" True when the county spends less per resident than its state's median county.
+    is_below_state_median is spend_per_resident_fy2024 < state_median_spend_per_resident
+    #" Extra library operating spend a year to bring the county to its state's median spend per resident
+    #" (median - own) x residents 2024; 0 when already at or above. US dollars.
+    # currency
+    county_cost_to_reach_median is pick (state_median_spend_per_resident - spend_per_resident_fy2024) * residents_2024
+      when is_below_state_median else 0
+    #" Growth band: 'Fast (8%+)', 'Moderate (3-8%)', 'Slow or shrinking (under 3%)', population 2020 – 2024 (US +2.54%).
+    growth_band is
+      pick 'Fast (8%+)' when population_growth_2020_2024 >= 0.08
+      pick 'Moderate (3-8%)' when population_growth_2020_2024 >= 0.03
+      else 'Slow or shrinking (under 3%)'
+
+  measure:
+    #" Number of counties.
+    counties is count()
+    #" Annual cost, US dollars, to bring every county here up to its state's median spend per resident.
+    # currency
+    cost_to_reach_state_median is county_cost_to_reach_median.sum()
+    #" Residents in 2024 (Census).
+    # number
+    county_residents_2024 is residents_2024.sum()
+    #" Counties spending below their state's median per resident.
+    counties_below_median is count() { where: is_below_state_median }
+
+  #" PLAYBOOK. Which fast-growing counties (8%+ population growth 2020 – 2024, about 3x the US rate) spend less on
+  #" their libraries per resident than the median county in their state, and what would it cost a year to close the
+  #" gap? Ranked by that cost. Who acts: county managers / budget offices and commissioners setting the library
+  #" appropriation; library directors making the budget case. Filter by state (e.g. NC).
+  view: fast_growing_counties_underfunding_libraries is {
+    where: population_growth_2020_2024 >= 0.08 and is_below_state_median
+    group_by: state, county_name
+    aggregate:
+      # label="Yearly cost to reach state median"
+      cost_to_reach_state_median
+      # percent label="Growth 2020-24"
+      growth_2020_2024 is population_growth_2020_2024.max()
+      # number label="Residents 2024"
+      residents_2024_count is residents_2024.max()
+      # currency label="Spend per resident"
+      spend_per_resident is spend_per_resident_fy2024.max()
+      # currency label="State median per resident"
+      state_median is state_median_spend_per_resident.max()
+      # label="Visits per resident"
+      visits_per_resident is visits_per_resident_fy2024.max()
+    order_by: cost_to_reach_state_median desc
+    limit: 25
+  }
+
+  #" PLAYBOOK. What would it cost each county to reach its state's median library spend per resident? Every county
+  #" below the median, ranked by the annual cost, with today's spend. Filter by state and county (e.g. NC, Johnston).
+  view: cost_to_reach_state_median_by_county is {
+    where: is_below_state_median
+    group_by: state, county_name
+    aggregate:
+      # label="Yearly cost to reach state median"
+      cost_to_reach_state_median
+      # currency label="Spend per resident"
+      spend_per_resident is spend_per_resident_fy2024.max()
+      # currency label="State median per resident"
+      state_median is state_median_spend_per_resident.max()
+      # currency label="Library spend today"
+      library_spend_today is allocated_spend_fy2024.max()
+      # percent label="Growth 2020-24"
+      growth_2020_2024 is population_growth_2020_2024.max()
+    order_by: cost_to_reach_state_median desc
+    limit: 50
+  }
+
+  #" Counties by growth band: how many, how many below their state's median spend per resident, and the cost to
+  #" close the gap.
+  view: gap_by_growth_band is {
+    group_by: growth_band
+    aggregate: counties, counties_below_median, cost_to_reach_state_median, county_residents_2024
+    order_by: growth_band
   }
 }

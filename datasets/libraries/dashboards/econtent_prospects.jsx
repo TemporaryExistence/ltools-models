@@ -262,18 +262,18 @@ function useNarrow() {
   return narrow;
 }
 
-// ---- Library e-content charts ----
+// ---- Library e-content charts (two-signal method, 2026-10-06) ----
 
 const money = (n) => (n == null || isNaN(n) ? "–" : "$" + compact(n));
 const share = (p) => (p == null || isNaN(p) ? "–" : Math.round(p * 100) + "%");
+const pct1 = (p) => (p == null || isNaN(p) ? "–" : (p * 100).toFixed(1) + "%");
+const count = (n) => (n == null || isNaN(n) ? "–" : Number(n).toLocaleString());
 // The survey reports most names in capitals; show them in title case.
 const titleCase = (s) =>
   s && s === s.toUpperCase()
     ? s.toLowerCase().replace(/(^|[\s\-/(.])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\((\w\w)\)$/, (m, st) => `(${st.toUpperCase()})`)
     : s;
 const bandName = (b) => (b ? String(b).replace(/^\d+ /, "") : "–");
-const pct1 = (p) => (p == null || isNaN(p) ? "–" : (p * 100).toFixed(1) + "%");
-const shorten = (s, n) => (s && s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
 
 // Size bands, largest first. Codes are the first character of the model's size_band.
 const BANDS = [
@@ -285,100 +285,96 @@ const BANDS = [
 ];
 const BAND_BY_CODE = Object.fromEntries(BANDS.map((b) => [b.code, b]));
 const bandColor = (t) => ({ domain: BANDS.map((b) => b.name), range: t.pal.bands });
-// Legend for the size colour. At phone width it shows only the population range, under a "People served" title.
-const bandLegend = (narrow, extra = {}) =>
-  narrow
-    ? { orient: "top", title: "People served", titleOrient: "top", columns: 3, labelExpr: "replace(replace(replace(datum.label, /^.*\\(/, ''), ')', ''), 'under', 'Under')", ...extra }
-    : { orient: "top", title: null, columns: 5, ...extra };
 
-const quantile = (sorted, q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1)))] : null);
+// Prospect types, by the first letter of the model's prospect_type.
+const KINDS = [
+  { code: "P", name: "Pitch the library" },
+  { code: "C", name: "Reach through a consortium" },
+  { code: "N", name: "Not a prospect" },
+];
+const KIND_BY_CODE = Object.fromEntries(KINDS.map((k) => [k.code, k.name]));
+const kindColor = (t) => ({ domain: KINDS.map((k) => k.name), range: [t.pal.up, t.pal.alt, t.pal.quiet] });
 
-function scatterSpec(t, narrow, refs, callouts) {
+// Quadrant chart: distance from the typical e-content share (x) and typical digital share of borrowing (y), both in
+// percentage points for the system's size. Prospects sit lower-left (below peers on both). Dot size = budget.
+function quadrantSpec(t, narrow, labels) {
   const x = {
-    field: "share", type: "quantitative", scale: { domain: [0, 1] },
-    axis: { title: "Share of borrowing that is digital, FY2024", format: ".0%", tickCount: narrow ? 5 : 10 },
+    field: "econtent_vs_typical", type: "quantitative", scale: { domain: [-0.5, 0.5], clamp: true, nice: false },
+    axis: { title: "E-content share of collection budget vs typical for its size", format: "+.0%", tickCount: narrow ? 5 : 10 },
   };
   const y = {
-    field: "budget", type: "quantitative", scale: { type: "log", domain: [100000, 50000000] },
-    axis: { title: "Collection budget (log scale)", format: "$~s", values: [100000, 300000, 1000000, 3000000, 10000000, 30000000] },
+    field: "digital_vs_typical", type: "quantitative", scale: { domain: [-0.35, 0.45], clamp: true, nice: false },
+    axis: { title: "Digital share of borrowing vs typical", format: "+.0%", tickCount: narrow ? 5 : 8 },
   };
   return {
     config: vegaConfig(t),
-    height: narrow ? 380 : 500,
+    height: narrow ? 360 : 460,
     layer: [
+      // The prospect quadrant, shaded.
       {
-        mark: { type: "circle", opacity: 0.6, size: narrow ? 18 : 30, stroke: t.bg, strokeWidth: 0.5 },
+        data: { values: [{ x: -0.5, x2: 0, y: -0.35, y2: 0 }] },
+        mark: { type: "rect", color: t.pal.up, opacity: t.dark ? 0.12 : 0.07 },
+        encoding: { x: { field: "x", type: "quantitative" }, x2: { field: "x2" }, y: { field: "y", type: "quantitative" }, y2: { field: "y2" } },
+      },
+      {
+        data: { values: [{ x: -0.49, y: -0.335, text: narrow ? "Below peers on both" : "Below peers on both: the prospects" }] },
+        mark: { type: "text", align: "left", baseline: "bottom", fontSize: 12, fontWeight: 600, color: t.pal.up },
+        encoding: { x: { field: "x", type: "quantitative" }, y: { field: "y", type: "quantitative" }, text: { field: "text" } },
+      },
+      {
+        mark: { type: "circle", opacity: 0.7, stroke: t.bg, strokeWidth: 0.6 },
         encoding: {
           x, y,
-          color: { field: "bandName", type: "ordinal", scale: bandColor(t), legend: bandLegend(narrow, { symbolOpacity: 1 }) },
+          size: { field: "budget", type: "quantitative", scale: { type: "sqrt", range: narrow ? [8, 260] : [12, 520] }, legend: null },
+          color: { field: "kindName", type: "nominal", scale: kindColor(t), legend: { orient: "top", title: null, columns: narrow ? 1 : 3, symbolOpacity: 1, labelLimit: 260 } },
+          order: { field: "kindOrder", type: "quantitative" },
           tooltip: [
+            { field: "name", title: "System" },
+            { field: "kindName", title: "Type" },
             { field: "bandName", title: "Size" },
-            { field: "share", type: "quantitative", title: "Digital share", format: ".1%" },
             { field: "budget", type: "quantitative", title: "Collection budget", format: "$,.0f" },
+            { field: "econtent_vs_typical", type: "quantitative", title: "E-content share vs typical", format: "+.1%" },
+            { field: "digital_vs_typical", type: "quantitative", title: "Digital share vs typical", format: "+.1%" },
+            { field: "gap", type: "quantitative", title: "E-content gap", format: "$,.0f" },
           ],
         },
       },
-      // Each band's typical (median) digital share, drawn across the middle 80% of that band's budgets, with a halo
-      // in the text colour so it stands out from the dots of the same colour.
+      // Zero lines: "typical for its size".
+      { data: { values: [{ v: 0 }] }, mark: { type: "rule", color: t.muted, strokeDash: [4, 3] }, encoding: { x: { field: "v", type: "quantitative" } } },
+      { data: { values: [{ v: 0 }] }, mark: { type: "rule", color: t.muted, strokeDash: [4, 3] }, encoding: { y: { field: "v", type: "quantitative" } } },
+      // Top 5 to pitch: ring + rank number beside the dot (names listed under the chart).
       {
-        data: { values: refs },
-        mark: { type: "rule", strokeWidth: 6, strokeCap: "round", color: t.fg },
-        encoding: { x: { field: "typical", type: "quantitative" }, y: { field: "lo", type: "quantitative" }, y2: { field: "hi" } },
+        data: { values: labels },
+        mark: { type: "circle", size: narrow ? 160 : 260, fillOpacity: 0, stroke: t.fg, strokeWidth: 1.5 },
+        encoding: { x: { field: "econtent_vs_typical", type: "quantitative" }, y: { field: "digital_vs_typical", type: "quantitative" } },
       },
       {
-        data: { values: refs },
-        mark: { type: "rule", strokeWidth: 3, strokeCap: "round" },
-        encoding: {
-          x: { field: "typical", type: "quantitative" },
-          y: { field: "lo", type: "quantitative" },
-          y2: { field: "hi" },
-          color: { field: "bandName", type: "ordinal", scale: bandColor(t), legend: null },
-          tooltip: [
-            { field: "bandName", title: "Size" },
-            { field: "typical", type: "quantitative", title: "Typical digital share", format: ".1%" },
-          ],
-        },
-      },
-      // Leader lines from the top prospects to their names in the empty upper right.
-      {
-        data: { values: callouts },
-        mark: { type: "rule", color: t.muted, strokeWidth: 1 },
-        encoding: {
-          x: { field: "share", type: "quantitative" }, y: { field: "budget", type: "quantitative" },
-          x2: { field: "lx" }, y2: { field: "ly" },
-        },
-      },
-      {
-        data: { values: callouts },
-        mark: { type: "circle", size: narrow ? 60 : 90, fillOpacity: 0, stroke: t.fg, strokeWidth: 1.5 },
-        encoding: { x: { field: "share", type: "quantitative" }, y: { field: "budget", type: "quantitative" } },
-      },
-      {
-        data: { values: callouts },
-        mark: { type: "text", align: "left", dx: 5, baseline: "middle", fontSize: 12, fontWeight: 600, color: t.fg },
-        encoding: { x: { field: "lx", type: "quantitative" }, y: { field: "ly", type: "quantitative" }, text: { field: "text" } },
+        data: { values: labels },
+        mark: { type: "text", align: "center", baseline: "bottom", dy: narrow ? -8 : -11, fontSize: 13, fontWeight: 700, color: t.fg },
+        encoding: { x: { field: "econtent_vs_typical", type: "quantitative" }, y: { field: "digital_vs_typical", type: "quantitative" }, text: { field: "gap_rank" } },
       },
     ],
   };
 }
 
-function trendSpec(t, narrow) {
-  const x = { field: "fiscal_year", type: "ordinal", axis: { title: "Fiscal year", labelAngle: 0, labelExpr: narrow ? "'’' + slice(datum.label, 2)" : "datum.label" } };
-  const y = { field: "digital_share", type: "quantitative", axis: { title: "Share of borrowing that is digital", format: ".0%", tickCount: 5 }, scale: { zero: true } };
-  const color = { field: "bandName", type: "ordinal", scale: bandColor(t), legend: bandLegend(narrow, narrow ? {} : { columns: 3 }) };
+function marketSpec(t, narrow) {
   return {
     config: vegaConfig(t),
-    height: narrow ? 260 : 300,
-    encoding: { x, y, color },
+    height: narrow ? 240 : 280,
+    encoding: {
+      x: { field: "fiscal_year", type: "ordinal", axis: { title: "Fiscal year", labelAngle: 0, labelExpr: narrow ? "'’' + slice(datum.label, 2)" : "datum.label" } },
+      y: { field: "dollars", type: "quantitative", axis: { title: "Spend a year", format: "$~s", tickCount: 5 }, scale: { zero: true } },
+      color: { field: "kind", type: "nominal", scale: { domain: ["E-content", "Print"], range: [t.pal.up, t.pal.quietLine] }, legend: { orient: "top", title: null } },
+    },
     layer: [
       { mark: { type: "line", strokeWidth: 2.5, interpolate: "monotone" } },
       {
         mark: { type: "point", filled: true, size: 45, stroke: t.bg, strokeWidth: 1 },
         encoding: {
           tooltip: [
-            { field: "bandName", title: "Size" },
+            { field: "kind", title: "Spend" },
             { field: "fiscal_year", title: "Fiscal year" },
-            { field: "digital_share", type: "quantitative", title: "Digital share", format: ".1%" },
+            { field: "dollars", type: "quantitative", title: "Spend", format: "$,.0f" },
           ],
         },
       },
@@ -402,10 +398,10 @@ function boxSpec(t, narrow) {
     { field: "p75", type: "quantitative", title: "75th percentile", format: ".0%" },
     { field: "p90", type: "quantitative", title: "90th percentile", format: ".0%" },
   ];
-  const y = (field) => ({ field, type: "quantitative", scale: { domain: [0, 0.6] }, axis: { title: "Share of borrowing that is digital", format: ".0%", tickCount: 6 } });
+  const y = (field) => ({ field, type: "quantitative", scale: { domain: [0, 0.9] }, axis: { title: "E-content share of collection budget", format: ".0%", tickCount: 6 } });
   return {
     config: vegaConfig(t),
-    height: narrow ? 260 : 300,
+    height: narrow ? 240 : 280,
     encoding: { x },
     layer: [
       { mark: { type: "rule", color: t.muted, strokeWidth: 1.5 }, encoding: { y: y("p10"), y2: { field: "p90" }, tooltip } },
@@ -421,75 +417,79 @@ function boxSpec(t, narrow) {
 }
 
 export default function Dashboard({ dashboard, givens }) {
-  const t = useTheme();
+  const t0 = useTheme();
+  // Extra hues for this page: orange for consortium checks, grey for non-prospects and print.
+  const t = React.useMemo(() => ({
+    ...t0,
+    pal: { ...t0.pal, alt: t0.dark ? "#f0a030" : "#c46a00", quiet: t0.dark ? "#5b5f66" : "#b8bcc4", quietLine: t0.dark ? "#9ca3af" : "#8a8f98" },
+  }), [t0]);
   const narrow = useNarrow();
   const q = useQuery({ query: "econtent_prospects_dashboard", givens });
   const pts = useQuery({ query: "econtent_points", givens });
-  const trendQ = useQuery({ query: "econtent_trend", givens });
-  const statesQ = useQuery({ query: "econtent_room_by_state", givens });
+  const marketQ = useQuery({ query: "econtent_market", givens });
+  const statesQ = useQuery({ query: "econtent_gap_states", givens });
   const spreadQ = useQuery({ query: "econtent_share_spread", givens });
-  const error = [q, pts, trendQ, statesQ, spreadQ].map((x) => x.error).find(Boolean);
+  const leftQ = useQuery({ query: "econtent_left_out", givens });
+  const error = [q, pts, marketQ, statesQ, spreadQ, leftQ].map((x) => x.error).find(Boolean);
   const k = q.rows[0] || {};
   const prospects = (k.prospects || []).map((r) => ({ ...r, name: `${titleCase(r.system)} (${r.state})` }));
-  const topShare = k.total_room ? k.top_25_room / k.total_room : null;
+  const consortium = (k.consortium || []).map((r) => ({ ...r, name: `${titleCase(r.system)} (${r.state})` }));
+  const topShare = k.pitch_gap ? k.top_25_gap / k.pitch_gap : null;
+
+  // Market: first and last year in view.
+  const market = marketQ.rows.map((r) => ({ ...r, econtent_budget: Number(r.econtent_budget), print_budget: Number(r.print_budget) }));
+  const m0 = market[0] || {};
+  const m1 = market[market.length - 1] || {};
+  const marketGrowth = m0.econtent_budget ? m1.econtent_budget / m0.econtent_budget - 1 : null;
+  const marketRows = React.useMemo(
+    () => market.flatMap((r) => [
+      { fiscal_year: r.fiscal_year, kind: "E-content", dollars: r.econtent_budget },
+      { fiscal_year: r.fiscal_year, kind: "Print", dollars: r.print_budget },
+    ]),
+    [marketQ.rows]
+  );
 
   const points = React.useMemo(
     () => pts.rows.map((r) => {
       const b = BAND_BY_CODE[r.band] || {};
-      // round() comes back as a DECIMAL, which can arrive as a string; Vega's aggregates need numbers.
-      return { ...r, share: Number(r.share), budget: Number(r.budget), room: Number(r.room), bandName: b.name, bandShort: b.short };
+      const kindName = KIND_BY_CODE[r.kind] || "Not a prospect";
+      // round() comes back as a DECIMAL, which can arrive as a string; Vega needs numbers.
+      return {
+        ...r,
+        econtent_vs_typical: Number(r.econtent_vs_typical), digital_vs_typical: Number(r.digital_vs_typical),
+        budget: Number(r.budget), gap: Number(r.gap), bandName: b.name, kindName,
+        kindOrder: kindName === "Not a prospect" ? 0 : kindName === "Pitch the library" ? 2 : 1,
+        name: `${titleCase(r.library_name)} (${r.state})`,
+      };
     }),
     [pts.rows]
   );
-  // Reference segments: each band's typical share, spanning the middle 80% of its budgets in this view.
-  const refs = React.useMemo(() => {
-    const byBand = {};
-    for (const p of points) (byBand[p.bandName] = byBand[p.bandName] || []).push(p.budget);
-    return (k.room_by_size || [])
-      .map((r) => {
-        const name = bandName(r.band);
-        const budgets = (byBand[name] || []).slice().sort((a, b) => a - b);
-        return { bandName: name, typical: r.typical_for_band, lo: quantile(budgets, 0.1), hi: quantile(budgets, 0.9) };
-      })
-      .filter((r) => r.typical != null && r.lo != null);
-  }, [points, k.room_by_size]);
-  // Call-outs for the top prospects by room, stacked down the right side in even log steps.
-  const callouts = React.useMemo(() => {
-    const top = points.filter((p) => p.label).sort((a, b) => a.room_rank - b.room_rank).slice(0, narrow ? 5 : 8);
-    return top.map((p, i) => ({
-      share: p.share, budget: p.budget,
-      lx: narrow ? 0.62 : 0.5,
-      ly: 40000000 / Math.pow(narrow ? 1.75 : 1.5, i),
-      text: narrow ? `${p.room_rank}` : `${p.room_rank}  ${shorten(titleCase(p.label), 40)}`,
-    }));
-  }, [points, narrow]);
-  const named = points.filter((p) => p.label).sort((a, b) => a.room_rank - b.room_rank).slice(0, 5);
-  const scatter = React.useMemo(() => scatterSpec(t, narrow, refs, callouts), [t, narrow, refs, callouts]);
-  const trendRows = React.useMemo(() => trendQ.rows.map((r) => ({ ...r, bandName: bandName(r.band) })), [trendQ.rows]);
-  const trend = React.useMemo(() => trendSpec(t, narrow), [t, narrow]);
+  const labels = React.useMemo(() => points.filter((p) => p.label).sort((a, b) => a.gap_rank - b.gap_rank), [points]);
+  const quadrant = React.useMemo(() => quadrantSpec(t, narrow, labels), [t, narrow, labels]);
+  const market_ = React.useMemo(() => marketSpec(t, narrow), [t, narrow]);
   const box = React.useMemo(() => boxSpec(t, narrow), [t, narrow]);
   const spreadRows = React.useMemo(() => {
-    const typical = Object.fromEntries((k.room_by_size || []).map((r) => [bandName(r.band), r.typical_for_band]));
+    const typical = Object.fromEntries((k.by_size || []).map((r) => [bandName(r.band), r.typical_econtent]));
     return spreadQ.rows.map((r) => {
       const b = BAND_BY_CODE[r.band] || {};
       return { ...r, bandName: b.name, bandShort: b.short, typical: typical[b.name] ?? r.p50 };
     });
-  }, [spreadQ.rows, k.room_by_size]);
-  const plottedRoom = points.reduce((sum, p) => sum + (p.room || 0), 0);
-  const plottedShare = k.total_room ? plottedRoom / k.total_room : null;
+  }, [spreadQ.rows, k.by_size]);
 
-  const mapValues = React.useMemo(() => Object.fromEntries(statesQ.rows.map((r) => [r.state, r.room])), [statesQ.rows]);
+  const mapValues = React.useMemo(() => Object.fromEntries(statesQ.rows.map((r) => [r.state, r.gap_share])), [statesQ.rows]);
   const mapExtra = React.useMemo(
-    () => Object.fromEntries(statesQ.rows.map((r) => [r.state, { prospects: r.prospects, systems: r.systems }])),
+    () => Object.fromEntries(statesQ.rows.map((r) => [r.state, { gap: r.gap, prospects: r.prospects, systems: r.systems }])),
     [statesQ.rows]
   );
-  const mapScale = React.useMemo(() => ({ type: "sqrt", range: t.pal.seq, zero: true, interpolate: "lab" }), [t]);
+  const mapScale = React.useMemo(() => ({ type: "linear", range: t.pal.seq, zero: true, interpolate: "lab" }), [t]);
   const mapTooltip = React.useMemo(() => [
     { field: "properties.name", type: "nominal", title: "State" },
-    { field: "properties.value", type: "quantitative", title: "Room", format: "$,.0f" },
-    { field: "properties.prospects", type: "quantitative", title: "Systems below typical", format: "," },
+    { field: "properties.value", type: "quantitative", title: "Gap, share of collection budget", format: ".1%" },
+    { field: "properties.gap", type: "quantitative", title: "E-content gap", format: "$,.0f" },
+    { field: "properties.prospects", type: "quantitative", title: "Libraries to pitch", format: "," },
     { field: "properties.systems", type: "quantitative", title: "Systems benchmarked", format: "," },
   ], []);
+  const leftOut = Object.fromEntries(leftQ.rows.map((r) => [r.benchmark_status, r.candidate_systems]));
 
   return (
     <div className="od">
@@ -500,74 +500,72 @@ export default function Dashboard({ dashboard, givens }) {
       <div className={q.loading ? "loading" : ""}>
         <div className="od-kpis">
           <div className="od-kpi">
-            <div className="v">{money(k.total_room)}</div>
-            <div className="l">Collection budget that could move to digital</div>
-            <div className="s">If every system below its size's typical digital share matched it</div>
+            <div className="v">{money(m1.econtent_budget)}</div>
+            <div className="l">Spent on e-content by libraries, FY{m1.fiscal_year || "2024"}</div>
+            <div className="s">{marketGrowth != null ? `${pct(marketGrowth)} since FY${m0.fiscal_year}` : ""} · {share(m1.econtent_share_of_collection)} of collection budgets</div>
+          </div>
+          <div className="od-kpi">
+            <div className="v">{money(k.pitch_gap)}</div>
+            <div className="l">A year more e-content at the typical share</div>
+            <div className="s">Across {count(k.libraries_to_pitch)} libraries below peers on both counts; budget that shifts from print</div>
           </div>
           <div className="od-kpi hot">
-            <div className="v">{share(topShare)}</div>
-            <div className="l">Of that room sits in the top 25 systems</div>
-            <div className="s">{money(k.top_25_room)} across 25 of {k.systems_below_band != null ? k.systems_below_band.toLocaleString() : "–"} prospects</div>
+            <div className="v">{money(k.top_25_gap)}</div>
+            <div className="l">Held by the top 25 libraries</div>
+            <div className="s">{share(topShare)} of the gap: a short call list</div>
           </div>
           <div className="od-kpi">
-            <div className="v">{k.systems_below_band != null ? k.systems_below_band.toLocaleString() : "–"}</div>
-            <div className="l">Systems below typical for their size</div>
-            <div className="s">of {k.systems_benchmarked != null ? k.systems_benchmarked.toLocaleString() : "–"} benchmarked, FY2024</div>
-          </div>
-          <div className="od-kpi">
-            <div className="v">{pct1(k.median_digital_share)}</div>
-            <div className="l">Median digital share of borrowing</div>
-            <div className="s">Systems in this view</div>
+            <div className="v">{count(k.consortium_checks)}</div>
+            <div className="l">More to reach through a consortium</div>
+            <div className="s">{money(k.consortium_gap)} gap; they pay under half the typical per digital loan</div>
           </div>
         </div>
 
         <Card
-          title="Big budgets, low digital share: the prospects sit left of their size's line"
-          sub={`Each dot is a library system with a collection budget of $100k or more (${points.length.toLocaleString()} systems, ${share(plottedShare)} of the room). The outlined line in each colour is the typical (median) digital share for that size. Numbered: the systems with the most room, as ranked below.`}
+          title="The prospects sit below their peers on both counts"
+          sub={`Each dot is a library system with a collection budget of $100k or more (${count(points.length)} systems), placed by how far it sits from the typical for its size. Dot size: collection budget. Numbered: the five libraries with the biggest e-content gap.`}
         >
-          <div className="od-vega"><VegaChart spec={scatter} data={points} /></div>
-          {narrow && (
-            <ol className="od-names">
-              {named.map((p) => (
-                <li key={p.room_rank}><b>{p.room_rank}</b> {titleCase(p.label)}</li>
-              ))}
-            </ol>
-          )}
+          <div className="od-vega"><VegaChart spec={quadrant} data={points} /></div>
+          <ol className="od-names">
+            {labels.map((p) => (
+              <li key={p.gap_rank}><b>{p.gap_rank}</b> {titleCase(p.label)} <span>{money(p.gap)}</span></li>
+            ))}
+          </ol>
         </Card>
 
         <div className="od-grid">
-          <Card title="Bigger systems lend more digitally" sub="Digital share of borrowing by system size, FY2024. Box: middle half of systems. Whiskers: middle 80%. Labelled line: the typical (median) share.">
-            <div className="od-vega"><VegaChart spec={box} data={spreadRows} /></div>
+          <Card title="E-content spend is catching up with print" sub="Library spend on e-content and on print materials, US dollars as reported, FY2018 to FY2024">
+            <div className="od-vega"><VegaChart spec={market_} data={marketRows} /></div>
           </Card>
-          <Card title="Digital share jumped in 2020 and kept climbing" sub="Share of all borrowing that is digital, by system size, FY2018 to FY2024">
-            <div className="od-vega"><VegaChart spec={trend} data={trendRows} /></div>
+          <Card title="Bigger systems put more of their budget into e-content" sub="E-content share of collection budget by system size, FY2024. Box: middle half. Whiskers: middle 80%. Labelled line: typical (median).">
+            <div className="od-vega"><VegaChart spec={box} data={spreadRows} /></div>
           </Card>
         </div>
 
         <div className="od-grid wide-left">
-          <Card title="Room by state" sub="Collection budget that would move to digital if every system matched its size's typical share">
+          <Card title="Where libraries under-spend most on e-content" sub="E-content gap as a share of each state's collection budget, so big states don't win for being big">
             <StateMap
               t={t}
               values={mapValues}
               extra={mapExtra}
               scale={mapScale}
-              legendTitle="Room"
-              legendFormat="$~s"
+              legendTitle="Gap ÷ collection budget"
+              legendFormat=".0%"
               tooltip={mapTooltip}
             />
           </Card>
-          <Card title="Biggest room for digital content" sub="Budget that would move to digital, by library system">
+          <Card title="Reach these through their consortium" sub="Below peers on both counts, but paying under half the typical e-content dollars per digital loan: a state or shared collection likely buys their e-books">
             <Bars
-              rows={prospects.slice(0, 10)}
-              value="room"
+              rows={consortium.slice(0, 8)}
+              value="gap"
               label="name"
-              right={(r) => money(r.room)}
-              note={(r) => `${share(r.digital_share)} digital · typical ${share(r.typical_for_band)}`}
+              right={(r) => money(r.gap)}
+              note={(r) => `$${Number(r.per_checkout).toFixed(2)} a loan · typical $${Number(r.typical_per_checkout).toFixed(2)}`}
             />
           </Card>
         </div>
 
-        <Card title="Prospect list" sub="Systems below the typical digital share for their size, ranked by room">
+        <Card title="Libraries to pitch" sub="Below the typical for their size on both digital borrowing and e-content spend, paying for their own digital loans, ranked by e-content gap">
           <div className="od-tablewrap">
             <table>
               <thead>
@@ -575,9 +573,11 @@ export default function Dashboard({ dashboard, givens }) {
                   <th className="rank">#</th>
                   <th className="agency">System</th>
                   <th className="hide-sm">Collection budget</th>
-                  <th>Digital</th>
+                  <th>E-content share</th>
                   <th className="hide-sm">Typical</th>
-                  <th>Room</th>
+                  <th className="hide-sm">Digital loans</th>
+                  <th className="hide-sm">Typical</th>
+                  <th>Gap</th>
                 </tr>
               </thead>
               <tbody>
@@ -586,9 +586,11 @@ export default function Dashboard({ dashboard, givens }) {
                     <td className="rank">{i + 1}</td>
                     <td className="agency">{r.name}</td>
                     <td className="hide-sm">{money(r.collection_budget)}</td>
-                    <td>{share(r.digital_share)}</td>
-                    <td className="hide-sm">{share(r.typical_for_band)}</td>
-                    <td className="up">{money(r.room)}</td>
+                    <td>{share(r.econtent_share)}</td>
+                    <td className="hide-sm">{share(r.typical_econtent)}</td>
+                    <td className="hide-sm">{share(r.digital_share)}</td>
+                    <td className="hide-sm">{share(r.typical_digital)}</td>
+                    <td className="up">{money(r.gap)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -597,11 +599,14 @@ export default function Dashboard({ dashboard, givens }) {
         </Card>
       </div>
       <p className="foot">
-        Source: IMLS Public Libraries Survey, FY2024 (trend: FY2018 to FY2024). Digital share is digital borrowing over
-        all borrowing. Typical is the median for the system's size band (population served) across all US systems,
-        whatever state is picked. Room is collection budget times the gap to that median, for systems below it. It
-        assumes peers' digital share is the right target; some communities borrow more print by choice. The trend
-        chart covers every system that reported both figures that year, not only the benchmarked ones.
+        Source: IMLS Public Libraries Survey, FY2024 (market trend FY2018 to FY2024). E-content spend covers e-books,
+        e-audio, e-video, databases and e-serials. A library is a prospect when it is below the typical (median) for its
+        size band, across all US systems, on both its digital share of borrowing and its e-content share of collection
+        budget. The gap is collection budget times the distance to the typical e-content share. Collection budgets are
+        roughly fixed, so the gap is spend that would shift from print to digital: for an e-content vendor, share of
+        wallet rather than new library money. Left out: {count(leftOut["0 digital loans reported"])} systems reporting
+        0 digital loans (almost certainly not reported) and {count(leftOut["No own e-content spend"])} lending e-books
+        with no e-content spend of their own (bought by a state or consortium).
       </p>
     </div>
   );

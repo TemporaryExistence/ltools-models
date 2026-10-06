@@ -1,0 +1,30 @@
+##! experimental.givens
+import "../libraries.malloy"
+
+#" Which fast-growing counties spend least on their libraries, and what would it cost to close the gap? FY2024 library
+#" operating spend per resident (every system serving the county, regional systems shared by population) against the
+#" median county in the same state, with the yearly cost to reach that median. Population growth 2020 - 2024 (Census).
+#" The median is a peer benchmark, not a standard of need. Who acts: county budget offices and commissioners setting the
+#" library appropriation; library directors making the budget case.
+# artifact { title="Fast-growing counties underfunding their libraries" givens { STATE="NC" } } dashboard { columns=6 }
+query: county_library_funding_gap is county_spend_gap -> {
+  where: state ~ $STATE
+  # colspan=2
+  aggregate:
+    # label="Counties below their state's median"
+    counties_below_median
+    # label="Yearly cost to bring them to the median" currency
+    cost_to_reach_state_median
+    # label="Of which, fast-growing counties (8%+)" currency
+    fast_growth_cost is cost_to_reach_state_median { where: population_growth_2020_2024 >= 0.08 }
+  # colspan=6
+  nest:
+    # label="Fast-growing counties below the median, by yearly cost to close the gap"
+    fast_growing_counties_underfunding_libraries
+    # colspan=3
+    # label="By growth band"
+    gap_by_growth_band
+    # colspan=3
+    # label="Every county below the median"
+    cost_to_reach_state_median_by_county
+}

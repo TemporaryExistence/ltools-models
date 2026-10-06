@@ -4,16 +4,29 @@
 // out the same as the heavy sources in flights.malloy (flights, aircraft_legs, chain_slots), which stay for
 // exploration. Rebuild and redeploy the files when the flights data or the method changes.
 // Time filter: the summaries are monthly (daily for flights_daily), so dashboards filter on FLIGHT_MONTH, not PERIOD.
+//
+// Talk-to-your-data: these are the sources an AI should answer from. Each source, measure and "playbook" view
+// (named after the buyer question it answers) says in its #" text what it means, its units, its caveats, and who
+// acts on it. Common columns in the files: month_label ("June 2026"), month_start (date), carrier (BTS code, e.g.
+// "AA"), airline ("American"), origin (departure airport code, e.g. "RDU"), size_band (origin size: "1 Hub (400+/day)"
+// to "5 Very small (<10/day)"), dep_hour (scheduled local departure hour, 0-23), dest, route ("RDU → ATL").
+// Refining a view: + { where: ... } keeps the view's ordering; + { limit: N } alone drops it (Malloy 0.2.56, friction
+// log F59), so to shorten a playbook view add order_by as well, e.g. + { order_by: slot_rank limit: 10 }.
 
-#" The airline list (13 airlines), for the Airline filter.
+#" The airlines in the data (13; regional carriers such as SkyWest and Envoy appear under their own names, not the
+#" mainline brand they fly for), with total scheduled flights May-July 2026 (n_flights). Use for filter values.
+#" Spirit reported only 354 flights in these three months, so its totals are tiny by construction, not a sign of
+#" reliability.
 source: airline_list is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_airlines.parquet')
 """) extend {
   primary_key: airline
 }
 
-#" One row per origin airport (354): city, state, size band, departures and delay-chain minutes over May-July 2026,
-#" and latitude/longitude from OurAirports (public domain, ourairports.com).
+#" One row per US departure airport (354): origin (code), origin_city, origin_state, size_band, departures and
+#" departures_per_day (May-July 2026, 92 days), delay-chain minutes started there (chain_minutes = upper bound,
+#" chain_minutes_next_leg = conservative), and latitude/longitude from OurAirports (public domain). Fast. Use it to
+#" look up an airport's code, size band or city, or to rank airports by the delay-chain cost they start.
 source: airport_list is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_airports.parquet')
 """) extend {
@@ -21,40 +34,61 @@ source: airport_list is duckdb.sql("""
   dimension:
     #" "RDU · Raleigh/Durham, NC"
     airport_label is concat(origin, ' · ', origin_city)
-    #" Delay-chain cost started at this airport over May-July 2026, at $100.76 a minute.
+    #" UPPER-BOUND delay-chain cost (US dollars, May-July 2026) started by late first flights from this airport:
+    #" all later-flight late-aircraft minutes at $100.76 a minute (A4A 2024 block-minute cost).
     chain_cost_usd is chain_minutes * 100.76
+    #" CONSERVATIVE delay-chain cost (US dollars, May-July 2026): next-flight-only minutes at $69.07 a minute (A4A 2025
+    #" block-minute cost less fuel). Quote the two together as a range.
+    chain_cost_conservative_usd is chain_minutes_next_leg * 69.07
   measure:
+    #" Number of airports.
     airport_count is count()
 }
 
-#" Flights per scheduled departure hour, airline, origin airport and month (33,542 rows), with the counts and delay
-#" sums behind the `flights` measures. Same measure names and meanings as `flights`.
+#" START HERE for on-time, late-arrival, cancellation and delay-cause questions (fast: 33,542 pre-summed rows).
+#" Every scheduled US domestic flight May-July 2026 (BTS on-time data, 1.85M flights), summed by month, airline,
+#" departure airport (origin, size_band, and airport.* for city/state) and scheduled departure hour (dep_hour, local).
+#" Gives the same numbers as the slow `flights` source. "Late" = arrived 15+ minutes after schedule (the BTS and DOT
+#" definition). Delay causes are the airline-reported BTS categories, in hours. No destination here: for routes use
+#" routes_summary or route_hours_summary.
 source: delays_summary is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_cube.parquet')
 """) extend {
   join_one: airport is airport_list on origin = airport.origin
 
   measure:
+    #" Scheduled flights (including cancelled and diverted).
     flight_count is n_flights.sum()
+    #" Cancelled flights.
     cancellations is n_cancelled.sum()
+    #" Share of scheduled flights cancelled.
     # percent
     cancel_rate is cancellations / flight_count
-    #" Share of operated flights arriving 15+ minutes late.
+    #" Share of operated flights (not cancelled or diverted) arriving 15+ minutes late. The main on-time measure:
+    #" on-time rate = 1 - late_rate.
     # percent
     late_rate is n_late.sum() / n_operated.sum()
-    #" Average arrival delay in minutes (operated flights; early arrivals count as negative).
+    #" Average arrival delay in minutes (operated flights; early arrivals count as negative, so it can look small).
     avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
+    #" Delay hours BTS attributes to the airline itself (crew, maintenance, cleaning, fuelling, baggage).
     airline_delay_hours is carrier_delay_min_sum.sum() / 60
+    #" Delay hours from significant weather.
     weather_delay_hours is weather_delay_min_sum.sum() / 60
+    #" Delay hours from the national air system (air traffic control, airport operations, heavy traffic, non-extreme weather).
     air_traffic_delay_hours is nas_delay_min_sum.sum() / 60
+    #" Delay hours from security (evacuations, screening lines).
     security_delay_hours is security_delay_min_sum.sum() / 60
+    #" Delay hours because the aircraft arrived late from its previous flight (the delay-chain or knock-on cause).
     late_aircraft_delay_hours is late_aircraft_delay_min_sum.sum() / 60
+    #" Of all cause-attributed delay hours, the share from the aircraft arriving late from its previous flight.
     # percent
     late_aircraft_share is late_aircraft_delay_min_sum.sum()
       / (carrier_delay_min_sum.sum() + weather_delay_min_sum.sum() + nas_delay_min_sum.sum()
          + security_delay_min_sum.sum() + late_aircraft_delay_min_sum.sum())
+    #" Number of distinct departure airports.
     airport_count is count(origin)
 
+  #" Reliability by airline (biggest first): late rate, cancel rate, average arrival delay.
   view: by_airline is {
     group_by: airline
     aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
@@ -62,16 +96,19 @@ source: delays_summary is duckdb.sql("""
     limit: 15
   }
 
+  #" Late rate by scheduled departure hour: delays build through the day.
   view: by_departure_hour is {
     group_by: dep_hour
     aggregate: late_rate, flight_count
     order_by: dep_hour
   }
 
+  #" Delay hours by cause (whole selection).
   view: delay_causes is {
     aggregate: airline_delay_hours, late_aircraft_delay_hours, air_traffic_delay_hours, weather_delay_hours
   }
 
+  #" The 20 busiest departure airports and their late rate.
   view: busiest_airports is {
     group_by: origin
     aggregate: flight_count, late_rate
@@ -79,29 +116,75 @@ source: delays_summary is duckdb.sql("""
     limit: 20
   }
 
+  #" Reliability by departure-airport size band (hub to very small).
   view: by_size_band is {
     group_by: size_band
     aggregate: airport_count, flight_count, late_rate, cancel_rate, avg_arrival_delay, late_aircraft_share
     order_by: size_band
   }
 
+  #" Delay hours by cause, per airport size band.
   view: delay_causes_by_size is {
     group_by: size_band
     aggregate: airline_delay_hours, late_aircraft_delay_hours, air_traffic_delay_hours, weather_delay_hours
     order_by: size_band
   }
+
+  #" PLAYBOOK "What causes delays, and how much is a late-arriving aircraft?" Delay hours by cause and the
+  #" late-aircraft share, nationally and by airport size band. Who acts: airline operations (late aircraft and
+  #" airline causes are theirs to cut; air-traffic and weather mostly are not). A large late-aircraft share means
+  #" delays are knock-ons from earlier flights: see chain_slots_summary -> departures_to_protect_first.
+  view: what_causes_delays is {
+    aggregate:
+      flight_count, late_rate, airline_delay_hours, late_aircraft_delay_hours, air_traffic_delay_hours,
+      weather_delay_hours, security_delay_hours, late_aircraft_share
+    nest: by_size_band is {
+      group_by: size_band
+      aggregate: flight_count, late_rate, airline_delay_hours, late_aircraft_delay_hours, air_traffic_delay_hours,
+        weather_delay_hours, late_aircraft_share
+      order_by: size_band
+    }
+  }
 }
 
-#" Flights per day, airline and origin airport (122,552 rows), for day-by-day charts. Same measures as `flights`.
+#" Flights per calendar day, airline and departure airport (122,552 rows; fast), for day-by-day trends, day-of-week
+#" questions (weekday) and finding bad days (storms, outages). Columns: flight_date, month_label, carrier, airline, origin, size_band.
 source: daily_summary is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_daily.parquet')
 """) extend {
+  dimension:
+    #" Day of the week of the flight date ("Mon" ... "Sun").
+    weekday is
+      pick 'Sun' when day_of_week(flight_date) = 1
+      pick 'Mon' when day_of_week(flight_date) = 2
+      pick 'Tue' when day_of_week(flight_date) = 3
+      pick 'Wed' when day_of_week(flight_date) = 4
+      pick 'Thu' when day_of_week(flight_date) = 5
+      pick 'Fri' when day_of_week(flight_date) = 6
+      else 'Sat'
+    #" Day of the week as a number for sorting, 1 = Sunday ... 7 = Saturday.
+    weekday_number is day_of_week(flight_date)
   measure:
+    #" Scheduled flights.
     flight_count is n_flights.sum()
+    #" Cancelled flights.
     cancellations is n_cancelled.sum()
+    #" Share of operated flights arriving 15+ minutes late.
     # percent
     late_rate is n_late.sum() / n_operated.sum()
 
+  #" PLAYBOOK "Which day of the week is most reliable to fly?" Late and cancel rates by weekday. Filter to an airport
+  #" with + { where: origin = 'RDU' }. Who acts: travellers and corporate travel managers choosing a travel day.
+  view: best_day_of_week is {
+    group_by: weekday, weekday_number
+    aggregate:
+      flight_count, late_rate
+      # percent
+      cancel_rate is cancellations / flight_count
+    order_by: weekday_number
+  }
+
+  #" Flights, late rate and cancellations per day.
   view: by_day is {
     group_by: flight_date
     aggregate: flight_count, late_rate, cancellations
@@ -116,40 +199,52 @@ source: month_list is daily_summary -> {
   order_by: first_day
 }
 
-#" The same hour/airline/airport/month rows, with the `aircraft_legs` measures (late rate over flights that operated
-#" and have a tail number; first-flight share; delay-chain share). Same measure names and meanings as `aircraft_legs`.
+#" START HERE for airport comparisons, small airport vs hub, and the best hour to depart from an airport (fast).
+#" The same month x airline x departure airport x scheduled hour rows as delays_summary, with the aircraft-day
+#" measures: each flight is placed in its aircraft's day (tail number), so it knows whether it is the aircraft's first
+#" flight of the day and whether the previous flight was late. late_rate here counts flights that operated and have a
+#" tail number (within 0.1 point of delays_summary). Same numbers as the slow `aircraft_legs` source.
 source: legs_summary is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_cube.parquet')
 """) extend {
   join_one: airport is airport_list on origin = airport.origin
 
   measure:
+    #" Scheduled flights.
     flight_count is n_flights.sum()
+    #" Share of scheduled flights cancelled.
     # percent
     cancel_rate is n_cancelled.sum() / n_flights.sum()
+    #" Flights that operated and have a tail number (the base of late_rate).
     legs is n_legs.sum()
+    #" Of those, flights that arrived 15+ minutes late.
     late_legs is n_late_legs.sum()
     #" Share of operated flights arriving 15+ minutes late.
     # percent
     late_rate is late_legs / legs
+    #" Average arrival delay in minutes (early arrivals count as negative).
     avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
-    #" Share of an airport's departures that are the aircraft's first flight of the day.
+    #" Share of an airport's departures that are the aircraft's first flight of the day. First flights leave with a
+    #" fresh aircraft, so airports with a high share (small airports where planes overnight) start the day on time.
     # percent
     first_flight_share is n_first_legs.sum() / legs
     #" Of the flights that arrived late, the share whose aircraft's previous flight that day was also late.
     # percent
     chain_share is n_chain_late_legs.sum() / late_legs
+    #" Of cause-attributed delay hours, the share from the aircraft arriving late from its previous flight.
     # percent
     late_aircraft_share is late_aircraft_delay_min_sum.sum()
       / (carrier_delay_min_sum.sum() + weather_delay_min_sum.sum() + nas_delay_min_sum.sum()
          + security_delay_min_sum.sum() + late_aircraft_delay_min_sum.sum())
 
+  #" Delay-chain exposure by airport size band.
   view: chain_by_size is {
     group_by: size_band
     aggregate: legs, late_rate, cancel_rate, first_flight_share, chain_share, late_aircraft_share
     order_by: size_band
   }
 
+  #" Late rate by scheduled hour, per airport size band (5am onwards).
   view: hour_by_size is {
     where: dep_hour >= 5
     group_by: dep_hour, size_band
@@ -158,6 +253,7 @@ source: legs_summary is duckdb.sql("""
     order_by: dep_hour
   }
 
+  #" Late rate by scheduled departure hour.
   view: by_hour is {
     group_by: dep_hour
     aggregate: late_rate, legs
@@ -165,33 +261,69 @@ source: legs_summary is duckdb.sql("""
     order_by: dep_hour
   }
 
+  #" Airlines (biggest first) with late and cancel rates.
   view: by_airline is {
     group_by: airline
     aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
     order_by: flight_count desc
     limit: 10
   }
+
+  #" PLAYBOOK "Is it better to fly out of a small airport or a hub?" Reliability by departure-airport size band:
+  #" late rate, cancel rate, average delay, the share of departures that are the aircraft's first flight of the day,
+  #" and the share of late flights whose previous flight was also late. Who acts: travellers and corporate travel
+  #" managers choosing an airport; small airports' air-service teams arguing their reliability to airlines. Caveat:
+  #" small airports cancel more often and have fewer options when a flight is cancelled; the answer is "smaller
+  #" airports are more often on time, hubs recover better", not one winner.
+  view: small_airport_vs_hub is {
+    group_by: size_band
+    aggregate:
+      airport_count is count(origin)
+      flight_count, late_rate, cancel_rate, avg_arrival_delay, first_flight_share, chain_share
+    order_by: size_band
+  }
+
+  #" PLAYBOOK "When should I fly out of <airport> to avoid delays?" Late rate and cancel rate by scheduled departure
+  #" hour, with at least 50 flights per hour. Filter to one airport first, e.g.
+  #" run: legs_summary -> best_departure_hour_from_airport + { where: origin = 'RDU' }. Who acts: business travellers
+  #" and corporate travel managers (book the early hours, which leave before delays build up); airlines choosing
+  #" where to add flights. For a specific route use route_hours_summary -> best_departure_window_by_route.
+  view: best_departure_hour_from_airport is {
+    group_by: dep_hour
+    aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
+    having: flight_count >= 50
+    order_by: dep_hour
+  }
 }
 
-#" Flights in a delay chain by leg of the aircraft's day (1-6, 7 = seventh or later) and, for later flights, whether
-#" the aircraft's first and previous flights that day were late (52,887 rows). Same measures as `aircraft_legs`.
+#" How delay carries through an aircraft's day (fast, 52,887 rows): flights by leg of the aircraft's day (leg 1 = first
+#" flight, 7 = seventh or later) and, for later flights, whether the aircraft's first flight (day_start) and previous
+#" flight (inbound) that day were late. Answers "how much more likely is a later flight to be late when the morning
+#" flight was late?" Columns also include month_label, airline, origin, size_band.
 source: legs_detail is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_legs.parquet')
 """) extend {
   dimension:
+    #" Leg of the aircraft's day: 1 = first flight, 7 = seventh or later.
     leg is chain_leg
+    #" Later flights only: whether the aircraft's first flight of the day arrived 15+ minutes late.
     day_start is
       pick 'First flight of the day late' when chain_first_leg_late
       else 'First flight of the day on time'
+    #" Later flights only: whether the aircraft's previous flight that day arrived 15+ minutes late.
     inbound is
       pick 'Inbound aircraft late' when chain_prev_leg_late
       else 'Inbound aircraft on time'
   measure:
+    #" Flights that operated and have a tail number.
     legs is n_legs.sum()
+    #" Of those, flights arriving 15+ minutes late.
     late_legs is n_late_legs.sum()
+    #" Share arriving 15+ minutes late.
     # percent
     late_rate is late_legs / legs
 
+  #" Later flights' late rate when the aircraft's first flight of the day was late vs on time.
   view: first_flight_effect is {
     where: leg > 1
     group_by: day_start
@@ -199,6 +331,7 @@ source: legs_detail is duckdb.sql("""
     order_by: day_start desc
   }
 
+  #" Later flights' late rate when the aircraft's previous flight was late vs on time.
   view: inbound_effect is {
     where: leg > 1
     group_by: inbound
@@ -206,6 +339,7 @@ source: legs_detail is duckdb.sql("""
     order_by: inbound desc
   }
 
+  #" Late rate by leg of the aircraft's day.
   view: late_by_leg is {
     group_by: leg
     aggregate: late_rate, legs
@@ -213,19 +347,26 @@ source: legs_detail is duckdb.sql("""
   }
 }
 
-#" Flights per route, airline and month (28,966 rows): `late_rate` as in `flights` (late / operated), `leg_late_rate`
-#" as in `aircraft_legs` (late / operated with a tail number).
+#" START HERE for route questions (fast, 28,966 rows): flights per route ("RDU → ATL"; origin, dest), airline and
+#" month. late_rate = share of operated flights arriving 15+ minutes late. For the best hour to fly a route, use
+#" route_hours_summary.
 source: routes_summary is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_routes.parquet')
 """) extend {
   measure:
+    #" Scheduled flights.
     flight_count is n_flights.sum()
+    #" Share of operated flights arriving 15+ minutes late.
     # percent
     late_rate is n_late.sum() / n_operated.sum()
+    #" Same, over flights with a tail number (matches legs_summary).
     # percent
     leg_late_rate is n_late_legs.sum() / n_legs.sum()
+    #" Average arrival delay in minutes (early arrivals count as negative).
     avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
 
+  #" Busy routes nationally (300+ flights) ranked by late rate. For one airport use least_reliable_routes instead
+  #" (a refinement cannot lower this view's 300-flight threshold).
   view: worst_routes is {
     group_by: route
     aggregate: flight_count, late_rate, avg_arrival_delay
@@ -234,6 +375,19 @@ source: routes_summary is duckdb.sql("""
     limit: 15
   }
 
+  #" PLAYBOOK "Which routes out of <airport> are least reliable?" Routes with 100+ flights in the selection, ranked
+  #" by late rate. Filter to the airport: run: routes_summary -> least_reliable_routes + { where: origin = 'RDU' }.
+  #" Who acts: travellers and travel managers (avoid, or allow a buffer); the airline and the two airports (fix the
+  #" route). Then use route_hours_summary -> best_departure_window_by_route for the most reliable hour.
+  view: least_reliable_routes is {
+    group_by: route
+    aggregate: flight_count, late_rate, avg_arrival_delay
+    having: flight_count >= 100
+    order_by: late_rate desc
+    limit: 15
+  }
+
+  #" Same ranking with the tail-number late rate (top 10).
   view: worst_routes_legs is {
     group_by: route
     aggregate: flight_count, late_rate is leg_late_rate, avg_arrival_delay
@@ -243,17 +397,23 @@ source: routes_summary is duckdb.sql("""
   }
 }
 
-#" Later flights of the day by the airport the aircraft flew in from (32,548 rows).
+#" Later flights of the day by the airport the aircraft flew in from (prev_origin), at each departure airport
+#" (origin) (fast, 32,548 rows): how often the inbound aircraft was late (inbound_late_rate) and how often the flight
+#" then left late. Answers "which inbound airports bring us late aircraft?"
 source: inbound_summary is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_inbound.parquet')
 """) extend {
   measure:
+    #" Later flights (aircraft already flew today).
     legs is n_legs.sum()
+    #" Share of those whose inbound flight (the aircraft's previous flight) arrived 15+ minutes late.
     # percent
     inbound_late_rate is n_inbound_late_legs.sum() / legs
+    #" Share of those arriving 15+ minutes late themselves.
     # percent
     late_rate is n_late_legs.sum() / legs
 
+  #" Inbound airports with 100+ later flights, by volume.
   view: inbound_from is {
     group_by: prev_origin
     aggregate: legs, inbound_late_rate, late_rate
@@ -263,26 +423,56 @@ source: inbound_summary is duckdb.sql("""
   }
 }
 
-#" Late later flights whose aircraft's late first flight of the day left from another airport, by that airport
-#" (39,986 rows).
+#" Where delay chains that reach an airport START (fast, 39,986 rows). Each row counts late flights departing an
+#" airport (origin = the airport AFFECTED) that were a later flight of an aircraft whose first flight of the day
+#" left from ANOTHER airport (first_origin = where the chain STARTED) and arrived late. To answer "which airports
+#" start the chains that reach RDU", filter origin = 'RDU' and rank first_origin (view
+#" airports_whose_late_starts_reach_here). The airline column is the airline of the late flight at the affected
+#" airport: add it to group_by to see whose network carries the chains in. Counts only; for dollar costs by starting
+#" airport use chain_slots_summary.
 source: chain_starts_summary is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_chain_starts.parquet')
 """) extend {
   measure:
+    #" Late later flights at the affected airport whose chain started elsewhere.
     late_legs is n_late_legs.sum()
 
+  #" Top 10 starting airports (first_origin) by late flights they feed into the selection.
   view: chain_starts is {
     group_by: first_origin
     aggregate: late_legs
     order_by: late_legs desc
     limit: 10
   }
+
+  #" PLAYBOOK "Which airports start the delay chains that reach <airport>?" Filter to the affected airport first:
+  #" run: chain_starts_summary -> airports_whose_late_starts_reach_here + { where: origin = 'RDU' }. first_origin is
+  #" where the aircraft's late morning flight started; share_of_chain_late_flights is its share of the affected
+  #" airport's chain-late flights. Who acts: the affected airport's operations and air-service team (raise it with
+  #" the airlines on those routes; ask for later first rotations or spare aircraft at the starting airport) and
+  #" the airline (protect those first departures: chain_slots_summary -> departures_to_protect_first).
+  view: airports_whose_late_starts_reach_here is {
+    group_by: first_origin
+    aggregate:
+      late_legs
+      # percent
+      share_of_chain_late_flights is late_legs / all(late_legs)
+    order_by: late_legs desc
+    limit: 15
+  }
 }
 
-#" The same slot rows as `chain_slots`, read from a small materialised file (4,497 rows, about 35 KB) instead of being
-#" recomputed from 1.85M flights. Built from the `chain_slots` source by build_summaries.sh (Malloy compiles the
-#" query, DuckDB writes the rows), so the numbers are identical; rebuild it when the flights data or the chain method
-#" changes. Dashboards read this; use `chain_slots` / `delay_chains` / `aircraft_legs` to explore the method.
+#" START HERE for the cost of delay chains: which departures to protect, which airports and airlines they cost, and
+#" what it is worth (fast, 4,497 rows; identical numbers to the slow `chain_slots` source).
+#" A delay chain: an aircraft's first flight of the day arrives 15+ minutes late and its later flights that day log
+#" "late aircraft" delay (BTS cause code). One row per SLOT = airline x first-flight departure airport (origin) x
+#" scheduled departure hour (dep_hour, local) that started at least one chain, May-July 2026 (92 days).
+#" COST IS A RANGE, ALWAYS QUOTE BOTH ENDS: conservative_cost_usd (only the NEXT flight's late-aircraft minutes, at
+#" $69.07 a minute = A4A 2025 block-minute cost less fuel) to downstream_cost_usd (UPPER BOUND: every later flight's
+#" minutes, at $100.76 a minute = A4A 2024 block-minute cost). Nationally $101.3M to $369.9M over the three months.
+#" Caveats: attribution, not proof; storms delay first and later flights together, so not every minute was
+#" avoidable. Airlines see their own propagation in more detail; this public view's value is that it covers every
+#" airline at every airport, so airports, smaller carriers benchmarking peers, and corporate travel buyers can use it.
 source: chain_slots_summary is duckdb.sql("""
   SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/chain_slots.parquet')
 """) extend {
@@ -295,34 +485,186 @@ source: chain_slots_summary is duckdb.sql("""
       pick concat(dep_hour::"INTEGER"::string, 'am') when dep_hour < 12
       pick '12pm' when dep_hour = 12
       else concat((dep_hour - 12)::"INTEGER"::string, 'pm')
-    #" The slot is among the 50 most costly nationally.
+    #" The slot is among the 50 most costly nationally (upper-bound ranking).
     in_top_50 is slot_rank <= 50
+    #" A morning first departure, scheduled 5:00-9:59am local (the first wave).
+    is_morning is dep_hour >= 5 and dep_hour <= 9
 
   measure:
+    #" Number of slots (airline x airport x hour) that started at least one late chain.
     slot_count is count()
+    #" Aircraft-days whose first flight in this slot arrived 15+ minutes late and flew again that day.
     late_first_legs is slot_late_first_legs.sum()
+    #" Later flights of those aircraft-days.
     downstream_legs is slot_downstream_legs.sum()
+    #" UPPER-BOUND minutes: late-aircraft delay minutes on every later flight of those aircraft-days.
     downstream_late_aircraft_minutes is slot_minutes.sum()
-    #" Downstream minutes at $100.76 per minute: Airlines for America, average 2024 US passenger airline block-minute cost.
+    #" UPPER-BOUND cost in US dollars, May-July 2026: upper-bound minutes at $100.76 a minute (Airlines for America,
+    #" 2024 average US passenger airline cost per block minute). Quote with conservative_cost_usd as a range.
     downstream_cost_usd is downstream_late_aircraft_minutes * 100.76
-    #" Share of the downstream cost carried by the 50 most costly slots nationally.
+    #" CONSERVATIVE minutes (a): late-aircraft minutes on the next flight only.
+    next_leg_late_aircraft_minutes is slot_next_leg_minutes.sum()
+    #" CONSERVATIVE minutes (b): every later flight's minutes, capped per aircraft-day at the first flight's own
+    #" arrival delay. A cross-check; usually between (a) and the upper bound.
+    capped_late_aircraft_minutes is slot_capped_minutes.sum()
+    #" CONSERVATIVE cost in US dollars, May-July 2026 (low end of the range): next-flight-only minutes at $69.07 a
+    #" minute (A4A 2025 block-minute cost $98.41 less fuel $29.34; a plane held at the gate burns little fuel).
+    conservative_cost_usd is next_leg_late_aircraft_minutes * 69.07
+    #" Share of the (upper-bound) cost carried by the 50 most costly slots nationally.
     # percent
     top_50_share is downstream_late_aircraft_minutes { where: in_top_50 } / downstream_late_aircraft_minutes
 
-  #" The most costly slots: where a spare aircraft, more turn time or priority handling would pay back first.
+  #" The 25 most costly slots nationally (upper-bound ranking), with both ends of the cost range.
   view: top_slots is {
     group_by: slot_rank, airline, origin, hour_label
-    aggregate: late_first_legs, downstream_late_aircraft_minutes, downstream_cost_usd
+    aggregate: late_first_legs, downstream_late_aircraft_minutes, conservative_cost_usd, downstream_cost_usd
     order_by: slot_rank
     limit: 25
   }
 
-  #" Delay-chain cost by the airport where the chain started.
+  #" Delay-chain cost by the airport where the chain started (upper bound, plus the conservative end).
   # bar_chart { x=origin y=downstream_cost_usd }
   view: cost_by_airport is {
     group_by: origin
-    aggregate: downstream_cost_usd, late_first_legs
+    aggregate: downstream_cost_usd, conservative_cost_usd, late_first_legs
     order_by: downstream_cost_usd desc
     limit: 15
+  }
+
+  #" PLAYBOOK "Which departure slots cost the most in delay chains, and what should we do?" The 25 costliest
+  #" airline x airport x hour first departures, nationally ranked (slot_rank upper bound; slot_rank_conservative under
+  #" the next-flight-only method), with the cost range for May-July 2026. Filter to one airline or airport with
+  #" + { where: airline = 'United' } or + { where: origin = 'CLT' } (ranks stay national). WHICH RANK TO ACT ON: start
+  #" with slots high under BOTH ranks (e.g. American DFW 7am and 8am). A slot high only on slot_rank (e.g. Southwest
+  #" BWI 6am, 7th vs 114th) has most of its cost on the third and later flights, so the fix is the whole day's rotation
+  #" (turn buffers later in the day), not only the first departure. Who acts and what to do:
+  #" the AIRLINE's operations control and network planning (hold a spare aircraft and crew at the top slots' airports,
+  #" add turn buffer to those first rotations, give them priority at the gate and de-icing); the AIRPORT's operations
+  #" team (gate, ground-handling and staffing priority for those departures; raise the list with the carrier). A
+  #" smaller carrier can benchmark its slots against peers at the same airport and hour.
+  view: departures_to_protect_first is {
+    group_by: slot_rank, slot_rank_conservative, airline, origin, hour_label
+    aggregate:
+      late_first_legs
+      conservative_cost_usd
+      downstream_cost_usd
+    order_by: slot_rank
+    limit: 25
+  }
+
+  #" PLAYBOOK "Which morning departures should <airport> prioritise?" First-wave slots (scheduled 5-9am) at an
+  #" airport, ranked by delay-chain cost. Filter to the airport first:
+  #" run: chain_slots_summary -> morning_departures_to_prioritise + { where: origin = 'CLT' }. Who acts: the
+  #" airport's operations centre (gate, tug, fuel, catering and security-lane priority for these departures) and the
+  #" airline's station manager.
+  view: morning_departures_to_prioritise is {
+    where: is_morning
+    group_by: slot_rank, airline, origin, hour_label
+    aggregate: late_first_legs, conservative_cost_usd, downstream_cost_usd
+    order_by: downstream_cost_usd desc
+    limit: 15
+  }
+
+  #" PLAYBOOK "Which airports start the most costly delay chains?" Departure airports ranked by the delay-chain cost
+  #" their late first flights of the day set off, with the cost range and the share of the total (national when
+  #" unfiltered). Who acts:
+  #" airport operations and air-service development (DFW, CLT, ORD and others at the top: first-wave reliability is
+  #" what airlines weigh when adding service), and the airlines based there.
+  view: airports_that_start_the_most_costly_chains is {
+    group_by: origin, airport_city is airport.origin_city, size_band
+    aggregate:
+      late_first_legs
+      conservative_cost_usd
+      downstream_cost_usd
+      #" Share of the upper-bound cost of everything in the query. Unfiltered, that is the national total; with a
+      #" where: filter it is the share of the filtered total (so 100% for a single airline). Run unfiltered to compare.
+      # percent
+      share_of_total_cost is downstream_late_aircraft_minutes / all(downstream_late_aircraft_minutes)
+    order_by: downstream_cost_usd desc
+    limit: 20
+  }
+
+  #" PLAYBOOK "How much do delay chains cost <airline>?" Each airline's delay-chain cost range for May-July 2026, its
+  #" share of the total (run unfiltered for national shares), and how concentrated it is (cost in its own 5 worst
+  #" slots). Filter for one airline:
+  #" + { where: airline = 'United' }. Regional carriers (SkyWest, Envoy, Republic, Endeavor, PSA) are listed under
+  #" their own names, not the mainline brand they fly for. Who acts: the airline's operations and network planning;
+  #" for a buyer comparing carriers, the share_of_total_cost column (unfiltered).
+  view: delay_chain_cost_by_airline is {
+    group_by: airline
+    aggregate:
+      slot_count
+      late_first_legs
+      conservative_cost_usd
+      downstream_cost_usd
+      #" Share of the upper-bound cost of everything in the query. Unfiltered, that is the national total; with a
+      #" where: filter it is the share of the filtered total (so 100% for a single airline). Run unfiltered to compare.
+      # percent
+      share_of_total_cost is downstream_late_aircraft_minutes / all(downstream_late_aircraft_minutes)
+    nest: worst_5_slots is {
+      group_by: slot_rank, origin, hour_label
+      aggregate: conservative_cost_usd, downstream_cost_usd
+      order_by: slot_rank
+      limit: 5
+    }
+    order_by: downstream_cost_usd desc
+  }
+
+  #" PLAYBOOK "What is the total cost of delay chains, and how sure are we?" The national (or filtered) total as a
+  #" range, with all three minute counts so the method can be checked: upper bound (every later flight, $100.76/min),
+  #" capped at the first flight's own delay, and next flight only ($69.07/min = the conservative cost).
+  view: delay_chain_cost_range is {
+    aggregate:
+      slot_count, late_first_legs
+      next_leg_late_aircraft_minutes, capped_late_aircraft_minutes, downstream_late_aircraft_minutes
+      conservative_cost_usd, downstream_cost_usd
+  }
+
+  #" Delay-chain cost by the scheduled hour of the late first flight (the early bank sets up the day).
+  view: chain_cost_by_departure_hour is {
+    group_by: dep_hour, hour_label
+    aggregate: late_first_legs, conservative_cost_usd, downstream_cost_usd
+    order_by: dep_hour
+  }
+}
+
+#" START HERE for "what time should I fly route X?" (fast, ~115k rows): flights per route, airline, month and
+#" scheduled departure hour (dep_hour, local). Columns: month_label, carrier, airline, origin, dest, route
+#" ("RDU → ATL"), size_band, dep_hour. late_rate = share of operated flights arriving 15+ minutes late.
+source: route_hours_summary is duckdb.sql("""
+  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_route_hours.parquet')
+""") extend {
+  measure:
+    #" Scheduled flights.
+    flight_count is n_flights.sum()
+    #" Share of scheduled flights cancelled.
+    # percent
+    cancel_rate is n_cancelled.sum() / n_flights.sum()
+    #" Share of operated flights arriving 15+ minutes late.
+    # percent
+    late_rate is n_late.sum() / n_operated.sum()
+    #" Average arrival delay in minutes (early arrivals count as negative).
+    avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
+
+  #" PLAYBOOK "What is the best time of day to fly this route?" For each busy route (90+ flights), its overall late
+  #" rate and its three most reliable departure hours (20+ flights each). Filter first, e.g.
+  #" run: route_hours_summary -> best_departure_window_by_route + { where: origin = 'RDU' } (or route = 'RDU → ATL').
+  #" The three hours are the best AVAILABLE on that route, not necessarily good: compare each with the route's own
+  #" late_rate, and treat hours with 20-30 flights as noisy. Lists the 50 busiest routes in the selection; for a
+  #" smaller route filter by route. Who acts: business travellers and corporate travel managers (book those hours;
+  #" add buffer otherwise); airlines planning which hours to add capacity.
+  view: best_departure_window_by_route is {
+    group_by: route
+    aggregate: flight_count, late_rate
+    having: flight_count >= 90
+    nest: most_reliable_hours is {
+      group_by: dep_hour
+      aggregate: flight_count, late_rate
+      having: flight_count >= 20
+      order_by: late_rate
+      limit: 3
+    }
+    order_by: flight_count desc
+    limit: 50
   }
 }

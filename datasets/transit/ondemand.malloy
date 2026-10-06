@@ -1,0 +1,241 @@
+// On-demand (demand-response) transit split into ADA paratransit and general-public service, from the FTA National
+// Transit Database ANNUAL tables, report years 2022-2024 (public domain; built by build_ondemand_annual.sql).
+// Kept in its own file so the monthly model (transit.malloy) still compiles if this Parquet is not deployed yet.
+
+#" On-demand transit by agency, type of service and year (FTA National Transit Database annual data, 2022 to 2024,
+#" mode "Demand response"). Use this, not the monthly `transit` source, for any question about MICROTRANSIT or
+#" general-public on-demand service: the monthly file lumps ADA paratransit (mandated rides for riders with
+#" disabilities, booked ahead) together with microtransit (app-booked rides open to anyone). This source carries the
+#" ADA-related trips and sponsored (third-party-paid) trips each agency reports, so the two can be separated.
+#" Start with the views `agencies_scaling_microtransit` (who to call), `microtransit_market_size` (the money),
+#" `mostly_paratransit_agencies` (who looks big but is not a microtransit buyer), `paratransit_without_microtransit`
+#" (large agencies with no general-public on-demand yet) and `rural_dial_a_ride_growth`.
+#" Caveats: (1) general-public HOURS and SPEND are estimates: each row's hours and operating expense are split by its
+#" share of trips that are neither ADA nor sponsored; ADA trips tend to be longer, so this may overstate the
+#" general-public share somewhat. (2) The NTD does not separate app-based microtransit from older general-public
+#" dial-a-ride; both count as general public here. (3) Rural and reduced reporters do not report ADA trips; for them
+#" the split uses the 2024 service-schedule flags (open to the general public vs ADA only), a yes/no, not a share.
+#" (4) Operating expense is what the agency spends to run the service (contractor fees included for purchased
+#" transportation); the NTD does not show software spend.
+#" Raw columns: trips (all on-demand boardings), ada_trips (ADA-related boardings), sponsored_trips (boardings paid
+#" for by a third party), vehicle_revenue_hours, vehicle_revenue_miles, operating_expenses (US dollars a year), one
+#" row per agency x type_of_service x report_year. Sum across type_of_service for an agency total.
+#" Finding an agency: names are the agency's own (Access Services, METRO, VIA) with its headquarters city, which may
+#" not be the metro a person names ("Access Services in LA" is "Access Services (El Monte, CA)"); search with
+#" agency_label ~ '%Access%' or urban_area ~ '%Los Angeles%'. To narrow any saved view, refine it:
+#" run: ondemand_annual -> agency_detail + { where: agency_label ~ '%Access Services%' }
+source: ondemand_annual is duckdb.table('https://tabblabs.net/datasets/transit/ondemand_annual.parquet') extend {
+  dimension:
+    #" Agency name with city and state, e.g. "METRO (Houston, TX)". Use this to name an agency in an answer.
+    agency_label is concat(agency_name, ' (', city, ', ', state, ')')
+    #" True when the row reports ADA-related trips, so the ADA share is measured, not inferred from a flag. Urban
+    #" (full-reporter) agencies almost always do; rural and reduced reporters never do.
+    reports_ada_trips is ada_trips is not null and trips > 0
+    #" Share of this row's trips that are general public: not ADA paratransit and not sponsored by a third party
+    #" (human-service agencies, Medicaid brokers). From reported trips when available; otherwise 1 if the 2024
+    #" schedule says the service is open to the general public, 0 if it says ADA only; null if neither is known.
+    general_public_share is
+      pick 0.0 when reports_ada_trips and ada_trips + coalesce(sponsored_trips, 0) >= trips
+      pick 1.0 - (ada_trips + coalesce(sponsored_trips, 0)) / trips when reports_ada_trips
+      pick 1.0 when general_public_days_2024 > 0
+      pick 0.0 when ada_only_days_2024 > 0
+      else null
+    #" How the general-public share was found: from reported trips (urban agencies), or from a 2024 schedule flag.
+    split_basis is
+      pick 'Reported trips' when reports_ada_trips
+      pick 'Schedule flag: open to general public' when general_public_days_2024 > 0
+      pick 'Schedule flag: ADA only' when ada_only_days_2024 > 0
+      else 'Unknown'
+    #" Urban agencies (NTD full reporters). Rural and reduced reporters run mostly county dial-a-ride.
+    is_urban is reporter_type = 'Full Reporter'
+
+  measure:
+    #" Number of distinct agencies.
+    agency_count is count(ntd_id)
+    #" On-demand trips (all kinds), summed over the rows in view. Pick a report_year or use the _2024 measures.
+    ondemand_trips is trips.sum()
+    #" Vehicle revenue hours of on-demand service, all kinds (ADA and general public).
+    ondemand_hours is vehicle_revenue_hours.sum()
+    #" All on-demand vehicle revenue hours in 2024.
+    ondemand_hours_2024 is vehicle_revenue_hours.sum() { where: report_year = 2024 }
+    #" Share of on-demand trips that are ADA paratransit, 2024, among rows that report ADA trips. Above about 0.8
+    #" means the agency's on-demand service is essentially paratransit, not a microtransit buyer.
+    # percent
+    ada_trip_share_2024 is ada_trips.sum() { where: report_year = 2024 and reports_ada_trips } / nullif(trips.sum() { where: report_year = 2024 and reports_ada_trips }, 0)
+    #" Estimated general-public on-demand vehicle revenue hours (microtransit and general-public dial-a-ride).
+    general_public_hours is sum(vehicle_revenue_hours * general_public_share)
+    #" Estimated general-public on-demand hours in 2022.
+    general_public_hours_2022 is general_public_hours { where: report_year = 2022 }
+    #" Estimated general-public on-demand hours in 2024.
+    general_public_hours_2024 is general_public_hours { where: report_year = 2024 }
+    #" Estimated general-public on-demand hours added from 2022 to 2024 (negative = cut).
+    general_public_hours_added is general_public_hours_2024 - general_public_hours_2022
+    #" Percent change in estimated general-public on-demand hours, 2022 to 2024. Null when 2022 was zero, which means
+    #" the agency STARTED general-public on-demand after 2022 (e.g. King County Metro), not missing data.
+    # percent
+    general_public_growth is general_public_hours_2024 / nullif(general_public_hours_2022, 0) - 1
+    #" Estimated agency operating spend on general-public on-demand service, US dollars per year (operating expense
+    #" split by general-public trip share).
+    # currency
+    general_public_spend is sum(operating_expenses * general_public_share)
+    #" Estimated general-public on-demand operating spend in 2022, US dollars.
+    # currency
+    general_public_spend_2022 is general_public_spend { where: report_year = 2022 }
+    #" Estimated general-public on-demand operating spend in 2024, US dollars.
+    # currency
+    general_public_spend_2024 is general_public_spend { where: report_year = 2024 }
+    #" Growth in estimated yearly general-public on-demand operating spend, 2022 to 2024, US dollars a year. Includes
+    #" cost inflation as well as added service.
+    # currency
+    general_public_spend_added is general_public_spend_2024 - general_public_spend_2022
+    #" Operating cost per vehicle revenue hour of on-demand service in 2024, US dollars (all on-demand kinds).
+    # currency
+    cost_per_hour_2024 is operating_expenses.sum() { where: report_year = 2024 } / nullif(vehicle_revenue_hours.sum() { where: report_year = 2024 and operating_expenses > 0 }, 0)
+    #" All on-demand hours in the latest 12 months of the MONTHLY file (September 2025 to August 2026), urban agencies
+    #" only. Several agencies file late: VIA (San Antonio) reports about a quarter of its usual hours for July and
+    #" August 2026, so its latest-12-month figure is understated.
+    ondemand_hours_latest_12m is hours_latest_12m.sum()
+    #" Momentum since the annual data: latest-12-month on-demand hours against calendar 2024 in the same monthly file
+    #" (all on-demand kinds; -0.3 = running 30% less service than in 2024).
+    # percent
+    momentum_since_2024 is hours_latest_12m.sum() / nullif(hours_2024_monthly_file.sum(), 0) - 1
+    #" True when the agency reported on-demand trips with an ADA breakdown in both 2022 and 2024, so a 2022-to-2024
+    #" change is real growth and not a first report (merger, new reporter ID, move from rural to urban reporting).
+    reported_both_years is ondemand_hours { where: report_year = 2022 and reports_ada_trips } > 0 and ondemand_hours { where: report_year = 2024 and reports_ada_trips } > 0
+    #" Fewest months (of the latest 12) any of the agency's on-demand rows reported hours; under 12 means late filing.
+    months_reported_latest_12m_min is months_reported_latest_12m.min()
+
+  #" WHO TO CALL FIRST (for a microtransit software or turnkey-service company): urban agencies ranked by estimated
+  #" general-public on-demand hours added from 2022 to 2024, ADA paratransit and sponsored trips taken out. These
+  #" agencies have budget and proven appetite; a vendor sales team should open with the top of this list, and an
+  #" agency board can read it as "who is already doing what we are debating". Check momentum_since_2024 before
+  #" calling: it compares the agency's latest 12 monthly reports (September 2025 to August 2026) with calendar 2024
+  #" (all on-demand service); a negative value means it has since cut (Kansas City about -26%, Stark/Canton -44%).
+  #" Ranked by hours ADDED, not by size; general_public_hours_2024 is the current size.
+  view: agencies_scaling_microtransit is {
+    where: is_urban and reports_ada_trips
+    group_by: agency_label, ntd_id
+    aggregate:
+      general_public_hours_2022, general_public_hours_2024, general_public_hours_added, general_public_growth,
+      general_public_spend_2024, general_public_spend_added, ada_trip_share_2024, momentum_since_2024
+    // Only agencies that reported on-demand trips in BOTH years: a first report (a merger, a new reporter ID, a move
+    // from rural to urban reporting) is not growth.
+    having: reported_both_years
+    order_by: general_public_hours_added desc
+    limit: 25
+  }
+
+  #" THE MONEY (the Play 3 dollar figure): estimated general-public on-demand service at urban agencies that
+#" reported on-demand trips with an ADA breakdown in both 2022 and 2024 (same agencies both years, so new reporters
+#" don't inflate growth), ADA paratransit and sponsored trips taken out. Spend is agency operating expense, the pool
+#" microtransit operators and software vendors compete for; it is not software revenue. spend_added includes cost
+#" inflation; spend_added_at_2024_cost prices only the added hours, at each agency's own 2024 cost per hour.
+#" top_15_share_of_added_spend = how concentrated the growth is in the 15 agencies that added the most hours.
+  view: microtransit_market_size is {
+    where: is_urban and reports_ada_trips
+    group_by: ntd_id
+    aggregate:
+      reported_both_years
+      general_public_hours_2022, general_public_hours_2024, general_public_hours_added
+      general_public_spend_2022, general_public_spend_2024, general_public_spend_added
+      gp_cost_per_hour_2024 is general_public_spend_2024 / nullif(general_public_hours_2024, 0)
+    having: reported_both_years
+    calculate: added_rank is row_number() { order_by: general_public_hours_added desc }
+  } -> {
+    aggregate:
+      agencies is count()
+      agencies_growing is count() { where: general_public_hours_added > 0 }
+      agencies_cutting is count() { where: general_public_hours_added < 0 }
+      // The rest (agencies minus growing minus cutting) had no general-public service either year: paratransit only.
+      agencies_paratransit_only is count() { where: general_public_hours_added = 0 }
+      hours_2022 is general_public_hours_2022.sum()
+      hours_2024 is general_public_hours_2024.sum()
+      hours_added is general_public_hours_added.sum()
+      # currency
+      spend_2022 is general_public_spend_2022.sum()
+      # currency
+      spend_2024 is general_public_spend_2024.sum()
+      # currency
+      spend_added is general_public_spend_added.sum()
+      # currency
+      spend_added_at_2024_cost is sum(general_public_hours_added * coalesce(gp_cost_per_hour_2024, 0))
+      # currency
+      top_15_spend_added is general_public_spend_added.sum() { where: added_rank <= 15 }
+      # percent
+      spend_growth_2022_to_2024 is general_public_spend_2024.sum() / nullif(general_public_spend_2022.sum(), 0) - 1
+      # percent
+      hours_growth_2022_to_2024 is general_public_hours_2024.sum() / nullif(general_public_hours_2022.sum(), 0) - 1
+      # percent
+      top_15_share_of_added_spend is general_public_spend_added.sum() { where: added_rank <= 15 } / nullif(general_public_spend_added.sum(), 0)
+  }
+
+  #" General-public and all on-demand service by year, every urban agency that reports ADA trips that year (the set of
+  #" agencies changes a little from year to year; use microtransit_market_size for growth).
+  view: general_public_ondemand_by_year is {
+    where: is_urban and reports_ada_trips
+    group_by: report_year
+    aggregate:
+      agencies_with_general_public is count(ntd_id) { where: general_public_share > 0.05 }
+      general_public_hours, general_public_spend, ondemand_hours
+      # currency
+      all_ondemand_spend is operating_expenses.sum()
+    order_by: report_year
+  }
+
+  #" WHO IS NOT A MICROTRANSIT BUYER: the largest on-demand operators of 2024 with their ADA share of trips. Agencies
+  #" above about 80% ADA (Access Services in Los Angeles is 100%) run mandated paratransit; their growth is ADA demand,
+  #" not a decision to buy microtransit. Use this to remove false prospects from any on-demand list.
+  view: mostly_paratransit_agencies is {
+    where: is_urban and reports_ada_trips and report_year = 2024
+    group_by: agency_label
+    aggregate: ondemand_hours_2024, ada_trip_share_2024, general_public_hours_2024
+    order_by: ondemand_hours_2024 desc
+    limit: 25
+  }
+
+  #" WHITE SPACE: urban agencies running at least 100,000 on-demand hours in 2024 with almost no general-public
+  #" on-demand (under 5% of hours). They already buy scheduling and vehicles for paratransit, but have not opened
+  #" on-demand to everyone, at least not under their own NTD report (a city or a separate reporter may run it).
+  #" VERIFY BEFORE CALLING: some agencies tag every on-demand trip as ADA-related even though they run microtransit
+  #" (Trinity Metro, Fort Worth, reports 100% ADA while running ZIPZONE), so this list has false positives. Agencies
+  #" whose on-demand is mostly SPONSORED human-service trips (low ADA share) also appear. Differs from
+  #" mostly_paratransit_agencies, which ranks ALL big operators (with or without general-public service).
+  view: paratransit_without_microtransit is {
+    where: is_urban and reports_ada_trips and report_year = 2024
+    group_by: agency_label
+    aggregate: ondemand_hours_2024, general_public_hours_2024, ada_trip_share_2024
+    having: ondemand_hours_2024 >= 100000 and general_public_hours_2024 < 0.05 * ondemand_hours_2024
+    order_by: ondemand_hours_2024 desc
+  }
+
+  #" RURAL AND SMALL-TOWN DIAL-A-RIDE: rural and reduced reporters ranked by on-demand hours added 2022 to 2024 where
+  #" the 2024 schedule says the service is open to the general public. A different buyer from urban microtransit
+  #" (county and nonprofit operators, scheduling software rather than app-based fleets). Sponsored trips are not
+  #" reported here, so some of this is human-service transport.
+  view: rural_dial_a_ride_growth is {
+    where: not is_urban and split_basis = 'Schedule flag: open to general public'
+    group_by: agency_label
+    aggregate:
+      hours_2022 is ondemand_hours { where: report_year = 2022 }
+      hours_2024 is ondemand_hours { where: report_year = 2024 }
+      hours_added is ondemand_hours { where: report_year = 2024 } - ondemand_hours { where: report_year = 2022 }
+    // Reported in 2022 too, so a first report is not counted as growth.
+    having: ondemand_hours { where: report_year = 2022 } > 0
+    order_by: hours_added desc
+    limit: 20
+  }
+
+  #" One agency's on-demand service by type of service and year: trips, ADA and sponsored trips, hours, spend, and
+  #" the estimated general-public part. Use it to answer "is X's on-demand service paratransit or microtransit?".
+  view: agency_detail is {
+    group_by: agency_label, report_year, type_of_service, split_basis
+    aggregate:
+      ondemand_trips
+      ada_trips_sum is ada_trips.sum()
+      sponsored_trips_sum is sponsored_trips.sum()
+      ondemand_hours, general_public_hours
+      # currency
+      operating_spend is operating_expenses.sum()
+    order_by: agency_label, report_year, type_of_service
+  }
+}

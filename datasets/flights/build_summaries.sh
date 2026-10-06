@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Rebuild the small summary files the flights dashboards read, from the monthly flights files:
 #   chain_slots.parquet          one row per airline x first-flight origin x scheduled hour that started a late delay chain
+#                                (upper-bound, next-flight-only and capped minutes; national ranks under both attributions)
 #   flights_cube.parquet         month x airline x origin x scheduled departure hour (counts and sums)
 #   flights_legs.parquet         month x airline x origin x leg of the aircraft's day x how the day started (counts)
 #   flights_daily.parquet        date x airline x origin (counts)
 #   flights_routes.parquet       month x airline x route (counts and sums)
+#   flights_route_hours.parquet  month x airline x route x scheduled departure hour (counts and sums)
 #   flights_inbound.parquet      later flights of the day by the airport the aircraft flew in from
 #   flights_chain_starts.parquet late later flights by the airport whose late first flight started the chain
 #   flights_airlines.parquet     airline list (Airline filter)
@@ -75,13 +77,14 @@ copy() { # copy <sql file> <parquet out>
 
 # 1. chain_slots.
 compile flights.malloy "run: chain_slots -> {
-  select: carrier, airline, origin, size_band, dep_hour, slot_late_first_legs, slot_downstream_legs, slot_minutes, slot_rank
+  select: carrier, airline, origin, size_band, dep_hour, slot_late_first_legs, slot_downstream_legs, slot_minutes,
+    slot_next_leg_minutes, slot_capped_minutes, slot_rank, slot_rank_conservative
   order_by: slot_rank
 }" "$WORK/chain_slots.sql"
 copy "$WORK/chain_slots.sql" "$OUT/chain_slots.parquet"
 
 # 2. The summary queries in build_summaries.malloy.
-for name in flights_cube flights_legs flights_daily flights_routes flights_inbound flights_chain_starts flights_airlines; do
+for name in flights_cube flights_legs flights_daily flights_routes flights_route_hours flights_inbound flights_chain_starts flights_airlines; do
   compile build_summaries.malloy "run: build_$name" "$WORK/$name.sql"
   copy "$WORK/$name.sql" "$OUT/$name.parquet"
 done
@@ -95,12 +98,13 @@ duckdb -c "COPY (
        g AS (SELECT * FROM read_csv('$HERE/airport_coords.csv'))
   SELECT p.origin, p.origin_city, p.origin_state, p.size_band, p.departures,
          p.departures / 92.0 AS departures_per_day, coalesce(c.chain_minutes, 0) AS chain_minutes,
+         coalesce(c.chain_minutes_next_leg, 0) AS chain_minutes_next_leg,
          g.lat AS latitude, g.lon AS longitude
   FROM p LEFT JOIN c ON c.origin = p.origin LEFT JOIN g ON g.iata = p.origin
   ORDER BY p.departures DESC
 ) TO '$OUT/flights_airports.parquet' (FORMAT parquet, COMPRESSION zstd);"
 
-for f in chain_slots flights_cube flights_legs flights_daily flights_routes flights_inbound flights_chain_starts flights_airlines flights_airports; do
+for f in chain_slots flights_cube flights_legs flights_daily flights_routes flights_route_hours flights_inbound flights_chain_starts flights_airlines flights_airports; do
   printf '%-22s %8s rows %9s bytes\n' "$f" \
     "$(duckdb -noheader -list -c "SELECT count(*) FROM '$OUT/$f.parquet'")" "$(stat -c %s "$OUT/$f.parquet")"
 done

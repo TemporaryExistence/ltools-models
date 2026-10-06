@@ -18,7 +18,8 @@ given:
   # label="Month" control=select suggest { source=month_list dimension=month_label }
   FLIGHT_MONTH :: filter<string> is f''
 
-#" One row per scheduled US domestic flight, before the airport-size join. Use `flights`.
+// One row per scheduled US domestic flight, before the airport-size join. Use `flights`. (A // comment, not #",
+// so its text is not inherited into the description of `flights`.)
 source: flights_base is duckdb.sql("""
   SELECT * FROM read_parquet([
     'https://tabblabs.net/datasets/flights/flights_2026_05.parquet',
@@ -27,7 +28,9 @@ source: flights_base is duckdb.sql("""
   ])
 """) extend {
   dimension:
-    #" Marketing airline name from the BTS carrier code.
+    #" Airline name from the BTS reporting-carrier code: the airline that OPERATED the flight. Regional carriers
+    #" (SkyWest, Envoy, Republic, Endeavor, PSA) appear under their own names, not the mainline brand (United Express,
+    #" American Eagle, Delta Connection) they fly for, so a mainline airline's totals exclude its regional partners.
     # drill { to=[self] }
     airline is carrier ?
       pick 'American' when 'AA'
@@ -88,12 +91,17 @@ source: flights_base is duckdb.sql("""
     route_count is count(route)
 }
 
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
+#" method only; for answers use airport_list.
 #" Departures per origin airport over the whole period (May–July 2026, 92 days); drives the size band.
 source: airport_sizes is flights_base -> {
   group_by: origin
   aggregate: departures is count()
 }
 
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
+#" method only; for answers use delays_summary, legs_summary, routes_summary or route_hours_summary
+#" (same numbers).
 #" One row per scheduled US domestic flight. Delays are in minutes; negative = early.
 source: flights is flights_base extend {
   join_one: origin_size is airport_sizes on origin = origin_size.origin
@@ -183,6 +191,9 @@ source: flights is flights_base extend {
   }
 }
 
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
+#" method only; for answers use legs_summary, legs_detail, inbound_summary or chain_starts_summary
+#" (same numbers).
 #" Every flight with its place in its aircraft's day: flights are grouped by tail number and date and ordered by
 #" scheduled departure (local time), so each flight knows its leg number, the previous flight of the same aircraft,
 #" and how the aircraft's first flight of the day went. Cancelled and diverted flights are kept (for cancel rate) but
@@ -380,6 +391,8 @@ source: aircraft_legs is flights -> {
   }
 }
 
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
+#" method only; for answers use chain_slots_summary (same numbers, cost range included).
 #" One row per aircraft-day (tail number + date, operated flights only), carrying the first flight of the day's
 #" airline, origin, scheduled hour and arrival delay, and what the same aircraft's later flights that day logged.
 #" Used to put a cost on delay chains: when the first flight arrives 15+ minutes late, the "late aircraft" delay
@@ -399,6 +412,7 @@ source: delay_chains is aircraft_legs -> {
     first_arr_delay is arr_delay_min.max() { where: leg_number = 1 }
     later_legs is count() { where: leg_number > 1 }
     later_late_aircraft_min is late_aircraft_delay_min.sum() { where: leg_number > 1 }
+    next_leg_late_aircraft_min is late_aircraft_delay_min.sum() { where: leg_number = 2 }
 } extend {
   dimension:
     #" Carrier code of the aircraft's first flight of the day.
@@ -413,6 +427,9 @@ source: delay_chains is aircraft_legs -> {
     dep_hour is first_dep_hour
     #" The first flight of the day arrived 15+ minutes late and the aircraft flew again that day.
     late_start is first_arr_delay >= 15 and later_legs > 0
+    #" Conservative attribution (b): this aircraft-day's later-flight late-aircraft minutes, capped at the first
+    #" flight's own arrival delay (a 40-minute-late first flight can be charged at most 40 minutes).
+    capped_late_aircraft_min is least(coalesce(later_late_aircraft_min, 0), greatest(first_arr_delay, 0))
 
   measure:
     aircraft_days is count()
@@ -422,10 +439,21 @@ source: delay_chains is aircraft_legs -> {
     downstream_legs is later_legs.sum() { where: late_start }
     #" "Late aircraft" delay minutes BTS recorded on the later flights of aircraft-days that started late.
     downstream_late_aircraft_minutes is later_late_aircraft_min.sum() { where: late_start }
-    #" Those minutes at $100.76 per minute: Airlines for America, average 2024 US passenger airline block-minute cost.
+    #" UPPER-BOUND cost in US dollars: all later-flight late-aircraft minutes at $100.76 a minute (Airlines for
+    #" America, average 2024 US passenger airline cost per block minute: crew, fuel, maintenance, ownership).
     downstream_cost_usd is downstream_late_aircraft_minutes * 100.76
+    #" Conservative attribution (a): late-aircraft minutes on the NEXT flight only (leg 2) of aircraft-days that
+    #" started late. Leg 3 onwards can pick up delay of its own, so it is not charged to the first flight.
+    next_leg_late_aircraft_minutes is next_leg_late_aircraft_min.sum() { where: late_start }
+    #" Conservative attribution (b): later-flight minutes capped at the first flight's own arrival delay.
+    capped_late_aircraft_minutes is capped_late_aircraft_min.sum() { where: late_start }
+    #" CONSERVATIVE cost in US dollars, the low end of the range: next-flight-only minutes at $69.07 a minute (Airlines
+    #" for America 2025 block-minute cost, $98.41, minus fuel, $29.34: a plane held at the gate burns little fuel).
+    conservative_cost_usd is next_leg_late_aircraft_minutes * 69.07
 }
 
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
+#" method only; for answers use chain_slots_summary (same rows, with playbook views).
 #" The "protect these departures" list: one row per airline x first-flight origin x scheduled hour slot that started
 #" at least one late delay chain over May-July 2026, ranked by the cost of its chains (slot_rank 1 = most costly,
 #" ranked across all airlines and airports, so filtering keeps the national rank). Same method and limit as
@@ -437,8 +465,12 @@ source: chain_slots is delay_chains -> {
     slot_late_first_legs is late_first_legs
     slot_downstream_legs is downstream_legs
     slot_minutes is downstream_late_aircraft_minutes
+    slot_next_leg_minutes is next_leg_late_aircraft_minutes
+    slot_capped_minutes is capped_late_aircraft_minutes
   calculate:
     slot_rank is row_number() { order_by: slot_minutes desc, carrier, origin, dep_hour }
+    #" National rank under the conservative (next-flight-only) attribution, 1 = most costly.
+    slot_rank_conservative is row_number() { order_by: slot_next_leg_minutes desc, carrier, origin, dep_hour }
 } extend {
   dimension:
     #" Departure time of the slot as a label, e.g. "7am".
@@ -455,8 +487,15 @@ source: chain_slots is delay_chains -> {
     late_first_legs is slot_late_first_legs.sum()
     downstream_legs is slot_downstream_legs.sum()
     downstream_late_aircraft_minutes is slot_minutes.sum()
-    #" Downstream minutes at $100.76 per minute: Airlines for America, average 2024 US passenger airline block-minute cost.
+    #" UPPER-BOUND cost in US dollars: all later-flight minutes at $100.76 a minute (A4A 2024 block-minute cost).
     downstream_cost_usd is downstream_late_aircraft_minutes * 100.76
+    #" Conservative attribution (a): late-aircraft minutes on the next flight only.
+    next_leg_late_aircraft_minutes is slot_next_leg_minutes.sum()
+    #" Conservative attribution (b): later-flight minutes capped at the first flight's own arrival delay.
+    capped_late_aircraft_minutes is slot_capped_minutes.sum()
+    #" CONSERVATIVE cost in US dollars (low end of the range): next-flight-only minutes at $69.07 a minute (A4A 2025
+    #" block-minute cost less fuel).
+    conservative_cost_usd is next_leg_late_aircraft_minutes * 69.07
     #" Share of the downstream cost carried by the 50 most costly slots nationally.
     # percent
     top_50_share is downstream_late_aircraft_minutes { where: in_top_50 } / downstream_late_aircraft_minutes
@@ -464,7 +503,7 @@ source: chain_slots is delay_chains -> {
   #" The most costly slots: where a spare aircraft, more turn time or priority handling would pay back first.
   view: top_slots is {
     group_by: slot_rank, airline, origin, hour_label
-    aggregate: late_first_legs, downstream_late_aircraft_minutes, downstream_cost_usd
+    aggregate: late_first_legs, downstream_late_aircraft_minutes, conservative_cost_usd, downstream_cost_usd
     order_by: slot_rank
     limit: 25
   }

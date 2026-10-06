@@ -83,7 +83,10 @@ COPY (
     try_cast(LATITUDE AS DOUBLE) AS latitude, try_cast(LONGITUD AS DOUBLE) AS longitude,
     -- Added for the multi-year table (not in library_systems.parquet):
     C_FSCS AS meets_public_library_definition,   -- Y/N: meets the FSCS public library definition
-    C_LEGBAS AS legal_basis                      -- CI city, CO county, LD library district, MJ multi-jurisdictional, NP non-profit, OT other, ...
+    C_LEGBAS AS legal_basis,                     -- CI city, CO county, LD library district, MJ multi-jurisdictional, NP non-profit, OT other, ...
+    -- Added 2026-10-06 (appended so every earlier column keeps its position and values):
+    num(PRMATEXP) AS print_spend,                -- print materials spend
+    num(ELMATEXP) AS econtent_spend              -- electronic materials spend: e-books, e-audio, e-video, databases, e-serials
   FROM ae
   ORDER BY state, library_id, fiscal_year
 ) TO 'library_systems_by_year.parquet' (FORMAT parquet, COMPRESSION zstd);

@@ -1,181 +1,114 @@
 ##! experimental.givens
 import "../transit.malloy"
+import "../ondemand.malloy"
 
-#" Demand-response vehicle revenue hours, calendar 2019 against the latest 12 months (September 2025 to August
-#" 2026). Agency rankings keep agencies above 20,000 hours in 2019. Demand response includes mandated ADA
-#" paratransit, so not all growth is discretionary microtransit; the monthly file cannot separate the two.
-# artifact { title="On-demand transit is flat nationally, but a few agencies are scaling it fast" givens { STATE="" } } dashboard { columns=6 }
-query: ondemand_prospects is transit -> {
+#" Microtransit prospects for on-demand transit vendors (software, turnkey operators): urban agencies ranked by the
+#" general-public on-demand service they added from 2022 to 2024, with ADA paratransit and sponsored trips taken out
+#" (FTA National Transit Database annual data). Hours and spend for general-public service are estimates (each
+#" row's hours and operating expense split by its share of trips that are neither ADA nor sponsored). Spend is agency
+#" operating expense, not software revenue. "Since 2024" compares the latest 12 monthly reports (September 2025 to
+#" August 2026) with calendar 2024.
+# artifact { title="Agencies spend an estimated $950M a year on general-public on-demand transit, up $292M in two years" givens { STATE="" } } dashboard { columns=6 }
+query: ondemand_prospects is ondemand_annual -> {
   where:
-    is_demand_response,
+    is_urban and reports_ada_trips,
     state ~ $STATE
-  # colspan=2
-  aggregate:
-    # label="Agencies running on-demand"
-    ondemand_agencies is agencies_12m
-    # label="On-demand hours, last 12 months" number="0.0a"
-    ondemand_hours_now is revenue_hours_12m
-    # label="On-demand hours, 2019" number="0.0a"
-    ondemand_hours_2019 is revenue_hours_2019
-    # label="Change since 2019" percent
-    ondemand_change_vs_2019 is revenue_hours_change_pct
-    # label="On-demand trips, last 12 months" number="0.0a"
-    ondemand_trips_now is trips_latest_12m
   # colspan=6
   nest:
-    # label="Agencies ranked by on-demand hours added since 2019"
-    ondemand_scaling is {
-      where: is_demand_response
+    # label="Agencies ranked by general-public on-demand hours added, 2022 to 2024"
+    ranked is {
       group_by:
         # label="Agency"
         agency is agency_label
       aggregate:
-        # label="Hours, 2019" number="0.0a"
-        hours_2019 is revenue_hours_2019
-        # label="Hours, last 12 months" number="0.0a"
-        hours_now is revenue_hours_12m
+        # label="General-public hours, 2022" number="0.0a"
+        hours_2022 is general_public_hours_2022
+        # label="General-public hours, 2024" number="0.0a"
+        hours_2024 is general_public_hours_2024
         # label="Hours added" number="0.0a"
-        hours_added is revenue_hours_change
-        # label="Growth" percent
-        growth is revenue_hours_change_pct
-        # label="Trips, last 12 months" number="0.0a"
-        trips_now is trips_latest_12m
-      having: revenue_hours_2019 > 20000
+        hours_added is general_public_hours_added
+        # label="Spend added a year" currency
+        spend_added is general_public_spend_added
+        # label="Spend, 2024" currency
+        spend_2024 is general_public_spend_2024
+        # label="ADA share of on-demand trips" percent
+        ada_share is ada_trip_share_2024
+        # label="Service since 2024" percent
+        momentum is momentum_since_2024
+        both_years is reported_both_years
+      having: reported_both_years
       order_by: hours_added desc
       limit: 20
     }
 }
 
-#" The agencies with the fastest on-demand growth since 2019 (above 20,000 hours in 2019).
-query: ondemand_fastest is transit -> {
+#" The money: same agencies in 2022 and 2024 (reported on-demand trips with an ADA breakdown both years).
+query: ondemand_money is ondemand_annual -> {
   where:
-    is_demand_response,
+    is_urban and reports_ada_trips,
+    state ~ $STATE
+  group_by: ntd_id
+  aggregate:
+    reported_both_years
+    general_public_hours_2022, general_public_hours_2024, general_public_hours_added
+    general_public_spend_2022, general_public_spend_2024, general_public_spend_added
+  having: reported_both_years
+  calculate: added_rank is row_number() { order_by: general_public_hours_added desc }
+} -> {
+  aggregate:
+    agencies is count()
+    agencies_growing is count() { where: general_public_hours_added > 0 }
+    agencies_cutting is count() { where: general_public_hours_added < 0 }
+    hours_2022 is general_public_hours_2022.sum()
+    hours_2024 is general_public_hours_2024.sum()
+    hours_added is general_public_hours_added.sum()
+    spend_2022 is general_public_spend_2022.sum()
+    spend_2024 is general_public_spend_2024.sum()
+    spend_added is general_public_spend_added.sum()
+    top15_spend_added is general_public_spend_added.sum() { where: added_rank <= 15 }
+}
+
+#" Chart: on-demand hours by year at urban agencies, ADA paratransit and sponsored vs general public (estimated).
+query: ondemand_mix_by_year is ondemand_annual -> {
+  where:
+    is_urban and reports_ada_trips,
+    state ~ $STATE
+  group_by: report_year
+  aggregate:
+    general_public is general_public_hours
+    paratransit_and_sponsored is ondemand_hours - general_public_hours
+  order_by: report_year
+}
+
+#" Chart: one point per urban agency with 20,000+ on-demand hours in 2024: its ADA share of on-demand trips against
+#" the general-public hours it added since 2022. Microtransit buyers sit at the top left; paratransit agencies at the
+#" right edge.
+query: ondemand_agency_points is ondemand_annual -> {
+  where:
+    is_urban and reports_ada_trips,
+    state ~ $STATE
+  // Grouped by agency name, not NTD ID: one agency can file under two IDs (Pace: paratransit and dial-a-ride).
+  group_by: agency is agency_label
+  aggregate:
+    ondemand_hours_2024
+    ada_share is ada_trip_share_2024
+    hours_added is general_public_hours_added
+    reported_both_years
+  having: reported_both_years and ondemand_hours_2024 >= 20000
+  calculate: added_rank is row_number() { order_by: general_public_hours_added desc }
+}
+
+#" The largest on-demand operators of 2024 and their ADA share: the agencies a naive "on-demand growth" list puts on
+#" top, most of which run mandated paratransit.
+query: ondemand_largest is ondemand_annual -> {
+  where:
+    is_urban and reports_ada_trips and report_year = 2024,
     state ~ $STATE
   group_by: agency is agency_label
   aggregate:
-    hours_2019 is revenue_hours_2019
-    hours_now is revenue_hours_12m
-    growth is revenue_hours_change_pct
-  having: revenue_hours_2019 > 20000
-  order_by: growth desc
-  limit: 12
-}
-
-#" The ten agencies that added the most on-demand hours since 2019, combined, and how many agencies grew or shrank.
-query: ondemand_contrast is transit -> {
-  where:
-    is_demand_response,
-    state ~ $STATE
-  group_by: ntd_id
-  aggregate: revenue_hours_2019, revenue_hours_12m, revenue_hours_change
-  having: revenue_hours_2019 > 20000
-  calculate: added_rank is row_number() { order_by: revenue_hours_change desc }
-} -> {
-  aggregate:
-    ranked_agencies is count()
-    growing_agencies is count() { where: revenue_hours_change > 0 }
-    shrinking_agencies is count() { where: revenue_hours_change < 0 }
-    top10_hours_2019 is revenue_hours_2019.sum() { where: added_rank <= 10 }
-    top10_hours_now is revenue_hours_12m.sum() { where: added_rank <= 10 }
-    top10_hours_added is revenue_hours_change.sum() { where: added_rank <= 10 }
-    top10_growth is revenue_hours_12m.sum() { where: added_rank <= 10 } / nullif(revenue_hours_2019.sum() { where: added_rank <= 10 }, 0) - 1
-}
-
-#" Chart: monthly on-demand hours for the six agencies that added the most hours since 2019, indexed so that the
-#" agency's 2019 monthly average = 100.
-query: ondemand_top_trend is transit -> {
-  where:
-    is_demand_response,
-    state ~ $STATE
-  group_by: ntd_id, agency is agency_label
-  aggregate: revenue_hours_2019, revenue_hours_change
-  having: revenue_hours_2019 > 20000
-  nest: by_month is {
-    where: report_month >= @2019-01-01 and report_month < @2026-09-01
-    group_by: report_month
-    aggregate: vrh is revenue_hours
-  }
-  order_by: revenue_hours_change desc
-  limit: 6
-} -> {
-  select:
-    agency
-    by_month.report_month
-    hours_index is by_month.vrh / nullif(revenue_hours_2019 / 12, 0) * 100
-}
-
-#" Chart: monthly on-demand hours for every agency in the selection, indexed so that the 2019 monthly average = 100.
-query: ondemand_all_trend is transit -> {
-  where:
-    is_demand_response,
-    state ~ $STATE,
-    report_month >= @2019-01-01 and report_month < @2026-09-01
-  group_by: report_month
-  aggregate:
-    vrh is revenue_hours
-    base_2019 is all(revenue_hours_2019)
-} -> {
-  select: report_month, hours_index is vrh / nullif(base_2019 / 12, 0) * 100
-}
-
-#" Chart: one point per agency above 20,000 on-demand hours in 2019: its 2019 size and its change since.
-query: ondemand_agency_points is transit -> {
-  where:
-    is_demand_response,
-    state ~ $STATE
-  group_by: ntd_id, agency is agency_label
-  aggregate:
-    hours_2019 is revenue_hours_2019
-    hours_now is revenue_hours_12m
-    hours_added is revenue_hours_change
-    growth is revenue_hours_change_pct
-  having: revenue_hours_2019 > 20000
-  calculate: added_rank is row_number() { order_by: revenue_hours_change desc }
-}
-
-#" Chart: how many agencies (above 20,000 on-demand hours in 2019) grew or shrank, and by how much.
-query: ondemand_growth_histogram is transit -> {
-  where:
-    is_demand_response,
-    state ~ $STATE
-  group_by: ntd_id
-  aggregate: growth is revenue_hours_change_pct
-  having: revenue_hours_2019 > 20000
-} -> {
-  group_by:
-    bucket_order is
-      pick 1 when growth < -0.5
-      pick 2 when growth < -0.25
-      pick 3 when growth < -0.1
-      pick 4 when growth < 0
-      pick 5 when growth < 0.1
-      pick 6 when growth < 0.25
-      pick 7 when growth < 0.5
-      pick 8 when growth < 1
-      else 9
-    bucket is
-      pick 'Down 50%+' when growth < -0.5
-      pick '−50 to −25%' when growth < -0.25
-      pick '−25 to −10%' when growth < -0.1
-      pick '−10 to 0%' when growth < 0
-      pick '0 to +10%' when growth < 0.1
-      pick '+10 to +25%' when growth < 0.25
-      pick '+25 to +50%' when growth < 0.5
-      pick '+50 to +100%' when growth < 1
-      else 'Doubled+'
-  aggregate: agencies is count()
-  order_by: bucket_order
-}
-
-#" Chart: on-demand hours by state, all agencies, last 12 months vs 2019.
-query: ondemand_by_state is transit -> {
-  where:
-    is_demand_response,
-    state ~ $STATE
-  group_by: state
-  aggregate:
-    hours_2019 is revenue_hours_2019
-    hours_now is revenue_hours_12m
-    hours_added is revenue_hours_change
-    growth is revenue_hours_change_pct
+    ondemand_hours is ondemand_hours_2024
+    ada_share is ada_trip_share_2024
+    general_public is general_public_hours_2024
+  order_by: ondemand_hours desc
+  limit: 10
 }

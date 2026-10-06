@@ -1,48 +1,50 @@
 ##! experimental.givens
 import "../libraries.malloy"
 
-#" FY2024. Digital share = digital borrowing / all borrowing. The typical share is the median for the system's
-#" size band (population served) across all US systems, whatever state is picked. Room = collection budget x (band
-#" median - own share), for systems below their band median. It assumes peers' digital share is the right target;
-#" some communities borrow more print by choice.
-# artifact { title="Library digital content: the biggest room to grow sits in a few large systems" givens { STATE="" } } dashboard { columns=6 }
+#" FY2024. A library is a prospect when it is below the typical (median) for its size band on BOTH its digital share of
+#" borrowing and its e-content share of its collection budget. The gap is collection budget x (band median e-content
+#" share - own share): extra e-content dollars a year at the typical share. Budgets are roughly fixed, so this is spend
+#" that would shift from print to digital (share-of-wallet for a vendor), not new money. Libraries spending under half
+#" the typical e-content dollars per digital checkout are listed separately: their e-books are likely bought by a state
+#" or consortium. Typical values are national, whatever state is picked.
+# artifact { title="Library e-content: a $724M market, and 25 libraries hold over half the gap" givens { STATE="" } } dashboard { columns=6 }
 query: econtent_prospects_dashboard is econtent_prospects -> {
   where:
     state ~ $STATE,
     size_band ~ $SIZE_BAND
-  group_by: library_id, state, library_name, size_band, own_digital_share, typical_digital_share, is_below_band
+  group_by: library_id, state, library_name, size_band, prospect_type, own_digital_share, typical_digital_share,
+    own_econtent_share, typical_econtent_share, own_econtent_per_digital_checkout, typical_econtent_per_digital_checkout
   aggregate:
-    one_system is count()
     collection_budget
-    total_room
+    econtent_budget
+    gap is total_econtent_gap
+    pitch_gap is pitchable_econtent_gap
   calculate:
-    // Position in the picked selection, for the median KPI (Malloy has no median aggregate).
-    selection_position is row_number() { order_by: own_digital_share }
-    selection_count is sum_window(one_system)
-    // Rank by room, for the concentration KPI.
-    room_rank is row_number() { order_by: total_room desc }
+    // Rank by the pitchable gap (consortium checks and non-prospects have 0), for the concentration KPI.
+    gap_rank is row_number() { order_by: pitch_gap desc }
 } -> {
   # colspan=2
   aggregate:
     # label="Systems benchmarked"
     systems_benchmarked is count()
-    # label="Systems below typical for their size"
-    systems_below_band is count() { where: is_below_band }
-    # label="Collection budget that could move to digital" currency
-    total_room is total_room.sum()
-    # label="Room held by the top 25 prospects" currency
-    top_25_room is total_room.sum() { where: room_rank <= 25 }
-    #" Median digital share of the systems picked.
-    # label="Median digital share" percent
-    median_digital_share is own_digital_share.avg() {
-      where: selection_position >= selection_count / 2 and selection_position <= selection_count / 2 + 1
-    }
+    # label="Libraries to pitch"
+    libraries_to_pitch is count() { where: prospect_type = 'Pitch the library' }
+    # label="Libraries to reach through a consortium"
+    consortium_checks is count() { where: prospect_type = 'Check the consortium' }
+    # label="E-content gap, libraries to pitch" currency
+    pitch_gap is pitch_gap.sum()
+    # label="E-content gap, top 25" currency
+    top_25_gap is pitch_gap.sum() { where: gap_rank <= 25 }
+    # label="E-content gap, consortium checks" currency
+    consortium_gap is gap.sum() { where: prospect_type = 'Check the consortium' }
+    # label="Collection budget benchmarked" currency
+    collection_budget is collection_budget.sum()
   # colspan=6
   nest:
-    #" Systems below their size band's typical digital share, ranked by room.
-    # label="Prospects, ranked by room"
+    #" Libraries to pitch, ranked by e-content gap.
+    # label="Libraries to pitch"
     prospects is {
-      where: is_below_band
+      where: prospect_type = 'Pitch the library'
       group_by:
         # label="State"
         state
@@ -51,108 +53,135 @@ query: econtent_prospects_dashboard is econtent_prospects -> {
         # label="Size"
         band is size_band
       aggregate:
+        # label="E-content gap" currency
+        gap is pitch_gap.sum()
         # label="Collection budget" currency
         collection_budget is collection_budget.sum()
+        # label="E-content spend" currency
+        econtent_budget is econtent_budget.sum()
+        # label="E-content share" percent
+        econtent_share is own_econtent_share.max()
+        # label="Typical e-content share" percent
+        typical_econtent is typical_econtent_share.max()
         # label="Digital share" percent
         digital_share is own_digital_share.max()
-        # label="Typical for size" percent
-        typical_for_band is typical_digital_share.max()
-        # label="Room" currency
-        room is total_room.sum()
-      order_by: room desc
+        # label="Typical digital share" percent
+        typical_digital is typical_digital_share.max()
+      order_by: gap desc
       limit: 50
     }
-    #" Room by system size.
-    # label="Room by system size"
-    room_by_size is {
+    #" Below typical on both, but likely buying e-books through a consortium.
+    # label="Reach through a consortium"
+    consortium is {
+      where: prospect_type = 'Check the consortium'
+      group_by:
+        # label="State"
+        state
+        # label="System"
+        system is library_name
+      aggregate:
+        # label="E-content gap" currency
+        gap is gap.sum()
+        # label="E-content $ per digital checkout" currency
+        per_checkout is own_econtent_per_digital_checkout.max()
+        # label="Typical" currency
+        typical_per_checkout is typical_econtent_per_digital_checkout.max()
+      order_by: gap desc
+      limit: 10
+    }
+    #" Typical shares by size band.
+    # label="By system size"
+    by_size is {
       group_by:
         # label="Size"
         band is size_band
       aggregate:
-        # label="Room" currency
-        room is total_room.sum()
-        # label="Systems below typical"
-        systems is count() { where: is_below_band }
+        # label="Typical e-content share" percent
+        typical_econtent is typical_econtent_share.max()
         # label="Typical digital share" percent
-        typical_for_band is typical_digital_share.max()
+        typical_digital is typical_digital_share.max()
+        # label="Libraries to pitch"
+        pitch is count() { where: prospect_type = 'Pitch the library' }
       order_by: band
-    }
-    #" Room by state, top 15.
-    # label="Room by state"
-    room_by_state is {
-      group_by:
-        # label="State"
-        state
-      aggregate:
-        # label="Room" currency
-        room is total_room.sum()
-      order_by: room desc
-      limit: 15
     }
 }
 
-#" Chart: one point per benchmarked system with a collection budget of $100k or more (FY2024): digital share, budget,
-#" size band, room. Smaller systems are left out to keep the response small (the dashboard runtime caps rows at 5,000).
-#" Names only for the top 8 by room.
+#" Chart: library e-content and print spend, FY2018 to FY2024 (every system that reported; matches library_years -> econtent_market_by_year).
+query: econtent_market is library_years -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  group_by: fiscal_year
+  aggregate: econtent_budget, print_budget, collection_budget, econtent_share_of_collection
+  order_by: fiscal_year
+}
+
+#" Chart: one point per benchmarked system with a collection budget of $100k or more (FY2024): how far its e-content
+#" share and its digital share of borrowing sit from the typical for its size (percentage points), its budget and its
+#" prospect type. Rank numbers only for the top 5 libraries to pitch. Smaller systems are left out to keep the
+#" response small (the dashboard runtime caps rows at 5,000).
 query: econtent_points is econtent_prospects -> {
   where:
     state ~ $STATE,
     size_band ~ $SIZE_BAND
-  group_by: library_id, library_name, state, size_band, own_digital_share
-  aggregate: budget is collection_budget, room is total_room
-  calculate: room_rank is row_number() { order_by: total_room desc }
+  group_by: library_id, library_name, state, size_band, prospect_type, own_econtent_share, typical_econtent_share,
+    own_digital_share, typical_digital_share
+  aggregate: budget is collection_budget, pitch_gap is pitchable_econtent_gap
+  calculate: gap_rank is row_number() { order_by: pitch_gap desc }
 } -> {
   where: budget >= 100000
   select:
     band is substr(size_band, 1, 1)
-    share is round(own_digital_share, 4)
+    kind is substr(prospect_type, 1, 1)
+    econtent_vs_typical is round(own_econtent_share - typical_econtent_share, 4)
+    digital_vs_typical is round(own_digital_share - typical_digital_share, 4)
     budget
-    room is round(room)
-    label is pick concat(library_name, ' (', state, ')') when room_rank <= 8 else null
-    room_rank
+    gap is round(pitch_gap)
+    label is pick concat(library_name, ' (', state, ')') when gap_rank <= 5 and prospect_type = 'Pitch the library' else null
+    gap_rank
 }
 
-#" Chart: spread of digital share within each size band (FY2024, all benchmarked systems): the 10th, 25th, 50th,
-#" 75th and 90th percentile system, by rank within the band.
+#" Chart: spread of e-content share of collection budget within each size band (FY2024, all benchmarked systems): the
+#" 10th, 25th, 50th, 75th and 90th percentile system, by rank within the band.
 query: econtent_share_spread is econtent_prospects -> {
   where:
     state ~ $STATE,
     size_band ~ $SIZE_BAND
-  group_by: size_band, library_id, own_digital_share
+  group_by: size_band, library_id, own_econtent_share
   aggregate: one_system is count()
   calculate:
-    band_position is row_number() { partition_by: size_band order_by: own_digital_share }
+    band_position is row_number() { partition_by: size_band order_by: own_econtent_share }
     band_count is sum_window(one_system) { partition_by: size_band }
 } -> {
   group_by: band is substr(size_band, 1, 1)
   aggregate:
     systems is count()
-    p10 is own_digital_share.min() { where: band_position >= band_count * 0.1 }
-    p25 is own_digital_share.min() { where: band_position >= band_count * 0.25 }
-    p50 is own_digital_share.min() { where: band_position >= band_count * 0.5 }
-    p75 is own_digital_share.min() { where: band_position >= band_count * 0.75 }
-    p90 is own_digital_share.min() { where: band_position >= band_count * 0.9 }
+    p10 is own_econtent_share.min() { where: band_position >= band_count * 0.1 }
+    p25 is own_econtent_share.min() { where: band_position >= band_count * 0.25 }
+    p50 is own_econtent_share.min() { where: band_position >= band_count * 0.5 }
+    p75 is own_econtent_share.min() { where: band_position >= band_count * 0.75 }
+    p90 is own_econtent_share.min() { where: band_position >= band_count * 0.9 }
   order_by: band
 }
 
-#" Chart: digital share of borrowing by size band, FY2018 to FY2024 (all systems that reported both figures).
-query: econtent_trend is library_years -> {
-  where:
-    state ~ $STATE,
-    size_band != 'Unknown' and size_band != '6 Not comparable'
-  group_by: fiscal_year, band is size_band
-  aggregate: digital_share
-  order_by: fiscal_year
-}
-
-#" Chart: room by state, every state.
-query: econtent_room_by_state is econtent_prospects -> {
+#" Chart: the pitchable e-content gap by state as a share of the state's benchmarked collection budget, every state.
+query: econtent_gap_states is econtent_prospects -> {
   where:
     state ~ $STATE,
     size_band ~ $SIZE_BAND
   group_by: state
   aggregate:
-    room is total_room
-    prospects is systems_below_band
+    gap_share is gap_share_of_collection_budget
+    gap is pitchable_econtent_gap
+    prospects is libraries_to_pitch
     systems is benchmarked_systems
+}
+
+#" Footnote: FY2024 systems left out of the benchmark, and why.
+query: econtent_left_out is econtent_candidates -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  group_by: benchmark_status
+  aggregate: candidate_systems
 }
