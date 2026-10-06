@@ -1,0 +1,6 @@
+##" A SYNTHETIC OSRS service-ticket ledger: four made-up servers whose shapes (refunds, re-posts, changing cut rates, renamed clients, multi-day tickets) mirror a real one. Amounts are US dollars, converted from gold at the Old School Bond rate ($8.99 retail / ~11.75M GP = $0.765 per million GP, 2026-10-06).
+## dataset { title="OSRS Service Tickets (synthetic)" }
+
+import { payments, tickets, client_history, SERVER, PERIOD } from 'osrs.malloy'
+
+export { payments, tickets, client_history, SERVER, PERIOD }

@@ -1,0 +1,21 @@
+##! experimental.givens
+import "../flights.malloy"
+
+#" Who runs late, when, and why — every US domestic flight, May–July 2026.
+# artifact { title="Flight Delays" } dashboard { columns=6 }
+query: delays is flights -> {
+  where:
+    airline ~ $AIRLINE,
+    origin ~ $ORIGIN,
+    flight_date ~ $PERIOD
+  # colspan=1
+  aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
+  # colspan=3
+  nest:
+    by_airline
+    by_departure_hour
+    by_day
+    delay_causes
+    worst_routes
+    busiest_airports
+}

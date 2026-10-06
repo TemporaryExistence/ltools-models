@@ -1,0 +1,14 @@
+{
+  "connections": {
+    "duckdb": {
+      "is": "duckdb"
+    }
+  },
+  "malloyyo": {
+    "targets": {
+      "staging": {
+        "url": "https://tabblabs.staging.malloyyo.com"
+      }
+    }
+  }
+}

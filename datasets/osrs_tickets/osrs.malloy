@@ -1,0 +1,150 @@
+##! experimental { givens }
+
+import "tables.malloy"
+
+given:
+  # label="Server" control=select suggest { source=payments dimension=server_name }
+  SERVER :: filter<string> is f''
+  # label="Paid on"
+  PERIOD :: filter<date> is f''
+
+source: servers is servers_table extend {
+  primary_key: server_id
+}
+
+source: clients is clients_table extend {
+  primary_key: client_id
+}
+
+source: helpers is helpers_table extend {
+  primary_key: helper_id
+}
+
+#" One row per payment line in a SYNTHETIC OSRS service-ticket ledger. Amounts are US dollars
+#" (gold converted at the Old School Bond rate, $0.765 per million GP). Refunds are negative rows;
+#" ticket numbers restart on each server.
+source: payments is payments_table extend {
+  primary_key: payment_id
+  join_one: servers with server_id
+  join_one: clients with client_id
+  join_one: helpers with helper_id
+
+  dimension:
+    #" Server name (where the work was found).
+    server_name is servers.server_name
+    #" A ticket number is only unique within one server.
+    ticket_key is concat(server_id, '-', ticket_no::string)
+    #" Refund or reversal line.
+    is_refund is price_usd < 0
+    paid_month is paid_on.month
+    paid_year is paid_on.year
+    helper_role is helpers.`role`
+
+  measure:
+    #" Net revenue after refunds, US dollars.
+    # currency
+    revenue_usd is price_usd.sum()
+    #" Cuts paid to server admins, US dollars.
+    # currency
+    cuts_usd is cut_usd.sum()
+    #" What was kept after cuts, US dollars.
+    # currency
+    kept_usd is revenue_usd - cuts_usd
+    #" Cuts as a share of revenue.
+    # percent
+    effective_cut_rate is cuts_usd / nullif(revenue_usd, 0)
+    payment_lines is count()
+    ticket_count is count(ticket_key)
+    client_count is count(client_id)
+    #" Average net revenue per ticket, US dollars.
+    # currency
+    revenue_per_ticket_usd is revenue_usd / nullif(ticket_count, 0)
+    refund_lines is count() { where: is_refund }
+    #" Dollars refunded (shown as a positive number).
+    # currency
+    refunded_usd is -price_usd.sum() { where: is_refund }
+
+  # line_chart { x=paid_month y=revenue_usd }
+  view: revenue_by_month is {
+    group_by: paid_month
+    aggregate: revenue_usd
+    order_by: paid_month
+  }
+
+  # bar_chart { x=server_name y=revenue_usd }
+  view: by_server is {
+    group_by: server_name
+    aggregate: revenue_usd, kept_usd, effective_cut_rate, ticket_count, client_count
+    order_by: revenue_usd desc
+  }
+
+  view: top_clients is {
+    group_by: client_id
+    aggregate: revenue_usd, ticket_count, payment_lines
+    order_by: revenue_usd desc
+    limit: 15
+  }
+
+  # line_chart { x=paid_month y=effective_cut_rate }
+  view: cut_rate_by_month is {
+    group_by: paid_month
+    aggregate: effective_cut_rate
+    order_by: paid_month
+  }
+
+  view: refunds is {
+    aggregate: refund_lines, refunded_usd, payment_lines
+  }
+}
+
+#" One row per ticket (server + ticket number): how big it was and how long it ran.
+source: tickets is payments -> {
+  group_by: ticket_key, server_name
+  aggregate:
+    ticket_value_usd is revenue_usd
+    lines is payment_lines
+    first_paid is paid_on.min()
+    last_paid is paid_on.max()
+    clients_on_ticket is client_count
+} extend {
+  primary_key: ticket_key
+  dimension:
+    days_open is days(first_paid to last_paid) + 1
+    size_band is ticket_value_usd ?
+      pick 'Under $40' when < 40
+      pick '$40–$200' when < 200
+      pick '$200–$750' when < 750
+      else '$750+'
+  measure:
+    tickets is count()
+    # currency
+    avg_ticket_usd is ticket_value_usd.avg()
+    multi_day_tickets is count() { where: days_open > 1 }
+
+  # bar_chart { x=size_band y=tickets }
+  view: by_size is {
+    group_by: size_band
+    aggregate: tickets, band_sort is ticket_value_usd.min()
+    order_by: band_sort
+  }
+}
+
+#" One row per client: how many tickets they brought and over how long — repeat business.
+source: client_history is payments -> {
+  group_by: client_id
+  aggregate:
+    lifetime_usd is revenue_usd
+    tickets_brought is ticket_count
+    servers_used is count(server_id)
+    first_ticket is paid_on.min()
+    last_ticket is paid_on.max()
+} extend {
+  primary_key: client_id
+  dimension:
+    is_repeat is tickets_brought > 1
+  measure:
+    clients is count()
+    repeat_clients is count() { where: is_repeat }
+    # percent
+    repeat_share is repeat_clients / nullif(clients, 0)
+}

@@ -1,0 +1,15 @@
+##! experimental.givens
+import "../libraries.malloy"
+
+#" How a state's public libraries are used: visits, borrowing, digital share and cost, by system and setting.
+# artifact { title="Public Libraries by State" } dashboard { columns=6 }
+query: state_libraries is library_systems -> {
+  where: state ~ $STATE
+  # colspan=1
+  aggregate: systems, total_visits, visits_per_capita, circulation_per_capita, digital_share, spend_per_capita
+  # colspan=3
+  nest:
+    busiest_systems
+    most_used_per_person
+    by_setting
+}

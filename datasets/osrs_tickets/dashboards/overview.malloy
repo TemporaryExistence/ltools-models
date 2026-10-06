@@ -1,0 +1,18 @@
+##! experimental.givens
+import "../osrs.malloy"
+
+#" Revenue, cuts and tickets across four synthetic servers, in US dollars.
+# artifact { title="Ticket Ledger Overview" } dashboard { columns=6 }
+query: overview is payments -> {
+  where:
+    server_name ~ $SERVER,
+    paid_on ~ $PERIOD
+  # colspan=1
+  aggregate: revenue_usd, kept_usd, cuts_usd, ticket_count, client_count, refunded_usd
+  # colspan=3
+  nest:
+    revenue_by_month
+    by_server
+    cut_rate_by_month
+    top_clients
+}

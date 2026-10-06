@@ -1,0 +1,10 @@
+// Raw tables, one source each. The Parquet files are exported from the SQLspace
+// practice database (project-dashboard/pipeline/osrs-sql/build-osrs-db.js).
+// FULLY SYNTHETIC: servers S2–S5 only (the real de-identified server S1 was removed 2026-10-06).
+// price_usd / cut_usd = gold in millions × $0.765 (Old School Bond: $8.99 retail / ~11.75M GP, 2026-10-06).
+
+source: servers_table   is duckdb.table('https://tabblabs.net/datasets/osrs/servers.parquet')
+source: cut_rates_table is duckdb.table('https://tabblabs.net/datasets/osrs/cut_rates.parquet')
+source: helpers_table   is duckdb.table('https://tabblabs.net/datasets/osrs/helpers.parquet')
+source: clients_table   is duckdb.table('https://tabblabs.net/datasets/osrs/clients.parquet')
+source: payments_table  is duckdb.table('https://tabblabs.net/datasets/osrs/payments.parquet')

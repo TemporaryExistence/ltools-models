@@ -1,0 +1,103 @@
+##! experimental { givens }
+
+// US public libraries, IMLS Public Libraries Survey FY2023 (US public data).
+// One row per library system (administrative entity) and one per branch/outlet.
+// Survey codes for "missing" (negative numbers) were converted to null when the Parquet was built.
+
+given:
+  # label="State" control=select suggest { source=library_systems dimension=state }
+  STATE :: filter<string> is f'NC'
+
+source: branches_table is duckdb.table('https://tabblabs.net/datasets/libraries/library_branches.parquet')
+
+#" One row per public library system in FY2023 (July 2022 – June 2023 for most states).
+source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries/library_systems.parquet') extend {
+  primary_key: library_id
+  dimension:
+    #" Urban/suburban/town/rural, from the NCES locale code.
+    setting is substr(locale_code, 1, 1) ?
+      pick 'City' when '1'
+      pick 'Suburb' when '2'
+      pick 'Town' when '3'
+      pick 'Rural' when '4'
+      else 'Unknown'
+
+  measure:
+    systems is count()
+    total_visits is visits.sum()
+    total_circulation is circulation.sum()
+    total_population is population_served.sum()
+    #" Visits per person in the area served.
+    visits_per_capita is total_visits / nullif(total_population, 0)
+    #" Items borrowed per person in the area served.
+    circulation_per_capita is total_circulation / nullif(total_population, 0)
+    #" Share of borrowing that is e-books, e-audio and other digital items.
+    # percent
+    digital_share is digital_circulation.sum() / nullif(total_circulation, 0)
+    #" Operating spend per person served, US dollars.
+    # currency
+    spend_per_capita is operating_spend.sum() / nullif(total_population, 0)
+    #" Operating spend per visit, US dollars.
+    # currency
+    cost_per_visit is operating_spend.sum() / nullif(total_visits, 0)
+    total_program_attendance is program_attendance.sum()
+    computer_sessions_total is computer_sessions.sum()
+    # percent
+    local_funding_share is local_gov_income.sum() / nullif(total_income.sum(), 0)
+
+  # bar_chart { x=library_name y=total_visits }
+  view: busiest_systems is {
+    group_by: library_name, city
+    aggregate: total_visits, visits_per_capita, circulation_per_capita, spend_per_capita
+    order_by: total_visits desc
+    limit: 15
+  }
+
+  #" Small systems often out-perform big ones per person.
+  view: most_used_per_person is {
+    where: population_served >= 20000
+    group_by: library_name, city
+    aggregate: visits_per_capita, circulation_per_capita, spend_per_capita
+    order_by: visits_per_capita desc
+    limit: 15
+  }
+
+  # bar_chart { x=setting y=visits_per_capita }
+  view: by_setting is {
+    group_by: setting
+    aggregate: systems, visits_per_capita, circulation_per_capita, spend_per_capita, digital_share
+    order_by: visits_per_capita desc
+  }
+
+  view: by_state is {
+    group_by: state
+    aggregate: systems, total_visits, visits_per_capita, circulation_per_capita, spend_per_capita, digital_share
+    order_by: visits_per_capita desc
+  }
+}
+
+#" One row per library building or bookmobile in FY2023.
+source: library_branches is branches_table extend {
+  join_one: library_systems with library_id
+  dimension:
+    weekly_hours is hours_per_year / nullif(weeks_open, 0)
+    system_name is library_systems.library_name
+    outlet_kind is outlet_type ?
+      pick 'Central library' when 'CE'
+      pick 'Branch' when 'BR'
+      pick 'Bookmobile' when 'BS'
+      pick 'Books-by-mail' when 'BM'
+      else outlet_type
+  measure:
+    outlets is count()
+    total_square_feet is square_feet.sum()
+    #" Average hours open per week (yearly hours ÷ weeks open).
+    avg_weekly_hours is weekly_hours.avg()
+
+  view: by_system is {
+    group_by: system_name
+    aggregate: outlets, total_square_feet, avg_weekly_hours
+    order_by: outlets desc
+    limit: 20
+  }
+}
