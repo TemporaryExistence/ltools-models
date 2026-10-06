@@ -90,3 +90,69 @@ query: econtent_prospects_dashboard is econtent_prospects -> {
       limit: 15
     }
 }
+
+#" Chart: one point per benchmarked system with a collection budget of $100k or more (FY2024): digital share, budget,
+#" size band, room. Smaller systems are left out to keep the response small (the dashboard runtime caps rows at 5,000).
+#" Names only for the top 8 by room.
+query: econtent_points is econtent_prospects -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  group_by: library_id, library_name, state, size_band, own_digital_share
+  aggregate: budget is collection_budget, room is total_room
+  calculate: room_rank is row_number() { order_by: total_room desc }
+} -> {
+  where: budget >= 100000
+  select:
+    band is substr(size_band, 1, 1)
+    share is round(own_digital_share, 4)
+    budget
+    room is round(room)
+    label is pick concat(library_name, ' (', state, ')') when room_rank <= 8 else null
+    room_rank
+}
+
+#" Chart: spread of digital share within each size band (FY2024, all benchmarked systems): the 10th, 25th, 50th,
+#" 75th and 90th percentile system, by rank within the band.
+query: econtent_share_spread is econtent_prospects -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  group_by: size_band, library_id, own_digital_share
+  aggregate: one_system is count()
+  calculate:
+    band_position is row_number() { partition_by: size_band order_by: own_digital_share }
+    band_count is sum_window(one_system) { partition_by: size_band }
+} -> {
+  group_by: band is substr(size_band, 1, 1)
+  aggregate:
+    systems is count()
+    p10 is own_digital_share.min() { where: band_position >= band_count * 0.1 }
+    p25 is own_digital_share.min() { where: band_position >= band_count * 0.25 }
+    p50 is own_digital_share.min() { where: band_position >= band_count * 0.5 }
+    p75 is own_digital_share.min() { where: band_position >= band_count * 0.75 }
+    p90 is own_digital_share.min() { where: band_position >= band_count * 0.9 }
+  order_by: band
+}
+
+#" Chart: digital share of borrowing by size band, FY2018 to FY2024 (all systems that reported both figures).
+query: econtent_trend is library_years -> {
+  where:
+    state ~ $STATE,
+    size_band != 'Unknown' and size_band != '6 Not comparable'
+  group_by: fiscal_year, band is size_band
+  aggregate: digital_share
+  order_by: fiscal_year
+}
+
+#" Chart: room by state, every state.
+query: econtent_room_by_state is econtent_prospects -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  group_by: state
+  aggregate:
+    room is total_room
+    prospects is systems_below_band
+    systems is benchmarked_systems
+}

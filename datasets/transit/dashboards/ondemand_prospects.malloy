@@ -80,3 +80,102 @@ query: ondemand_contrast is transit -> {
     top10_hours_added is revenue_hours_change.sum() { where: added_rank <= 10 }
     top10_growth is revenue_hours_12m.sum() { where: added_rank <= 10 } / nullif(revenue_hours_2019.sum() { where: added_rank <= 10 }, 0) - 1
 }
+
+#" Chart: monthly on-demand hours for the six agencies that added the most hours since 2019, indexed so that the
+#" agency's 2019 monthly average = 100.
+query: ondemand_top_trend is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE
+  group_by: ntd_id, agency is agency_label
+  aggregate: revenue_hours_2019, revenue_hours_change
+  having: revenue_hours_2019 > 20000
+  nest: by_month is {
+    where: report_month >= @2019-01-01 and report_month < @2026-09-01
+    group_by: report_month
+    aggregate: vrh is revenue_hours
+  }
+  order_by: revenue_hours_change desc
+  limit: 6
+} -> {
+  select:
+    agency
+    by_month.report_month
+    hours_index is by_month.vrh / nullif(revenue_hours_2019 / 12, 0) * 100
+}
+
+#" Chart: monthly on-demand hours for every agency in the selection, indexed so that the 2019 monthly average = 100.
+query: ondemand_all_trend is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE,
+    report_month >= @2019-01-01 and report_month < @2026-09-01
+  group_by: report_month
+  aggregate:
+    vrh is revenue_hours
+    base_2019 is all(revenue_hours_2019)
+} -> {
+  select: report_month, hours_index is vrh / nullif(base_2019 / 12, 0) * 100
+}
+
+#" Chart: one point per agency above 20,000 on-demand hours in 2019: its 2019 size and its change since.
+query: ondemand_agency_points is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE
+  group_by: ntd_id, agency is agency_label
+  aggregate:
+    hours_2019 is revenue_hours_2019
+    hours_now is revenue_hours_12m
+    hours_added is revenue_hours_change
+    growth is revenue_hours_change_pct
+  having: revenue_hours_2019 > 20000
+  calculate: added_rank is row_number() { order_by: revenue_hours_change desc }
+}
+
+#" Chart: how many agencies (above 20,000 on-demand hours in 2019) grew or shrank, and by how much.
+query: ondemand_growth_histogram is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE
+  group_by: ntd_id
+  aggregate: growth is revenue_hours_change_pct
+  having: revenue_hours_2019 > 20000
+} -> {
+  group_by:
+    bucket_order is
+      pick 1 when growth < -0.5
+      pick 2 when growth < -0.25
+      pick 3 when growth < -0.1
+      pick 4 when growth < 0
+      pick 5 when growth < 0.1
+      pick 6 when growth < 0.25
+      pick 7 when growth < 0.5
+      pick 8 when growth < 1
+      else 9
+    bucket is
+      pick 'Down 50%+' when growth < -0.5
+      pick '−50 to −25%' when growth < -0.25
+      pick '−25 to −10%' when growth < -0.1
+      pick '−10 to 0%' when growth < 0
+      pick '0 to +10%' when growth < 0.1
+      pick '+10 to +25%' when growth < 0.25
+      pick '+25 to +50%' when growth < 0.5
+      pick '+50 to +100%' when growth < 1
+      else 'Doubled+'
+  aggregate: agencies is count()
+  order_by: bucket_order
+}
+
+#" Chart: on-demand hours by state, all agencies, last 12 months vs 2019.
+query: ondemand_by_state is transit -> {
+  where:
+    is_demand_response,
+    state ~ $STATE
+  group_by: state
+  aggregate:
+    hours_2019 is revenue_hours_2019
+    hours_now is revenue_hours_12m
+    hours_added is revenue_hours_change
+    growth is revenue_hours_change_pct
+}
