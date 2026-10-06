@@ -1,0 +1,104 @@
+##! experimental { givens }
+
+// US public transit ridership, FTA National Transit Database monthly module (US public data, public domain),
+// January 2002 – August 2026, snapshot downloaded 2026-10-06 from data.transportation.gov (dataset 8bui-9xvu,
+// "Complete Monthly Ridership (with Adjustments and Estimates)"). Built by build_ntd.sql; agency city and brand
+// name ("GoRaleigh", "GoTriangle") joined from the 2024 NTD Reporter Agency Information file.
+// The published model reads the Parquet served at https://tabblabs.net/datasets/transit/ — a hosted instance can't
+// read files shipped inside the repo (friction log F13/F16).
+
+given:
+  # label="State" control=select suggest { source=transit dimension=state }
+  STATE :: filter<string> is f'NC'
+  # label="Agency" suggest { source=transit dimension=agency_name }
+  AGENCY :: filter<string> is f''
+  # label="Bus / Rail / Ferry" control=select suggest { source=transit dimension=mode_group }
+  MODE_GROUP :: filter<string> is f''
+
+#" One row per transit agency x mode x type of service x month. Trips are unlinked passenger trips (each boarding
+#" counts once, so a bus-to-train transfer is two trips).
+source: transit is duckdb.table('https://tabblabs.net/datasets/transit/ntd_monthly.parquet') extend {
+  dimension:
+    #" Calendar year of the month.
+    report_year is year(report_month)
+
+  measure:
+    #" Unlinked passenger trips (boardings).
+    trips_total is trips.sum()
+    #" Hours vehicles were in revenue service.
+    revenue_hours is vehicle_revenue_hours.sum()
+    #" Miles vehicles travelled in revenue service.
+    revenue_miles is vehicle_revenue_miles.sum()
+    #" Boardings per vehicle revenue hour: how full the service is. Only rows that report hours count.
+    trips_per_revenue_hour is trips.sum() { where: vehicle_revenue_hours > 0 } / nullif(vehicle_revenue_hours.sum() { where: vehicle_revenue_hours > 0 }, 0)
+    #" Boardings per vehicle revenue mile.
+    trips_per_revenue_mile is trips.sum() { where: vehicle_revenue_miles > 0 } / nullif(vehicle_revenue_miles.sum() { where: vehicle_revenue_miles > 0 }, 0)
+    #" Average number of vehicles in peak service per month (sum of peak vehicles ÷ months covered).
+    avg_peak_vehicles is vehicles_max_service.sum() / nullif(count(report_month), 0)
+    agencies is count(ntd_id)
+
+    #" Trips in calendar 2019, the pre-pandemic baseline.
+    trips_2019 is trips_total { where: report_month ? @2019 }
+    #" Trips in the latest 12 months of this snapshot (September 2025 – August 2026).
+    trips_latest_12m is trips_total { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
+    #" Trips in the 12 months before that (September 2024 – August 2025).
+    trips_prior_12m is trips_total { where: report_month >= @2024-09-01 and report_month < @2025-09-01 }
+    #" Year-over-year change: latest 12 months vs the 12 before.
+    # percent
+    yoy_change is trips_latest_12m / nullif(trips_prior_12m, 0) - 1
+    #" Recovery: latest 12 months as a share of 2019 ridership (100% = back to pre-pandemic).
+    # percent
+    recovery_vs_2019 is trips_latest_12m / nullif(trips_2019, 0)
+    #" Boardings per vehicle revenue hour over the latest 12 months.
+    trips_per_hour_12m is trips_per_revenue_hour { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
+
+  #" Ridership every month since 2002; the 2020 drop and the climb back are the story.
+  # line_chart { x=report_month y=trips_total }
+  view: monthly_trips is {
+    group_by: report_month
+    aggregate: trips_total, trips_per_revenue_hour
+    order_by: report_month
+  }
+
+  # bar_chart { x=report_year y=trips_total }
+  view: by_year is {
+    group_by: report_year
+    aggregate: trips_total, revenue_hours, trips_per_revenue_hour
+    order_by: report_year
+  }
+
+  #" Agencies by ridership in the latest 12 months, with growth and recovery.
+  # bar_chart { x=agency_name y=trips_latest_12m }
+  view: top_agencies is {
+    group_by: agency_name, city
+    aggregate: trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
+    having: trips_latest_12m > 0
+    order_by: trips_latest_12m desc
+    limit: 15
+  }
+
+  #" Which kinds of service are coming back fastest.
+  # bar_chart { x=mode y=trips_latest_12m }
+  view: by_mode is {
+    group_by: mode
+    aggregate: trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
+    having: trips_latest_12m > 0
+    order_by: trips_latest_12m desc
+  }
+
+  #" Recovery ranking: agencies with at least 100,000 trips in 2019, furthest past their 2019 ridership first.
+  view: beyond_2019 is {
+    group_by: agency_name, city, state
+    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019
+    having: trips_2019 >= 100000
+    order_by: recovery_vs_2019 desc
+    limit: 15
+  }
+
+  view: by_state is {
+    group_by: state
+    aggregate: agencies, trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
+    having: trips_latest_12m > 0
+    order_by: trips_latest_12m desc
+  }
+}
