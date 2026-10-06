@@ -1,0 +1,31 @@
+##! experimental.givens
+import "../transit.malloy"
+
+#" How the Triangle (Raleigh and Durham urbanized areas) uses public transit against the rest of North Carolina and
+#" against Sun Belt metros of similar size: trips per resident, recovery since 2019, service restored, and riders
+#" per service hour. Latest 12 months = September 2025 to August 2026. GoRaleigh's counts step up in July 2024
+#" with little change in service; read its recovery with that in mind.
+# artifact { title="How the Triangle Moves: Transit" } dashboard { columns=6 }
+query: triangle is transit -> {
+  // Triangle, its peers and the rest of NC; each panel narrows further.
+  where: peer_metro is not null or state = 'NC'
+  # colspan=1
+  aggregate:
+    triangle_trips_12m is trips_latest_12m { where: peer_metro = 'Triangle (Raleigh + Durham)' }
+    # percent
+    triangle_recovery is recovery_vs_2019 { where: peer_metro = 'Triangle (Raleigh + Durham)' }
+    # percent
+    triangle_service_vs_2019 is service_vs_2019 { where: peer_metro = 'Triangle (Raleigh + Durham)' }
+    # percent
+    triangle_yoy is yoy_change { where: peer_metro = 'Triangle (Raleigh + Durham)' }
+  # colspan=3
+  nest:
+    peer_metros
+    peer_productivity
+    nc_regions
+    triangle_agencies
+    # line_chart { x=report_year y=trips_total }
+    triangle_by_year is service_and_trips_by_year + {
+      where: peer_metro = 'Triangle (Raleigh + Durham)' and report_year <= 2025
+    }
+}

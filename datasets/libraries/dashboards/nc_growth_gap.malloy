@@ -1,0 +1,21 @@
+##! experimental.givens
+import "../libraries.malloy"
+
+#" Is a state's population growth showing up in how people use its public libraries? County population growth 2020 - 2024 next to library visits and spend per resident, FY2019 - FY2024. Regional systems are shared across their counties by population.
+# artifact { title="Library Growth Gap" givens { STATE="NC" } } dashboard { columns=6 }
+query: nc_growth_gap is county_libraries -> {
+  where: state ~ $STATE
+  # colspan=1
+  aggregate:
+    population_growth_2020_2024
+    visits_per_resident_fy2019
+    visits_per_resident_fy2024
+    visits_per_resident_change
+    spend_per_resident_fy2024
+  # colspan=3
+  nest:
+    by_year
+    growth_gap
+    visits_per_resident_by_county
+    regional_systems
+}

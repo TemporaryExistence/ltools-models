@@ -1,0 +1,23 @@
+##! experimental.givens
+import "../libraries.malloy"
+
+#" Do big library systems or small ones serve people better? Visits, borrowing, digital share, spend, cost per visit, staffing and hours by size band (population served), FY2024, and change in visits since FY2019. Pick a state (blank = all US) and a size band.
+# artifact { title="Library Systems by Size" givens { STATE="" } } dashboard { columns=6 }
+query: systems_by_size is library_years -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  # colspan=1
+  aggregate:
+    systems_fy2024 is systems { where: fiscal_year = 2024 }
+    visits_per_capita_fy2024
+    spend_per_capita_fy2024 is spend_per_capita { where: fiscal_year = 2024 }
+    cost_per_visit_fy2024 is cost_per_visit { where: fiscal_year = 2024 }
+    visits_change_vs_fy2019
+  # colspan=3
+  nest:
+    by_size_band
+    size_band_by_year
+    largest_systems
+    busiest_small_systems
+}

@@ -22,7 +22,7 @@
 -- Writes: library_systems_by_year.parquet, county_population.parquet, library_counties.parquet
 --
 -- Column map (survey variable -> column). Same names and meaning as library_systems.parquet (FY2023),
--- so FY2023 rows of library_systems_by_year equal library_systems row for row.
+-- so FY2023 rows of library_systems_by_year equal library_systems row for row (plus two added columns at the end).
 -- Columns absent in some years are left null (union_by_name):
 --   physical_items  = TOTPHYS     absent FY2018-FY2020 (only books BKVOL + media were reported then)
 --   age0_5_attendance = K0_5ATTEN absent FY2018-FY2020 (those years had KIDATTEN, ages 0-11: not comparable)
@@ -30,18 +30,29 @@
 --   kids_circulation = KIDCIRCL   absent FY2024 (replaced by KIDPHYSCIR, physical only; not comparable)
 --   website_visits  = WEBVISIT    absent FY2024
 -- Survey "missing" codes (negative numbers) become null. Latitude/longitude are kept as reported.
+-- NOTE FY2024: 2,791 systems report total circulation (TOTCIR) and digital circulation (ELMATCIR) as -1
+-- (not reported, flag U_24), including Chicago, Miami-Dade and Broward. Per-person measures in the model
+-- therefore divide by the population of systems that reported each figure.
 
 CREATE MACRO num(x) AS CASE WHEN try_cast(x AS DOUBLE) < 0 THEN NULL ELSE try_cast(x AS DOUBLE) END;
 
 -- County-name key used on both sides of the join: upper case, accents and punctuation removed,
--- "County"/"Parish"/"Borough"/"Census Area"/"City and Borough"/"Municipality"/"Planning Region" dropped,
--- "Saint" -> "ST". Independent cities keep " CITY" (Virginia has both Fairfax County and Fairfax city).
+-- "County"/"Parish"/"Borough"/"Census Area"/"City and Borough"/"Municipality"/"Planning Region"/"Co" dropped,
+-- "Saint" -> "ST" and "Sainte" -> "STE", then spaces removed (LA SALLE = LaSalle, DEWITT = De Witt). Independent cities keep "CITY"
+-- (Virginia has both Fairfax County and Fairfax city).
 CREATE MACRO county_key(s) AS
-  trim(regexp_replace(
+  replace(regexp_replace(
     regexp_replace(
-      regexp_replace(upper(strip_accents(s)), '[.'']', '', 'g'),
-      '\s+(CITY AND BOROUGH|CENSUS AREA|COUNTY|PARISH|BOROUGH|MUNICIPALITY|PLANNING REGION)$', ''),
-    '^SAINT ', 'ST '));
+      regexp_replace(upper(strip_accents(trim(s))), '[.''`]', '', 'g'),
+      '\s+(CITY AND BOROUGH|CENSUS AREA|COUNTY|PARISH|BOROUGH|MUNICIPALITY|PLANNING REGION|CO)$', ''),
+    '^SAINT(E?) ', 'ST\1'), ' ', '');
+
+-- Survey county names that are misspelt or abbreviated in the PLS outlet files (state, PLS name -> Census key).
+-- Anything not listed and not matched stays unmatched on purpose (e.g. pre-2019 Alaska census areas that no longer exist).
+CREATE TEMP TABLE alias(state, pls_key, census_key) AS VALUES
+ ('LA','STJOHNBAPTIST','STJOHNTHEBAPTIST'), ('VA','LOUDON','LOUDOUN'), ('SD','BENNET','BENNETT'),
+ ('OH','FARIFIELD','FAIRFIELD'), ('AK','SEFAIRBANK','SOUTHEASTFAIRBANKS'), ('AK','SEFAIRBANKS','SOUTHEASTFAIRBANKS'),
+ ('AK','PRWALES-OUTER','PRINCEOFWALES-HYDER'), ('AK','PRWALES-OUTERKE','PRINCEOFWALES-HYDER');
 
 CREATE TEMP TABLE ae AS
 SELECT CAST(regexp_extract(filename, 'fy(\d{4})', 1) AS INTEGER) AS fiscal_year, *
@@ -51,6 +62,7 @@ FROM read_csv(['ae_fy2018.csv','ae_fy2019.csv','ae_fy2020.csv','ae_fy2021.csv',
 
 COPY (
   SELECT
+    FSCSKEY || '-' || fiscal_year AS system_year_id,   -- one row per library system per fiscal year
     fiscal_year,
     STABR AS state, FSCSKEY AS library_id, LIBNAME AS library_name, CITY AS city, CNTY AS county,
     LOCALE_ADD AS locale_code,
@@ -68,7 +80,10 @@ COPY (
     num(TOTPRO) AS programs, num(TOTATTEN) AS program_attendance, num(K0_5ATTEN) AS age0_5_attendance,
     num(GPTERMS) AS public_computers, num(PITUSR) AS computer_sessions, num(WIFISESS) AS wifi_sessions,
     num(WEBVISIT) AS website_visits,
-    try_cast(LATITUDE AS DOUBLE) AS latitude, try_cast(LONGITUD AS DOUBLE) AS longitude
+    try_cast(LATITUDE AS DOUBLE) AS latitude, try_cast(LONGITUD AS DOUBLE) AS longitude,
+    -- Added for the multi-year table (not in library_systems.parquet):
+    C_FSCS AS meets_public_library_definition,   -- Y/N: meets the FSCS public library definition
+    C_LEGBAS AS legal_basis                      -- CI city, CO county, LD library district, MJ multi-jurisdictional, NP non-profit, OT other, ...
   FROM ae
   ORDER BY state, library_id, fiscal_year
 ) TO 'library_systems_by_year.parquet' (FORMAT parquet, COMPRESSION zstd);
@@ -95,11 +110,12 @@ WITH v25 AS (
 )
 SELECT st.abbr AS state, STNAME AS state_name, CTYNAME AS county_name, STATE || COUNTY AS county_fips,
        county_key(CTYNAME) AS county_key,
-       CAST(right(k, 4) AS INTEGER) AS year, CAST(v AS BIGINT) AS population, vintage
+       CAST(right(k, 4) AS INTEGER) AS pop_year, CAST(v AS BIGINT) AS population, vintage
 FROM (SELECT *, 2025 AS vintage FROM v25 UNION ALL BY NAME SELECT *, 2020 AS vintage FROM v20) u
 JOIN st ON st.fips = u.STATE;
 
-COPY (SELECT * FROM pop ORDER BY state, county_fips, year)
+-- pop_year, not year: `year` is a reserved word in Malloy (friction F17).
+COPY (SELECT county_fips || '-' || pop_year AS county_year_id, * FROM pop ORDER BY state, county_fips, pop_year)
   TO 'county_population.parquet' (FORMAT parquet, COMPRESSION zstd);
 
 -- System -> county mapping, one row per library system x county x fiscal year, from the counties
@@ -114,19 +130,27 @@ FROM read_csv(['ol_fy2018.csv','ol_fy2019.csv','ol_fy2020.csv','ol_fy2021.csv',
                'ol_fy2022.csv','ol_fy2023.csv','ol_fy2024.csv'],
               all_varchar = true, union_by_name = true, filename = true);
 
+CREATE TEMP TABLE olk AS
+SELECT o.*,
+       CASE WHEN o.STABR = 'DC' THEN 'DISTRICTOFCOLUMBIA'           -- DC is one county; the survey spells it 3 ways
+            ELSE coalesce(a.census_key, county_key(o.CNTY)) END AS k
+FROM ol o LEFT JOIN alias a ON a.state = o.STABR AND a.pls_key = county_key(o.CNTY)
+WHERE o.FSCSKEY IN (SELECT FSCSKEY FROM ae);
+
 CREATE TEMP TABLE sc AS
 SELECT o.fiscal_year, o.STABR AS state, o.FSCSKEY AS library_id, o.CNTY AS county, count(*) AS outlets,
        coalesce(p1.county_fips, p2.county_fips) AS county_fips,
        coalesce(p1.population, p2.population) AS county_population
-FROM ol o
-LEFT JOIN pop p1 ON p1.state = o.STABR AND p1.year = o.fiscal_year AND p1.county_key = county_key(o.CNTY)
-LEFT JOIN pop p2 ON p1.county_fips IS NULL AND p2.state = o.STABR AND p2.year = o.fiscal_year
-                AND p2.county_key = county_key(o.CNTY) || ' CITY'
-WHERE o.FSCSKEY IN (SELECT FSCSKEY FROM ae)
+FROM olk o
+LEFT JOIN pop p1 ON p1.state = o.STABR AND p1.pop_year = o.fiscal_year AND p1.county_key = o.k
+LEFT JOIN pop p2 ON p1.county_fips IS NULL AND p2.state = o.STABR AND p2.pop_year = o.fiscal_year
+                AND p2.county_key = o.k || 'CITY'
 GROUP BY ALL;
 
 COPY (
-  SELECT fiscal_year, state, library_id, county, county_fips, outlets, county_population,
+  SELECT library_id || '-' || fiscal_year AS system_year_id,
+         county_fips || '-' || fiscal_year AS county_year_id,
+         fiscal_year, state, library_id, county, county_fips, outlets, county_population,
          county_population / sum(county_population) OVER (PARTITION BY fiscal_year, library_id) AS pop_weight,
          count(*) OVER (PARTITION BY fiscal_year, library_id) AS counties_served
   FROM sc

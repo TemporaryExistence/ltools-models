@@ -1,6 +1,6 @@
 ##" Monthly ridership for every US transit agency reporting to the FTA National Transit Database, 2002 – August 2026: trips, service hours and miles, peak vehicles, growth and recovery since 2019, by agency, mode and month. Defaults to North Carolina (GoRaleigh, GoTriangle, Charlotte CATS); pick any state.
 ## dataset { title="US Transit Ridership (NTD Monthly)" }
 
-import { transit, STATE, AGENCY, MODE_GROUP } from 'transit.malloy'
+import { transit, STATE, AGENCY, MODE_GROUP, SIZE_BAND } from 'transit.malloy'
 
-export { transit, STATE, AGENCY, MODE_GROUP }
+export { transit, STATE, AGENCY, MODE_GROUP, SIZE_BAND }

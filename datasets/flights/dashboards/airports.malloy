@@ -1,0 +1,32 @@
+##! experimental.givens
+import "../flights.malloy"
+
+#" How reliable is flying out of an airport, how it compares with airports of other sizes, and how far a late
+#" aircraft carries its delay through the day. Opens on RDU; pick any origin airport or size band.
+# artifact { title="Airports and Delay Chains" givens { ORIGIN="RDU" } } dashboard { columns=6 }
+query: airports is aircraft_legs -> {
+  where:
+    flight_date ~ $PERIOD,
+    size_band ~ $SIZE_BAND
+  # colspan=1
+  aggregate:
+    airport_flights is flight_count { where: origin ~ $ORIGIN }
+    # percent
+    airport_late_rate is late_rate { where: origin ~ $ORIGIN }
+    # percent
+    airport_cancel_rate is cancel_rate { where: origin ~ $ORIGIN }
+    # percent
+    airport_chain_share is chain_share { where: origin ~ $ORIGIN }
+  # colspan=3
+  nest:
+    airport_by_hour is by_hour + { where: origin ~ $ORIGIN }
+    airport_by_airline is by_airline + { where: origin ~ $ORIGIN }
+    airport_first_flight_effect is first_flight_effect + { where: origin ~ $ORIGIN }
+    airport_inbound_effect is inbound_effect + { where: origin ~ $ORIGIN }
+    airport_chain_starts is chain_starts + { where: origin ~ $ORIGIN }
+    airport_inbound_from is inbound_from + { where: origin ~ $ORIGIN }
+    airport_worst_routes is worst_routes + { where: origin ~ $ORIGIN }
+    chain_by_size
+    hour_by_size
+    late_by_leg
+}

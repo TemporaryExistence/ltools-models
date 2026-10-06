@@ -1,0 +1,23 @@
+##! experimental.givens
+import "../transit.malloy"
+
+#" Big transit systems against small ones, by agency size band (total trips in 2019): how far each band has come
+#" back since 2019, how much service it restored, how many riders it carries per service hour, and its mix of bus,
+#" rail and ferry. Latest 12 months = September 2025 to August 2026. Pick a state and a size band to narrow it.
+# artifact { title="Transit Agencies by Size" givens { STATE="" } } dashboard { columns=6 }
+query: agencies_by_size is transit -> {
+  where:
+    state ~ $STATE,
+    size_band ~ $SIZE_BAND
+  # colspan=1
+  aggregate: agencies, trips_latest_12m, recovery_vs_2019, service_vs_2019, yoy_change, trips_per_hour_12m
+  # colspan=3
+  nest:
+    by_size_band
+    # bar_chart { x=size_band y=trips_per_hour_12m }
+    fixed_route_productivity is by_size_band + { where: is_fixed_route }
+    size_band_mode_mix
+    largest_agencies
+    # bar_chart { x=report_year y=trips_total }
+    by_year is service_and_trips_by_year + { where: report_year >= 2015 and report_year <= 2025 }
+}

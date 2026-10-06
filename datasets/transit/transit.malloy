@@ -14,13 +14,59 @@ given:
   AGENCY :: filter<string> is f''
   # label="Bus / Rail / Ferry" control=select suggest { source=transit dimension=mode_group }
   MODE_GROUP :: filter<string> is f''
+  # label="Agency size (2019 trips)" control=select suggest { source=transit dimension=size_band }
+  SIZE_BAND :: filter<string> is f''
+
+// The raw rows. Kept separate so the urbanized-area table below can be derived from them.
+source: ntd_rows is duckdb.table('https://tabblabs.net/datasets/transit/ntd_monthly.parquet')
+
+#" One row per urbanized area (Census 2020 UZA), with its population. Derived from the rows; joined back so a
+#" metro's residents are counted once however many agency rows it has.
+source: urbanized_areas is ntd_rows -> {
+  where: uza_population_2020 > 0
+  group_by: uace_code
+  aggregate: population is max(uza_population_2020)
+}
 
 #" One row per transit agency x mode x type of service x month. Trips are unlinked passenger trips (each boarding
 #" counts once, so a bus-to-train transfer is two trips).
-source: transit is duckdb.table('https://tabblabs.net/datasets/transit/ntd_monthly.parquet') extend {
+source: transit is ntd_rows extend {
+  join_one: uza is urbanized_areas on uace_code = uza.uace_code
+
   dimension:
     #" Calendar year of the month.
     report_year is year(report_month)
+    #" The Triangle (Raleigh and Durham urbanized areas: GoRaleigh, GoDurham, GoTriangle, Chapel Hill Transit,
+    #" NC State Wolfline, GoWake Access, and GoCary through 2011) against fast-growing Sun Belt metros of similar
+    #" size (1.0 to 1.9 million people in the 2020 Census). Null for every other area.
+    peer_metro is
+      pick 'Triangle (Raleigh + Durham)' when urban_area = 'Raleigh, NC' or urban_area = 'Durham, NC'
+      pick 'Charlotte' when urban_area = 'Charlotte, NC--SC'
+      pick 'Nashville' when urban_area = 'Nashville-Davidson, TN'
+      pick 'Austin' when urban_area = 'Austin, TX'
+      pick 'Jacksonville' when urban_area = 'Jacksonville, FL'
+      pick 'Richmond' when urban_area = 'Richmond, VA'
+      pick 'Orlando' when urban_area = 'Orlando, FL'
+      else null
+    #" Agency size band by the agency's total 2019 trips (pre-pandemic, so the band doesn't depend on recovery).
+    #" Cut points are round numbers near the 2019 distribution of the 522 agencies reporting that year
+    #" (median 1.6M, 80th percentile 7.4M, 95th 61M, 99th 301M): very large 100M+, large 20M to 100M, medium 5M to 20M,
+    #" small 1M to 5M, very small under 1M. Labels are kept plain so they work as dashboard filter values.
+    size_band is
+      pick '1 Very large' when agency_trips_2019 >= 100000000
+      pick '2 Large' when agency_trips_2019 >= 20000000
+      pick '3 Medium' when agency_trips_2019 >= 5000000
+      pick '4 Small' when agency_trips_2019 >= 1000000
+      pick '5 Very small' when agency_trips_2019 > 0
+      else '6 No 2019 data'
+    #" Fixed-route service: everything except demand response (dial-a-ride, paratransit) and vanpool, which run
+    #" few riders per hour by design and distort productivity comparisons.
+    is_fixed_route is mode != 'Demand response' and mode != 'Vanpool'
+    #" North Carolina split three ways: the Triangle, Charlotte, and everywhere else.
+    nc_region is
+      pick 'Triangle' when urban_area = 'Raleigh, NC' or urban_area = 'Durham, NC'
+      pick 'Charlotte' when urban_area = 'Charlotte, NC--SC'
+      else 'Rest of NC'
 
   measure:
     #" Unlinked passenger trips (boardings).
@@ -51,6 +97,23 @@ source: transit is duckdb.table('https://tabblabs.net/datasets/transit/ntd_month
     recovery_vs_2019 is trips_latest_12m / nullif(trips_2019, 0)
     #" Boardings per vehicle revenue hour over the latest 12 months.
     trips_per_hour_12m is trips_per_revenue_hour { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
+    #" Boardings per vehicle revenue hour in calendar 2019.
+    trips_per_hour_2019 is trips_per_revenue_hour { where: report_month ? @2019 }
+
+    #" Service supplied: vehicle revenue hours in calendar 2019.
+    revenue_hours_2019 is revenue_hours { where: report_month ? @2019 }
+    #" Service supplied: vehicle revenue hours in the latest 12 months (September 2025 – August 2026).
+    revenue_hours_12m is revenue_hours { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
+    #" Service now as a share of 2019 service. Compare with recovery_vs_2019: did riders follow the buses?
+    # percent
+    service_vs_2019 is revenue_hours_12m / nullif(revenue_hours_2019, 0)
+
+    #" People living in the urbanized areas in view (2020 Census), each area counted once.
+    residents is uza.population.sum()
+    #" Trips per resident over the latest 12 months.
+    trips_per_resident_12m is trips_latest_12m / nullif(residents, 0)
+    #" Trips per resident in 2019.
+    trips_per_resident_2019 is trips_2019 / nullif(residents, 0)
 
   #" Ridership every month since 2002; the 2020 drop and the climb back are the story.
   # line_chart { x=report_month y=trips_total }
@@ -100,5 +163,83 @@ source: transit is duckdb.table('https://tabblabs.net/datasets/transit/ntd_month
     aggregate: agencies, trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
     having: trips_latest_12m > 0
     order_by: trips_latest_12m desc
+  }
+
+  #" The Triangle against Sun Belt peers of similar size: how much transit each metro uses, how much service it
+  #" runs, and how far each has come since 2019.
+  # bar_chart { x=peer_metro y=trips_per_resident_12m }
+  view: peer_metros is {
+    where: peer_metro is not null
+    group_by: peer_metro
+    aggregate:
+      residents, trips_latest_12m, trips_per_resident_12m, trips_per_resident_2019,
+      recovery_vs_2019, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m, yoy_change
+    order_by: trips_per_resident_12m desc
+  }
+
+  #" North Carolina as the Triangle, Charlotte and the rest.
+  # bar_chart { x=nc_region y=recovery_vs_2019 }
+  view: nc_regions is {
+    where: state = 'NC'
+    group_by: nc_region
+    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019, service_vs_2019, yoy_change, trips_per_hour_12m
+    order_by: trips_latest_12m desc
+  }
+
+  #" Every Triangle agency: ridership, service and productivity then and now.
+  # bar_chart { x=agency_name y=trips_latest_12m }
+  view: triangle_agencies is {
+    where: peer_metro = 'Triangle (Raleigh + Durham)'
+    group_by: agency_name, ntd_id, urban_area
+    aggregate:
+      trips_2019, trips_latest_12m, recovery_vs_2019, yoy_change,
+      revenue_hours_2019, revenue_hours_12m, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
+    having: trips_latest_12m > 0
+    order_by: trips_latest_12m desc
+  }
+
+  #" Each year's trips and service hours side by side: does ridership follow the service?
+  # line_chart { x=report_year y=trips_total }
+  view: service_and_trips_by_year is {
+    group_by: report_year
+    aggregate: trips_total, revenue_hours, trips_per_revenue_hour
+    order_by: report_year
+  }
+
+  #" Fixed-route productivity for the Triangle and its peers: trips per vehicle revenue hour then and now.
+  # bar_chart { x=peer_metro y=trips_per_hour_12m }
+  view: peer_productivity is {
+    where: peer_metro is not null and is_fixed_route
+    group_by: peer_metro
+    aggregate: recovery_vs_2019, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
+    order_by: trips_per_hour_12m desc
+  }
+
+  #" Big systems vs small: recovery, growth, service restored and productivity by agency size band.
+  # bar_chart { x=size_band y=recovery_vs_2019 }
+  view: by_size_band is {
+    group_by: size_band
+    aggregate:
+      agencies, trips_2019, trips_latest_12m, recovery_vs_2019, yoy_change,
+      service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
+    order_by: size_band
+  }
+
+  #" Mode mix by size band: share of each band's latest-12-month trips by bus, rail and ferry.
+  view: size_band_mode_mix is {
+    group_by: size_band, mode_group
+    aggregate:
+      trips_latest_12m
+      share_of_band is trips_latest_12m / all(trips_latest_12m, size_band)
+    having: trips_latest_12m > 0
+    order_by: size_band, trips_latest_12m desc
+  }
+
+  #" The largest agencies by 2019 trips, with recovery, service and productivity.
+  view: largest_agencies is {
+    group_by: agency_name, city, state
+    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019, yoy_change, service_vs_2019, trips_per_hour_12m
+    order_by: trips_2019 desc
+    limit: 10
   }
 }

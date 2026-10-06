@@ -101,3 +101,251 @@ source: library_branches is branches_table extend {
     limit: 20
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Multi-year: IMLS Public Libraries Survey FY2018 – FY2024, plus US Census county population.
+// Built by build_pls_years.sql. Dollars are as reported each year (not adjusted for inflation).
+// Columns absent in some years are null there: physical_items and age0_5_attendance (FY2018–FY2020),
+// ebooks, kids_circulation and website_visits (FY2024).
+// ---------------------------------------------------------------------------------------------
+
+#" One row per public library system per fiscal year, FY2018 – FY2024 (fiscal year = the year it ends, mostly June).
+source: library_years is duckdb.table('https://tabblabs.net/datasets/libraries/library_systems_by_year.parquet') extend {
+  primary_key: system_year_id
+  dimension:
+    #" Size band by population served that year. Cut points from the FY2024 distribution of 9,209 systems:
+    #" 500k+ is the top ~1% (99 systems, a third of everyone served), 100k–500k the next ~5%, 25k–100k up to
+    #" the 75th percentile (23.6k), 5k–25k around the median (7.5k), under 5k the smallest ~40%.
+    #" Band 6 holds entries that are not comparable: systems the survey says do not meet the public-library
+    #" definition, plus five that serve 100k+ on paper but report under 0.05 visits per person in FY2024 because
+    #" they are a statewide special service (Maryland Library for the Blind, 6.2M "served") or coordinating bodies
+    #" whose member libraries report their own visits (Cheaha, Horseshoe Bend, Arrowhead, Ilumina).
+    size_band is
+      pick '6 Not comparable' when meets_public_library_definition = 'N'
+        or library_id = 'MD9005' or library_id = 'AL0010' or library_id = 'AL0048'
+        or library_id = 'MN0001' or library_id = 'TX0752'
+      pick '1 Very large (500k+)' when population_served >= 500000
+      pick '2 Large (100k–500k)' when population_served >= 100000
+      pick '3 Medium (25k–100k)' when population_served >= 25000
+      pick '4 Small (5k–25k)' when population_served >= 5000
+      pick '5 Very small (under 5k)' when population_served > 0
+      else 'Unknown'
+    #" Urban/suburban/town/rural, from the NCES locale code.
+    setting is substr(locale_code, 1, 1) ?
+      pick 'City' when '1'
+      pick 'Suburb' when '2'
+      pick 'Town' when '3'
+      pick 'Rural' when '4'
+      else 'Unknown'
+    #" Central library + branches + bookmobiles.
+    buildings is coalesce(central_libraries, 0) + coalesce(branches, 0) + coalesce(bookmobiles, 0)
+
+  measure:
+    systems is count()
+    total_visits is visits.sum()
+    total_population is population_served.sum()
+    // Every per-person measure divides by the population of the systems that REPORTED that figure, so a
+    // system with a missing value doesn't drag the rate down (FY2024: 2,791 systems left circulation unreported).
+    #" Visits per person in the area served (systems that reported visits).
+    visits_per_capita is total_visits / nullif(population_served.sum() { where: visits is not null }, 0)
+    #" Items borrowed per person in the area served (systems that reported total circulation).
+    circulation_per_capita is circulation.sum() / nullif(population_served.sum() { where: circulation is not null }, 0)
+    #" Operating spend per person served, US dollars as reported that year.
+    # currency
+    spend_per_capita is operating_spend.sum() / nullif(population_served.sum() { where: operating_spend is not null }, 0)
+    #" Share of borrowing that is e-books, e-audio and other digital items (systems that reported both).
+    # percent
+    digital_share is digital_circulation.sum() / nullif(circulation.sum() { where: digital_circulation is not null }, 0)
+    visits_fy2019 is total_visits { where: fiscal_year = 2019 }
+    visits_fy2024 is total_visits { where: fiscal_year = 2024 }
+    visits_per_capita_fy2019 is visits_per_capita { where: fiscal_year = 2019 }
+    visits_per_capita_fy2024 is visits_per_capita { where: fiscal_year = 2024 }
+    #" Change in visits, FY2024 against FY2019 (the last year before the pandemic).
+    # percent
+    visits_change_vs_fy2019 is visits_fy2024 / nullif(visits_fy2019, 0) - 1
+    #" Operating spend per visit, US dollars as reported that year.
+    # currency
+    cost_per_visit is operating_spend.sum() { where: visits is not null } / nullif(visits.sum() { where: operating_spend is not null }, 0)
+    #" Paid staff (full-time equivalent) per 10,000 people served.
+    staff_per_10k is staff_fte.sum() * 10000 / nullif(population_served.sum() { where: staff_fte is not null }, 0)
+    #" Average hours open per week per building (yearly public service hours ÷ buildings incl. bookmobiles ÷ 52).
+    weekly_hours_per_building is hours_open.sum() / nullif(buildings.sum() { where: hours_open is not null }, 0) / 52
+    #" Yearly public service hours per 1,000 people served.
+    hours_per_1k_people is hours_open.sum() * 1000 / nullif(population_served.sum() { where: hours_open is not null }, 0)
+
+  # line_chart { x=fiscal_year y=visits_per_capita }
+  view: visits_by_year is {
+    group_by: fiscal_year
+    aggregate: visits_per_capita, circulation_per_capita, spend_per_capita, digital_share, total_visits, systems
+    order_by: fiscal_year
+  }
+
+  #" Systems serving 20,000+ people, ranked by how far visits have come back since FY2019.
+  view: change_by_system is {
+    where: population_served >= 20000
+    group_by: library_name
+    aggregate: visits_fy2019, visits_fy2024, visits_change_vs_fy2019, visits_per_capita_fy2024
+    having: visits_fy2019 > 0 and visits_fy2024 > 0
+    order_by: visits_change_vs_fy2019 desc
+    limit: 15
+  }
+
+  view: change_by_state is {
+    group_by: state
+    aggregate: visits_per_capita_fy2019, visits_per_capita_fy2024, visits_change_vs_fy2019
+    order_by: visits_per_capita_fy2024 desc
+  }
+
+  #" Big systems against small ones, FY2024: use, cost, staffing, hours, and change in visits since FY2019.
+  # bar_chart { x=size_band y=visits_per_capita_fy2024 }
+  view: by_size_band is {
+    where: size_band != 'Unknown'
+    group_by: size_band
+    aggregate:
+      systems_fy2024 is systems { where: fiscal_year = 2024 }
+      people_served_fy2024 is total_population { where: fiscal_year = 2024 }
+      visits_per_capita_fy2024
+      circulation_per_capita_fy2024 is circulation_per_capita { where: fiscal_year = 2024 }
+      digital_share_fy2024 is digital_share { where: fiscal_year = 2024 }
+      spend_per_capita_fy2024 is spend_per_capita { where: fiscal_year = 2024 }
+      cost_per_visit_fy2024 is cost_per_visit { where: fiscal_year = 2024 }
+      staff_per_10k_fy2024 is staff_per_10k { where: fiscal_year = 2024 }
+      weekly_hours_per_building_fy2024 is weekly_hours_per_building { where: fiscal_year = 2024 }
+      visits_per_capita_fy2019
+      visits_change_vs_fy2019
+    order_by: size_band
+  }
+
+  #" Visits per person each year, one line per size band.
+  # line_chart { x=fiscal_year y=visits_per_capita series=size_band }
+  view: size_band_by_year is {
+    where: size_band != 'Unknown' and size_band != '6 Not comparable'
+    group_by: fiscal_year, size_band
+    aggregate: visits_per_capita
+    order_by: fiscal_year
+  }
+
+  #" The biggest systems in FY2024 by population served.
+  view: largest_systems is {
+    where: fiscal_year = 2024 and size_band != '6 Not comparable'
+    group_by: library_name, state
+    aggregate: total_population, visits_per_capita, circulation_per_capita, digital_share, spend_per_capita, cost_per_visit, staff_per_10k
+    order_by: total_population desc
+    limit: 15
+  }
+
+  #" Most-used small systems in FY2024 (1,000 – 25,000 people served).
+  view: busiest_small_systems is {
+    where: fiscal_year = 2024 and population_served >= 1000 and population_served < 25000 and size_band != '6 Not comparable'
+    group_by: library_name, state
+    aggregate: total_population, visits_per_capita, circulation_per_capita, spend_per_capita, cost_per_visit
+    order_by: visits_per_capita desc
+    limit: 15
+  }
+}
+
+given:
+  # label="System size" control=select suggest { source=library_years dimension=size_band }
+  SIZE_BAND :: filter<string> is f''
+
+#" US Census county population estimates (1 July), 2010 – 2025. 2010–2019 from Vintage 2020, 2020–2025 from Vintage 2025.
+source: county_population is duckdb.table('https://tabblabs.net/datasets/libraries/county_population.parquet') extend {
+  primary_key: county_year_id
+  measure:
+    residents is population.sum()
+    residents_2020 is residents { where: pop_year = 2020 }
+    residents_2024 is residents { where: pop_year = 2024 }
+    people_added_2020_2024 is residents_2024 - residents_2020
+    #" Population growth from 1 July 2020 to 1 July 2024 (both from Vintage 2025).
+    # percent
+    growth_2020_2024 is residents_2024 / nullif(residents_2020, 0) - 1
+
+  # bar_chart { x=county_name y=growth_2020_2024 }
+  view: fastest_growing is {
+    group_by: county_name
+    aggregate: residents_2020, residents_2024, people_added_2020_2024, growth_2020_2024
+    order_by: growth_2020_2024 desc
+    limit: 15
+  }
+
+  view: growth_by_state is {
+    group_by: state
+    aggregate: residents_2024, people_added_2020_2024, growth_2020_2024
+    order_by: growth_2020_2024 desc
+  }
+}
+
+#" One row per library system x county it has a building in x fiscal year. A regional system (several
+#" counties) is shared out across its counties by population (pop_weight), so counties can be compared
+#" per resident. Every system in a county counts toward it (e.g. Orange = Orange County + Chapel Hill).
+source: county_libraries is duckdb.table('https://tabblabs.net/datasets/libraries/library_counties.parquet') extend {
+  join_one: sys is library_years on system_year_id = sys.system_year_id
+  join_one: cp is county_population on county_year_id = cp.county_year_id
+  dimension:
+    county_name is cp.county_name
+    system_name is sys.library_name
+    #" The county's share of this system's visits: visits x pop_weight.
+    shared_visits is sys.visits * pop_weight
+    shared_spend is sys.operating_spend * pop_weight
+
+  measure:
+    allocated_visits is shared_visits.sum()
+    allocated_spend is shared_spend.sum()
+    #" County residents (Census), counted once per county per year however many systems serve it.
+    residents is cp.population.sum()
+    #" Library visits per county resident, all systems serving the county.
+    visits_per_resident is allocated_visits / nullif(residents, 0)
+    #" Library operating spend per county resident, US dollars as reported that year.
+    # currency
+    spend_per_resident is allocated_spend / nullif(residents, 0)
+    visits_per_resident_fy2019 is visits_per_resident { where: fiscal_year = 2019 }
+    visits_per_resident_fy2024 is visits_per_resident { where: fiscal_year = 2024 }
+    # currency
+    spend_per_resident_fy2019 is spend_per_resident { where: fiscal_year = 2019 }
+    # currency
+    spend_per_resident_fy2024 is spend_per_resident { where: fiscal_year = 2024 }
+    # percent
+    visits_per_resident_change is visits_per_resident_fy2024 / nullif(visits_per_resident_fy2019, 0) - 1
+    residents_2020 is residents { where: fiscal_year = 2020 }
+    residents_2024 is residents { where: fiscal_year = 2024 }
+    #" County population growth, 1 July 2020 to 1 July 2024.
+    # percent
+    population_growth_2020_2024 is residents_2024 / nullif(residents_2020, 0) - 1
+
+  # line_chart { x=fiscal_year y=visits_per_resident }
+  view: by_year is {
+    group_by: fiscal_year
+    aggregate: visits_per_resident, spend_per_resident, residents, allocated_visits
+    order_by: fiscal_year
+  }
+
+  #" The growth gap: fastest-growing counties next to how much they use and spend on their libraries.
+  view: growth_gap is {
+    group_by: county_name
+    aggregate:
+      population_growth_2020_2024
+      residents_2024
+      visits_per_resident_fy2024
+      visits_per_resident_change
+      spend_per_resident_fy2024
+    order_by: population_growth_2020_2024 desc
+    limit: 20
+  }
+
+  # bar_chart { x=county_name y=visits_per_resident_fy2024 }
+  view: visits_per_resident_by_county is {
+    group_by: county_name
+    aggregate: visits_per_resident_fy2024, spend_per_resident_fy2024, residents_2024
+    order_by: visits_per_resident_fy2024 desc
+  }
+
+  #" How multi-county (regional) systems are mapped to counties, FY2024.
+  view: regional_systems is {
+    where: counties_served > 1 and fiscal_year = 2024
+    group_by: system_name, county_name
+    aggregate:
+      buildings is outlets.sum()
+      share_of_system is pop_weight.max()
+    order_by: system_name, share_of_system desc
+  }
+}

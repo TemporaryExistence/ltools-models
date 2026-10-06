@@ -1,9 +1,10 @@
 ##! experimental { givens }
 
-// US domestic flights, BTS Reporting Carrier On-Time Performance (US public data), May–July 2026.
+// US domestic flights, BTS Reporting Carrier On-Time Performance (US public data), May–July 2026 (92 days).
 // Working copy lives in MotherDuck (`ltools.flights`, loaded by load_flights.sql); the published model reads monthly
 // Parquet exports served at https://tabblabs.net/datasets/flights/ — a hosted instance can't read files shipped
-// inside the repo (friction log F13/F16).
+// inside the repo (friction log F13/F16). The exports carry tail_number (aircraft registration) so each aircraft
+// can be followed through its day (see aircraft_legs below).
 
 given:
   # label="Airline" control=select suggest { source=flights dimension=airline }
@@ -12,9 +13,11 @@ given:
   ORIGIN :: filter<string> is f''
   # label="Flight date"
   PERIOD :: filter<date> is f''
+  # label="Airport size" control=select suggest { source=flights dimension=size_band }
+  SIZE_BAND :: filter<string> is f''
 
-#" One row per scheduled US domestic flight. Delays are in minutes; negative = early.
-source: flights is duckdb.sql("""
+#" One row per scheduled US domestic flight, before the airport-size join. Use `flights`.
+source: flights_base is duckdb.sql("""
   SELECT * FROM read_parquet([
     'https://tabblabs.net/datasets/flights/flights_2026_05.parquet',
     'https://tabblabs.net/datasets/flights/flights_2026_06.parquet',
@@ -75,7 +78,38 @@ source: flights is duckdb.sql("""
     weather_delay_hours is weather_delay_min.sum() / 60
     air_traffic_delay_hours is nas_delay_min.sum() / 60
     late_aircraft_delay_hours is late_aircraft_delay_min.sum() / 60
+    #" Of the delay hours BTS attributes to a cause, the share caused by the aircraft arriving late from its previous flight.
+    # percent
+    late_aircraft_share is late_aircraft_delay_min.sum()
+      / (carrier_delay_min.sum() + weather_delay_min.sum() + nas_delay_min.sum()
+         + security_delay_min.sum() + late_aircraft_delay_min.sum())
     route_count is count(route)
+}
+
+#" Departures per origin airport over the whole period (May–July 2026, 92 days); drives the size band.
+source: airport_sizes is flights_base -> {
+  group_by: origin
+  aggregate: departures is count()
+}
+
+#" One row per scheduled US domestic flight. Delays are in minutes; negative = early.
+source: flights is flights_base extend {
+  join_one: origin_size is airport_sizes on origin = origin_size.origin
+
+  dimension:
+    #" Average scheduled departures per day over May–July 2026 (92 days), for the origin airport.
+    origin_departures_per_day is origin_size.departures / 92
+    #" Origin airport size, from its departures per day over the full period (not the filtered one):
+    #" Hub 400+, Large 100–399, Medium 30–99, Small 10–29, Very small under 10.
+    size_band is
+      pick '1 Hub (400+/day)' when origin_size.departures >= 36800
+      pick '2 Large (100-399/day)' when origin_size.departures >= 9200
+      pick '3 Medium (30-99/day)' when origin_size.departures >= 2760
+      pick '4 Small (10-29/day)' when origin_size.departures >= 920
+      else '5 Very small (<10/day)'
+
+  measure:
+    airport_count is count(origin)
 
   # bar_chart { x=airline y=late_rate }
   view: by_airline is {
@@ -120,5 +154,226 @@ source: flights is duckdb.sql("""
     aggregate: flight_count, late_rate
     order_by: flight_count desc
     limit: 20
+  }
+
+  #" Reliability by airport size band: late, cancelled, average delay, and how much delay is a late inbound plane.
+  # bar_chart { x=size_band y=late_rate }
+  view: by_size_band is {
+    group_by: size_band
+    aggregate: airport_count, flight_count, late_rate, cancel_rate, avg_arrival_delay, late_aircraft_share
+    order_by: size_band
+  }
+
+  #" Delay hours by cause, per airport size band.
+  view: delay_causes_by_size is {
+    group_by: size_band
+    aggregate: airline_delay_hours, late_aircraft_delay_hours, air_traffic_delay_hours, weather_delay_hours
+    order_by: size_band
+  }
+
+  #" RDU and its peers: Charlotte, Nashville, Austin, Richmond, Jacksonville.
+  # bar_chart { x=origin y=late_rate }
+  view: rdu_peers is {
+    where: origin ? 'RDU' | 'CLT' | 'BNA' | 'AUS' | 'RIC' | 'JAX'
+    group_by: origin
+    aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay, late_aircraft_share
+    order_by: late_rate
+  }
+}
+
+#" Every flight with its place in its aircraft's day: flights are grouped by tail number and date and ordered by
+#" scheduled departure (local time), so each flight knows its leg number, the previous flight of the same aircraft,
+#" and how the aircraft's first flight of the day went. Cancelled and diverted flights are kept (for cancel rate) but
+#" sit in their own partition, so a chain only links flights that operated. Flights with no tail number (3,216,
+#" almost all cancelled) carry no chain fields.
+source: aircraft_legs is flights -> {
+  group_by:
+    tail_number, flight_date, flight_number, carrier, airline, origin, dest, route, sched_dep_hhmm, dep_hour,
+    size_band, cancelled, diverted, arrived_late, arr_delay_min, dep_delay_min,
+    carrier_delay_min, weather_delay_min, nas_delay_min, security_delay_min, late_aircraft_delay_min
+    operated is not cancelled and not diverted
+    late_flag is pick 1 when arrived_late else 0
+  calculate:
+    leg_number is row_number() {
+      partition_by: tail_number, flight_date, operated
+      order_by: sched_dep_hhmm, flight_number
+    }
+    prev_leg_late is lag(arrived_late) {
+      partition_by: tail_number, flight_date, operated
+      order_by: sched_dep_hhmm, flight_number
+    }
+    prev_origin is lag(origin) {
+      partition_by: tail_number, flight_date, operated
+      order_by: sched_dep_hhmm, flight_number
+    }
+    first_leg_late_flag is first_value(late_flag) {
+      partition_by: tail_number, flight_date, operated
+      order_by: sched_dep_hhmm, flight_number
+    }
+    first_origin is first_value(origin) {
+      partition_by: tail_number, flight_date, operated
+      order_by: sched_dep_hhmm, flight_number
+    }
+} extend {
+  join_one: prev_size is airport_sizes on prev_origin = prev_size.origin
+
+  dimension:
+    #" Size band of the airport the aircraft flew in from (later flights only; same cut points as size_band).
+    inbound_size_band is
+      pick '1 Hub (400+/day)' when prev_size.departures >= 36800
+      pick '2 Large (100-399/day)' when prev_size.departures >= 9200
+      pick '3 Medium (30-99/day)' when prev_size.departures >= 2760
+      pick '4 Small (10-29/day)' when prev_size.departures >= 920
+      pick '5 Very small (<10/day)' when prev_size.departures > 0
+      else null
+    #" A flight that operated and has a tail number: the rows the delay chain is measured on.
+    in_chain is operated and tail_number is not null
+    #" Whether the aircraft's first flight of the day arrived late.
+    first_leg_late is first_leg_late_flag = 1
+    #" How this aircraft's first flight of the day went (later flights only).
+    day_start is
+      pick 'First flight of the day late' when first_leg_late
+      else 'First flight of the day on time'
+    #" Whether the aircraft's previous flight that day arrived late.
+    inbound is
+      pick 'Inbound aircraft late' when prev_leg_late
+      else 'Inbound aircraft on time'
+    #" Leg of the aircraft's day, 1 = first flight; 7+ grouped.
+    leg is pick 7 when leg_number >= 7 else leg_number
+
+  measure:
+    flight_count is count()
+    cancel_rate is count() { where: cancelled } / count()
+    legs is count() { where: in_chain }
+    late_legs is count() { where: in_chain and arrived_late }
+    #" Share of operated flights arriving 15+ minutes late.
+    # percent
+    late_rate is late_legs / legs
+    avg_arrival_delay is arr_delay_min.avg()
+    #" Share of an airport's departures that are the aircraft's first flight of the day.
+    # percent
+    first_flight_share is count() { where: in_chain and leg_number = 1 } / legs
+    #" Of the flights that arrived late, the share whose aircraft's previous flight that day was also late.
+    # percent
+    chain_share is count() { where: in_chain and arrived_late and prev_leg_late } / late_legs
+    #" Of the delay hours BTS attributes to a cause, the share from the aircraft arriving late.
+    # percent
+    late_aircraft_share is late_aircraft_delay_min.sum()
+      / (carrier_delay_min.sum() + weather_delay_min.sum() + nas_delay_min.sum()
+         + security_delay_min.sum() + late_aircraft_delay_min.sum())
+
+  #" Later flights of the day: how often they arrive late when the aircraft's first flight was late vs on time.
+  # bar_chart { x=day_start y=late_rate }
+  view: first_flight_effect is {
+    where: in_chain and leg_number > 1
+    group_by: day_start
+    aggregate: legs, late_rate
+    order_by: day_start desc
+  }
+
+  #" Same, one step back: the aircraft's previous flight late vs on time.
+  # bar_chart { x=inbound y=late_rate }
+  view: inbound_effect is {
+    where: in_chain and leg_number > 1
+    group_by: inbound
+    aggregate: legs, late_rate
+    order_by: inbound desc
+  }
+
+  #" Late rate by leg of the aircraft's day (1 = first flight; 7 = seventh or later).
+  # bar_chart { x=leg y=late_rate }
+  view: late_by_leg is {
+    where: in_chain
+    group_by: leg
+    aggregate: late_rate, legs
+    order_by: leg
+  }
+
+  #" Airports whose late first flight of the day ends in a late departure from here (later flights only).
+  # bar_chart { x=first_origin y=late_legs }
+  view: chain_starts is {
+    where: in_chain and leg_number > 1 and first_leg_late and origin != first_origin
+    group_by: first_origin
+    aggregate: late_legs
+    order_by: late_legs desc
+    limit: 10
+  }
+
+  #" Where the aircraft flew in from (100+ flights): how often it arrived late, and how often it then leaves here late.
+  view: inbound_from is {
+    where: in_chain and leg_number > 1
+    group_by: prev_origin
+    aggregate:
+      legs
+      # percent
+      inbound_late_rate is count() { where: prev_leg_late } / legs
+      late_rate
+    having: legs >= 100
+    order_by: legs desc
+    limit: 15
+  }
+
+  #" Chain exposure by airport size band.
+  # bar_chart { x=size_band y=chain_share }
+  view: chain_by_size is {
+    group_by: size_band
+    aggregate: legs, late_rate, cancel_rate, first_flight_share, chain_share, late_aircraft_share
+    order_by: size_band
+  }
+
+  #" Where each size band's aircraft fly in from: share of later flights by the inbound airport's size band.
+  view: inbound_mix_by_size is {
+    where: in_chain and leg_number > 1
+    group_by: size_band, inbound_size_band
+    aggregate:
+      legs
+      # percent
+      share_of_band is legs / all(legs, size_band)
+      late_rate
+    order_by: size_band, inbound_size_band
+  }
+
+  #" First flight of the day vs later flights, by size band: separates the airport from the mix of its flights.
+  view: leg_mix_by_size is {
+    where: in_chain
+    group_by: size_band, flight_of_day is pick 'First' when leg_number = 1 else 'Later'
+    aggregate: legs, late_rate
+    order_by: size_band, flight_of_day
+  }
+
+  #" Time-of-day curve by airport size band.
+  # line_chart { x=dep_hour y=late_rate series=size_band }
+  view: hour_by_size is {
+    where: in_chain and dep_hour >= 5
+    group_by: dep_hour, size_band
+    aggregate: late_rate
+    order_by: dep_hour
+  }
+
+  #" Late rate by scheduled departure hour.
+  # line_chart { x=dep_hour y=late_rate }
+  view: by_hour is {
+    where: in_chain
+    group_by: dep_hour
+    aggregate: late_rate, legs
+    order_by: dep_hour
+  }
+
+  #" Airlines at this airport.
+  # bar_chart { x=airline y=late_rate }
+  view: by_airline is {
+    group_by: airline
+    aggregate: flight_count, late_rate, cancel_rate, avg_arrival_delay
+    order_by: flight_count desc
+    limit: 10
+  }
+
+  #" Busy routes (300+ flights) with the worst late-arrival rate.
+  view: worst_routes is {
+    group_by: route
+    aggregate: flight_count, late_rate, avg_arrival_delay
+    having: flight_count >= 300
+    order_by: late_rate desc
+    limit: 10
   }
 }
