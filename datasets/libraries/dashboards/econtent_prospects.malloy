@@ -29,7 +29,7 @@ query: econtent_prospects_dashboard is econtent_prospects -> {
     systems_benchmarked is count()
     # label="Libraries to pitch"
     libraries_to_pitch is count() { where: prospect_type = 'Pitch the library' }
-    # label="Libraries to reach through a consortium"
+    # label="Libraries to check for a shared collection first"
     consortium_checks is count() { where: prospect_type = 'Check the consortium' }
     # label="E-content gap, libraries to pitch" currency
     pitch_gap is pitch_gap.sum()
@@ -70,8 +70,8 @@ query: econtent_prospects_dashboard is econtent_prospects -> {
       order_by: gap desc
       limit: 50
     }
-    #" Below typical on both, but likely buying e-books through a consortium.
-    # label="Reach through a consortium"
+    #" Below typical on both, but low cost per digital loan: check for a consortium or shared collection before calling.
+    # label="Check for a shared collection first"
     consortium is {
       where: prospect_type = 'Check the consortium'
       group_by:

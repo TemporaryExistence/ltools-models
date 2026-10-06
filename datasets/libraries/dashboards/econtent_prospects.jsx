@@ -289,7 +289,7 @@ const bandColor = (t) => ({ domain: BANDS.map((b) => b.name), range: t.pal.bands
 // Prospect types, by the first letter of the model's prospect_type.
 const KINDS = [
   { code: "P", name: "Pitch the library" },
-  { code: "C", name: "Reach through a consortium" },
+  { code: "C", name: "Check for a shared collection first" },
   { code: "N", name: "Not a prospect" },
 ];
 const KIND_BY_CODE = Object.fromEntries(KINDS.map((k) => [k.code, k.name]));
@@ -516,7 +516,7 @@ export default function Dashboard({ dashboard, givens }) {
           </div>
           <div className="od-kpi">
             <div className="v">{count(k.consortium_checks)}</div>
-            <div className="l">More to reach through a consortium</div>
+            <div className="l">More to check for a shared collection first</div>
             <div className="s">{money(k.consortium_gap)} gap; they pay under half the typical per digital loan</div>
           </div>
         </div>
