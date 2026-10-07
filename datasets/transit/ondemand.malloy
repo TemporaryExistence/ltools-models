@@ -149,7 +149,8 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     where: is_urban and reports_ada_trips
     group_by: agency_label, ntd_id
     aggregate:
-      general_public_hours_2022, general_public_hours_2024, new_service_hours_added, ondemand_hours_added,
+      // The ranking measure goes first: a refinement with only `limit` falls back to ordering by the first aggregate.
+      new_service_hours_added, general_public_hours_2022, general_public_hours_2024, ondemand_hours_added,
       reflagged_hours, general_public_spend_2024, new_service_spend_added, ada_trip_share_2024, momentum_since_2024
     // Only agencies that reported on-demand trips in BOTH years: a first report (a merger, a new reporter ID, a move
     // from rural to urban reporting) is not growth.
