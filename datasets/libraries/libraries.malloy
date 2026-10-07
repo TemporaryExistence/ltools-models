@@ -5,6 +5,7 @@
 // Survey codes for "missing" (negative numbers) were converted to null when the Parquet was built.
 //
 // Questions this dataset answers, and where to start (the "playbook" views carry who acts and what to do):
+//   How big is the e-book vendor opportunity (one row)?  econtent_prospects -> econtent_opportunity_headline
 //   Which libraries should an e-book / e-audio vendor call first?  econtent_prospects -> libraries_to_pitch_digital_content
 //   Which libraries have digital demand but under-spend on e-content?  econtent_prospects -> high_demand_low_spend
 //   Which low-cost-per-loan libraries to check for a shared collection first?  econtent_prospects -> shared_collection_check
@@ -220,7 +221,9 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
     collection_budget is collection_spend.sum()
     #" E-content spend: e-books, e-audio, e-video, databases and e-serials, US dollars as reported. This is the
     #" market e-content vendors (OverDrive, hoopla, Boundless and others) sell into. A library whose e-books are
-    #" bought by a state or consortium shows little or none here.
+    #" bought by a state or consortium shows little or none here. The US market size is this measure on
+    #" library_years for one fiscal year (every system that reported): $724M in FY2024, $419M in FY2018
+    #" (view econtent_market_by_year).
     # currency
     econtent_budget is econtent_spend.sum()
     #" Print materials spend, US dollars as reported.
@@ -440,21 +443,36 @@ source: econtent_candidates_base is library_years_base extend {
       pick 'No own e-content spend' when econtent_spend is null or econtent_spend = 0
       pick 'Only 1 of FY2022–24 usable' when three_years.years_benchmarked is null or three_years.years_benchmarked < 2
       else 'Benchmarked'
+  // Rows here are FY2024 only and filtered, so the inherited system-year count and the market-sized money measures
+  // would read as national figures when they are not. Replaced below with explicitly FY2024, in-view measures.
+  except: systems, econtent_budget, print_budget, collection_budget
   measure:
-    #" Number of library systems.
+    #" Number of library systems (each row is one system's FY2024 record).
     candidate_systems is count()
+    #" FY2024 collection (materials) budget of the systems in view, US dollars as reported.
+    # currency
+    collection_budget_fy2024 is collection_spend.sum()
+    #" FY2024 own e-content spend of the systems in view, US dollars as reported. NOT the US market: across the
+    #" 5,084 benchmarked systems in econtent_prospects it totals $585.7M. The US market is library_years ->
+    #" econtent_market_by_year: $724M in FY2024 (every system that reported e-content spend). The $138M difference is
+    #" systems left out of the benchmark, almost all of it ($132.6M) from 2,234 systems that did not report FY2024
+    #" borrowing (incl. Chicago, Multnomah, Hillsborough, Miami-Dade, Broward), so their digital share can't be
+    #" compared. Quote $724M for market size; use this only for the benchmarked group.
+    # currency
+    econtent_spend_fy2024 is econtent_spend.sum()
 
   #" How many FY2024 systems were left out of the e-content benchmark, and why, with their collection budgets.
   view: who_was_left_out is {
     group_by: benchmark_status
-    aggregate: candidate_systems, collection_budget
+    aggregate: candidate_systems, collection_budget_fy2024, econtent_spend_fy2024
     order_by: candidate_systems desc
   }
 }
 
 #" FY2024 library systems that could in principle be benchmarked on digital content (meet the public-library
 #" definition, comparable size band, report borrowing and digital borrowing, spend on their collection), with
-#" benchmark_status saying whether each one was used. Use who_was_left_out to see how many were dropped and why.
+#" benchmark_status saying whether each one was used. One row per system (its FY2024 record). Use who_was_left_out to
+#" see how many were dropped and why. Systems that did not report FY2024 borrowing are not here at all.
 source: econtent_candidates is econtent_candidates_base extend {}
 
 // Systems benchmarked on digital content (5,084): FY2024 candidates with more than 0 digital loans, their own
@@ -516,8 +534,17 @@ source: econtent_band_typical is econtent_band_ranks -> {
 }
 
 #" E-content prospects: who to call to sell e-books / e-audio to public libraries, and how many dollars are at stake.
-#" One row per benchmarked system (5,084), every ratio averaged over FY2022 – FY2024 (pooled), against the median
-#" for its size band. prospect_type: 'Pitch the library' = below typical on BOTH digital borrowing and e-content
+#" START HERE: view econtent_opportunity_headline (the answer in one row) and libraries_to_pitch_digital_content (the
+#" call list). HEADLINE: 1,064 libraries to pitch, $17.2M a year of e-content spend at the typical share; the top 25
+#" hold $10.1M (59%). The three prospect groups are SEPARATE SEGMENTS - never add them into one total: the $10.6M
+#" 'High demand, low spend' list is a second list, and the $17.0M 'Check for a shared collection' group is a screen
+#" kept out of every headline (the buyer may be a consortium). View econtent_opportunity_by_segment shows them side
+#" by side. ROW GRAIN: one row per benchmarked library system (5,084 systems, one row each). The row is the system's
+#" FY2024 record (its key system_year_id is that FY2024 id), carrying ratios pooled over FY2022 – FY2024; count
+#" systems with benchmarked_systems. MARKET SIZE is not on this source: the US library e-content market is
+#" library_years -> econtent_market_by_year ($724M in FY2024, +73% since FY2018). econtent_spend_fy2024 here is only
+#" the benchmarked systems' FY2024 spend ($585.7M); the rest is mostly systems that did not report FY2024 borrowing.
+#" Every ratio is averaged over FY2022 – FY2024 (pooled), against the median for its size band. prospect_type: 'Pitch the library' = below typical on BOTH digital borrowing and e-content
 #" share, paying for its own loans; 'High demand, low spend' = below typical on e-content share but at or above
 #" typical on digital borrowing (patrons already borrow digitally; under-spending likely means holds queues - the
 #" classic e-content pitch; NYPL is the largest); 'Check for a shared collection' = below on e-content share and
@@ -569,7 +596,7 @@ source: econtent_prospects is econtent_systems extend {
     system_room is pick avg_collection_spend * (typical_digital_share - own_digital_share) when is_below_band else 0
 
   measure:
-    #" Number of systems benchmarked.
+    #" Number of library systems benchmarked (one row per system, so this counts systems: 5,084 in all).
     benchmarked_systems is count()
     #" Systems whose digital share of borrowing is below their size band's median.
     systems_below_band is count() { where: is_below_band }
@@ -579,17 +606,23 @@ source: econtent_prospects is econtent_systems extend {
     high_demand_low_spend_libraries is count() { where: prospect_type = 'High demand, low spend' }
     #" Systems below typical on e-content share that spend under half the typical dollars per digital loan.
     shared_collection_checks is count() { where: prospect_type = 'Check for a shared collection' }
-    #" E-content dollars a year the 'Pitch the library' systems would add at their band's typical share.
+    #" HEADLINE opportunity: e-content dollars a year the 'Pitch the library' systems would add at their band's typical
+    #" share ($17.2M across 1,064 libraries; the top 25 hold $10.1M). Quote this one. Do not add the other two groups
+    #" to it.
     # currency
     pitchable_econtent_gap is system_econtent_gap.sum() { where: prospect_type = 'Pitch the library' }
-    #" E-content dollars a year the 'High demand, low spend' systems would add at their band's typical share.
+    #" E-content dollars a year the 'High demand, low spend' systems would add at their band's typical share ($10.6M,
+    #" 488 libraries). A SEPARATE second list, not part of the $17.2M headline; never add the two together.
     # currency
     high_demand_econtent_gap is system_econtent_gap.sum() { where: prospect_type = 'High demand, low spend' }
-    #" E-content dollars a year at the typical share for the 'Check for a shared collection' systems (kept out of
-    #" headlines: the buyer may be a consortium).
+    #" E-content dollars a year at the typical share for the 'Check for a shared collection' systems ($17.0M, 989
+    #" libraries). A screen, kept out of every headline and never added to the other groups: the buyer may be a
+    #" consortium or the state.
     # currency
     shared_collection_gap is system_econtent_gap.sum() { where: prospect_type = 'Check for a shared collection' }
-    #" E-content dollars a year at the typical share, every system below typical on e-content share (all three groups).
+    #" Per-library gap with no group filter (the dashboard uses it row by row). NOT an opportunity figure: summed over
+    #" many libraries it adds three separate segments (pitch list, high demand / low spend, shared-collection screen)
+    #" that must not be quoted as one total. For the opportunity use pitchable_econtent_gap ($17.2M).
     # currency
     total_econtent_gap is system_econtent_gap.sum()
     #" Borrowing-only method total (earlier version of this play, kept for comparison).
@@ -603,6 +636,50 @@ source: econtent_prospects is econtent_systems extend {
     #" not the library, pays; read a state's figure as a lead to check, not as under-buying.
     # percent
     gap_share_of_collection_budget is pitchable_econtent_gap / nullif(avg_collection_budget, 0)
+
+  #" PLAYBOOK, START HERE. How big is the e-book vendor opportunity, in one row? The headline is the pitch list: the
+  #" number of libraries to pitch, their e-content gap a year at the typical share ($17.2M across 1,064), and how much
+  #" the top 25 and top 10 hold ($10.1M and $7.5M). The 'High demand, low spend' list ($10.6M) and the shared-collection
+  #" screen ($17.0M) are separate segments shown for context only: never add them to the headline or to each other.
+  #" US market size for context: library_years -> econtent_market_by_year ($724M in FY2024). Filter by state for a
+  #" territory headline.
+  view: econtent_opportunity_headline is {
+    where: prospect_type = 'Pitch the library'
+    group_by: library_id
+    aggregate: gap is pitchable_econtent_gap
+    calculate: gap_rank is row_number() { order_by: gap desc }
+  } -> {
+    aggregate:
+      libraries_to_pitch is count()
+      # currency
+      headline_econtent_gap is gap.sum()
+      # currency
+      top_25_gap is gap.sum() { where: gap_rank <= 25 }
+      # percent
+      top_25_share is gap.sum() { where: gap_rank <= 25 } / nullif(gap.sum(), 0)
+      # currency
+      top_10_gap is gap.sum() { where: gap_rank <= 10 }
+  }
+
+  #" The three prospect groups side by side, one row each. They are SEPARATE SEGMENTS with different next steps, NOT
+  #" parts of one total: 'Pitch the library' is the headline call list; 'High demand, low spend' is a second list;
+  #" 'Check for a shared collection' is a screen to resolve before calling (kept out of every headline). Do not sum
+  #" the econtent_gap column.
+  view: econtent_opportunity_by_segment is {
+    where: prospect_type != 'Not a prospect'
+    group_by:
+      segment_order is prospect_type ? pick 1 when 'Pitch the library' pick 2 when 'High demand, low spend' else 3
+      prospect_type
+      how_to_use is prospect_type ?
+        pick 'HEADLINE: call these first' when 'Pitch the library'
+        pick 'Second list: separate, do not add to the headline' when 'High demand, low spend'
+        else 'Screen: check who buys first, kept out of every headline'
+    aggregate:
+      libraries is count()
+      # currency
+      econtent_gap is system_econtent_gap.sum()
+    order_by: segment_order
+  }
 
   #" PLAYBOOK. Which libraries should an e-book / e-audio vendor call first, and why? Systems below the typical for
   #" their size on BOTH digital borrowing and e-content share (FY2022 – FY2024 averages), paying for their own digital
@@ -642,7 +719,8 @@ source: econtent_prospects is econtent_systems extend {
   #" FY2024 averages), and are not under the cost-per-loan screen. In business terms: demand is there and the budget is
   #" not, which usually means long holds queues - the strongest e-content pitch, made to the collection-development
   #" manager with the holds data. Ranked by econtent_gap. NYPL (branch libraries) is the largest. A shared collection
-  #" can still supply some of these; not checked.
+  #" can still supply some of these; not checked. A SEPARATE list ($10.6M, 488 libraries): do not add it to the $17.2M
+  #" pitch-list headline.
   view: high_demand_low_spend is {
     where: prospect_type = 'High demand, low spend'
     group_by: state, library_name, size_band
@@ -668,7 +746,8 @@ source: econtent_prospects is econtent_systems extend {
   #" under half the typical e-content dollars per digital loan (FY2022 – FY2024). This is a cost-per-loan screen, NOT
   #" proof of a consortium. Hennepin County MN is a confirmed case (Twin Cities Metro eLibrary, MELSA); Wake County NC
   #" runs its own OverDrive collection. Who acts: a vendor should find out who buys for the library (the library, a
-  #" consortium or the state) before calling. Its dollars are kept out of the headline gap.
+  #" consortium or the state) before calling. Its dollars ($17.0M, 989 libraries) are kept out of the headline and are
+  #" never added to the pitch list or the high-demand list.
   view: shared_collection_check is {
     where: prospect_type = 'Check for a shared collection'
     group_by: state, library_name, size_band
