@@ -55,6 +55,13 @@ const CSS = `
 .od .loading { opacity: .45; transition: opacity .15s; }
 .od-vega svg { display: block; max-width: 100%; }
 .od-mapcard .od-vega { max-width: 860px; margin: 0 auto; }
+.od-hdlist .od-bar { background: #7446c4; }
+.od-sclist .od-bar { background: #c46a00; }
+.od-hdnote { margin: 4px 0 0; }
+@media (prefers-color-scheme: dark) {
+  .od-hdlist .od-bar { background: #b192ee; }
+  .od-sclist .od-bar { background: #f0a030; }
+}
 .od-names { list-style: none; padding: 0; margin: 10px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 20px; font-size: 13px; }
 .od-names li { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
 .od-names b { display: inline-block; min-width: 1.2em; }
@@ -289,11 +296,13 @@ const bandColor = (t) => ({ domain: BANDS.map((b) => b.name), range: t.pal.bands
 // Prospect types, by the first letter of the model's prospect_type.
 const KINDS = [
   { code: "P", name: "Pitch the library" },
+  { code: "H", name: "High demand, low spend" },
   { code: "C", name: "Check for a shared collection first" },
   { code: "N", name: "Not a prospect" },
 ];
 const KIND_BY_CODE = Object.fromEntries(KINDS.map((k) => [k.code, k.name]));
-const kindColor = (t) => ({ domain: KINDS.map((k) => k.name), range: [t.pal.up, t.pal.alt, t.pal.quiet] });
+const kindColor = (t) => ({ domain: KINDS.map((k) => k.name), range: [t.pal.up, t.pal.violet, t.pal.alt, t.pal.quiet] });
+const KIND_ORDER = { "Not a prospect": 0, "Check for a shared collection first": 1, "High demand, low spend": 2, "Pitch the library": 3 };
 
 // Quadrant chart: distance from the typical e-content share (x) and typical digital share of borrowing (y), both in
 // percentage points for the system's size. Prospects sit lower-left (below peers on both). Dot size = budget.
@@ -319,6 +328,17 @@ function quadrantSpec(t, narrow, labels) {
       {
         data: { values: [{ x: -0.49, y: -0.335, text: narrow ? "Below peers on both" : "Below peers on both: the prospects" }] },
         mark: { type: "text", align: "left", baseline: "bottom", fontSize: 12, fontWeight: 600, color: t.pal.up },
+        encoding: { x: { field: "x", type: "quantitative" }, y: { field: "y", type: "quantitative" }, text: { field: "text" } },
+      },
+      // High demand, low spend: below on e-content share, at or above on digital borrowing.
+      {
+        data: { values: [{ x: -0.5, x2: 0, y: 0, y2: 0.45 }] },
+        mark: { type: "rect", color: t.pal.violet, opacity: t.dark ? 0.1 : 0.06 },
+        encoding: { x: { field: "x", type: "quantitative" }, x2: { field: "x2" }, y: { field: "y", type: "quantitative" }, y2: { field: "y2" } },
+      },
+      {
+        data: { values: [{ x: -0.49, y: 0.44, text: "High demand, low spend" }] },
+        mark: { type: "text", align: "left", baseline: "top", fontSize: 12, fontWeight: 600, color: t.pal.violet },
         encoding: { x: { field: "x", type: "quantitative" }, y: { field: "y", type: "quantitative" }, text: { field: "text" } },
       },
       {
@@ -418,10 +438,17 @@ function boxSpec(t, narrow) {
 
 export default function Dashboard({ dashboard, givens }) {
   const t0 = useTheme();
-  // Extra hues for this page: orange for consortium checks, grey for non-prospects and print.
+  // Extra hues for this page: violet for high demand / low spend, orange for shared-collection checks, grey for
+  // non-prospects and print.
   const t = React.useMemo(() => ({
     ...t0,
-    pal: { ...t0.pal, alt: t0.dark ? "#f0a030" : "#c46a00", quiet: t0.dark ? "#5b5f66" : "#b8bcc4", quietLine: t0.dark ? "#9ca3af" : "#8a8f98" },
+    pal: {
+      ...t0.pal,
+      violet: t0.dark ? "#b192ee" : "#7446c4",
+      alt: t0.dark ? "#f0a030" : "#c46a00",
+      quiet: t0.dark ? "#5b5f66" : "#b8bcc4",
+      quietLine: t0.dark ? "#9ca3af" : "#8a8f98",
+    },
   }), [t0]);
   const narrow = useNarrow();
   const q = useQuery({ query: "econtent_prospects_dashboard", givens });
@@ -433,7 +460,8 @@ export default function Dashboard({ dashboard, givens }) {
   const error = [q, pts, marketQ, statesQ, spreadQ, leftQ].map((x) => x.error).find(Boolean);
   const k = q.rows[0] || {};
   const prospects = (k.prospects || []).map((r) => ({ ...r, name: `${titleCase(r.system)} (${r.state})` }));
-  const consortium = (k.consortium || []).map((r) => ({ ...r, name: `${titleCase(r.system)} (${r.state})` }));
+  const shared = (k.shared || []).map((r) => ({ ...r, name: `${titleCase(r.system)} (${r.state})` }));
+  const highDemand = (k.high_demand_list || []).map((r) => ({ ...r, name: `${titleCase(r.system)} (${r.state})` }));
   const topShare = k.pitch_gap ? k.top_25_gap / k.pitch_gap : null;
 
   // Market: first and last year in view.
@@ -458,7 +486,7 @@ export default function Dashboard({ dashboard, givens }) {
         ...r,
         econtent_vs_typical: Number(r.econtent_vs_typical), digital_vs_typical: Number(r.digital_vs_typical),
         budget: Number(r.budget), gap: Number(r.gap), bandName: b.name, kindName,
-        kindOrder: kindName === "Not a prospect" ? 0 : kindName === "Pitch the library" ? 2 : 1,
+        kindOrder: KIND_ORDER[kindName] ?? 0,
         name: `${titleCase(r.library_name)} (${r.state})`,
       };
     }),
@@ -507,7 +535,7 @@ export default function Dashboard({ dashboard, givens }) {
           <div className="od-kpi">
             <div className="v">{money(k.pitch_gap)}</div>
             <div className="l">A year more e-content at the typical share</div>
-            <div className="s">Across {count(k.libraries_to_pitch)} libraries below peers on both counts; budget that shifts from print</div>
+            <div className="s">Across {count(k.libraries_to_pitch)} libraries below peers on both counts, FY2022 to FY2024 average; budget that shifts from print</div>
           </div>
           <div className="od-kpi hot">
             <div className="v">{money(k.top_25_gap)}</div>
@@ -515,15 +543,15 @@ export default function Dashboard({ dashboard, givens }) {
             <div className="s">{share(topShare)} of the gap: a short call list</div>
           </div>
           <div className="od-kpi">
-            <div className="v">{count(k.consortium_checks)}</div>
-            <div className="l">More to check for a shared collection first</div>
-            <div className="s">{money(k.consortium_gap)} gap; they pay under half the typical per digital loan</div>
+            <div className="v">{money(k.high_demand_gap)}</div>
+            <div className="l">More where patrons already borrow digitally</div>
+            <div className="s">{count(k.high_demand)} libraries: high demand, low spend{highDemand[0] ? `; largest ${highDemand[0].name}` : ""}</div>
           </div>
         </div>
 
         <Card
           title="The prospects sit below their peers on both counts"
-          sub={`Each dot is a library system with a collection budget of $100k or more (${count(points.length)} systems), placed by how far it sits from the typical for its size. Dot size: collection budget. Numbered: the five libraries with the biggest e-content gap.`}
+          sub={`Each dot is a library system with an average collection budget of $100k or more (${count(points.length)} systems), placed by how far its FY2022 to FY2024 shares sit from the typical for its size. Dot size: collection budget. Numbered: the five libraries to pitch with the biggest e-content gap.`}
         >
           <div className="od-vega"><VegaChart spec={quadrant} data={points} /></div>
           <ol className="od-names">
@@ -537,44 +565,22 @@ export default function Dashboard({ dashboard, givens }) {
           <Card title="E-content spend is catching up with print" sub="Library spend on e-content and on print materials, US dollars as reported, FY2018 to FY2024">
             <div className="od-vega"><VegaChart spec={market_} data={marketRows} /></div>
           </Card>
-          <Card title="Bigger systems put more of their budget into e-content" sub="E-content share of collection budget by system size, FY2024. Box: middle half. Whiskers: middle 80%. Labelled line: typical (median).">
+          <Card title="Bigger systems put more of their budget into e-content" sub="E-content share of collection budget by system size, FY2022 to FY2024 average. Box: middle half. Whiskers: middle 80%. Labelled line: typical (median).">
             <div className="od-vega"><VegaChart spec={box} data={spreadRows} /></div>
           </Card>
         </div>
 
-        <div className="od-grid wide-left">
-          <Card title="Where libraries under-spend most on e-content" sub="E-content gap as a share of each state's collection budget, so big states don't win for being big">
-            <StateMap
-              t={t}
-              values={mapValues}
-              extra={mapExtra}
-              scale={mapScale}
-              legendTitle="Gap ÷ collection budget"
-              legendFormat=".0%"
-              tooltip={mapTooltip}
-            />
-          </Card>
-          <Card title="Reach these through their consortium" sub="Below peers on both counts, but paying under half the typical e-content dollars per digital loan: a state or shared collection likely buys their e-books">
-            <Bars
-              rows={consortium.slice(0, 8)}
-              value="gap"
-              label="name"
-              right={(r) => money(r.gap)}
-              note={(r) => `$${Number(r.per_checkout).toFixed(2)} a loan · typical $${Number(r.typical_per_checkout).toFixed(2)}`}
-            />
-          </Card>
-        </div>
-
-        <Card title="Libraries to pitch" sub="Below the typical for their size on both digital borrowing and e-content spend, paying for their own digital loans, ranked by e-content gap">
+        <Card title="Libraries to pitch" sub="Below the typical for their size on both digital borrowing and e-content spend (FY2022 to FY2024 average), paying for their own digital loans, ranked by e-content gap. Each year's e-content share is shown so a one-year swing is visible.">
           <div className="od-tablewrap">
             <table>
               <thead>
                 <tr>
                   <th className="rank">#</th>
                   <th className="agency">System</th>
-                  <th className="hide-sm">Collection budget</th>
+                  <th className="hide-sm">Avg collection budget</th>
                   <th>E-content share</th>
                   <th className="hide-sm">Typical</th>
+                  <th className="hide-sm">FY22 · FY23 · FY24</th>
                   <th className="hide-sm">Digital loans</th>
                   <th className="hide-sm">Typical</th>
                   <th>Gap</th>
@@ -585,9 +591,10 @@ export default function Dashboard({ dashboard, givens }) {
                   <tr key={r.name + i}>
                     <td className="rank">{i + 1}</td>
                     <td className="agency">{r.name}</td>
-                    <td className="hide-sm">{money(r.collection_budget)}</td>
+                    <td className="hide-sm">{money(r.avg_budget)}</td>
                     <td>{share(r.econtent_share)}</td>
                     <td className="hide-sm">{share(r.typical_econtent)}</td>
+                    <td className="hide-sm">{[r.share_2022, r.share_2023, r.share_2024].map(share).join(" · ")}</td>
                     <td className="hide-sm">{share(r.digital_share)}</td>
                     <td className="hide-sm">{share(r.typical_digital)}</td>
                     <td className="up">{money(r.gap)}</td>
@@ -597,16 +604,53 @@ export default function Dashboard({ dashboard, givens }) {
             </table>
           </div>
         </Card>
+
+        <Card
+          className="od-hd"
+          title={`High demand, low spend: ${money(k.high_demand_gap)} more across ${count(k.high_demand)} libraries`}
+          sub="Patrons here already borrow digitally at or above the typical for the library's size, but the library puts a smaller share of its collection budget into e-content than its peers (FY2022 to FY2024 average). Demand without budget usually means long holds queues: the pitch is to the collection-development manager, with the holds list and the peer benchmark. Libraries under half the typical cost per loan are left out (see the shared-collection list)."
+        >
+          <div className="od-hdlist">
+            <Bars rows={highDemand.slice(0, 8)} value="gap" label="name" right={(r) => money(r.gap)} />
+          </div>
+          <p className="sub od-hdnote">
+            {highDemand.slice(0, 3).map((r) => `${r.name}: e-content ${share(r.econtent_share)} of its collection budget against ${share(r.typical_econtent)} typical; digital ${share(r.digital_share)} of loans against ${share(r.typical_digital)}.`).join(" ")}
+          </p>
+        </Card>
+
+        <div className="od-grid wide-left">
+          <Card title="Where libraries under-spend most on e-content" sub="Gap to pitch as a share of each state's collection budget, so big states don't win for being big. Read with care: states that buy databases for their libraries centrally (NC LIVE in North Carolina, GALILEO in Georgia, TexShare in Texas, MAGNOLIA in Mississippi) look like under-spenders here because the state, not the library, pays.">
+            <StateMap
+              t={t}
+              values={mapValues}
+              extra={mapExtra}
+              scale={mapScale}
+              legendTitle="Gap ÷ collection budget"
+              legendFormat=".0%"
+              tooltip={mapTooltip}
+            />
+          </Card>
+          <Card title={`Check for a shared collection first: ${count(k.shared_checks)} libraries`} sub={`Below peers on e-content share, but paying under half the typical e-content dollars per digital loan. A screen, not proof: a shared collection may supply their e-books (Hennepin County MN does), or the library runs its own (Wake County NC). ${money(k.shared_gap)} gap, kept out of the totals above.`}>
+            <div className="od-sclist"><Bars
+              rows={shared.slice(0, 8)}
+              value="gap"
+              label="name"
+              right={(r) => money(r.gap)}
+              note={(r) => `$${Number(r.per_checkout).toFixed(2)} a loan · typical $${Number(r.typical_per_checkout).toFixed(2)}`}
+            /></div>
+          </Card>
+        </div>
       </div>
       <p className="foot">
-        Source: IMLS Public Libraries Survey, FY2024 (market trend FY2018 to FY2024). E-content spend covers e-books,
-        e-audio, e-video, databases and e-serials. A library is a prospect when it is below the typical (median) for its
-        size band, across all US systems, on both its digital share of borrowing and its e-content share of collection
-        budget. The gap is collection budget times the distance to the typical e-content share. Collection budgets are
-        roughly fixed, so the gap is spend that would shift from print to digital: for an e-content vendor, share of
-        wallet rather than new library money. Left out: {count(leftOut["0 digital loans reported"])} systems reporting
-        0 digital loans (almost certainly not reported) and {count(leftOut["No own e-content spend"])} lending e-books
-        with no e-content spend of their own (bought by a state or consortium).
+        Source: IMLS Public Libraries Survey, FY2022 to FY2024 (market trend FY2018 to FY2024, dollars as reported, not
+        inflation-adjusted). E-content spend covers e-books, e-audio, e-video, databases and e-serials. Every ratio is
+        the library's FY2022 to FY2024 total, so one unusual year does not put it on or off a list; the typical is the
+        median for its size band across all US systems. The gap is the average yearly collection budget times the
+        distance to the typical e-content share. Collection budgets are roughly fixed, so the gap is spend that would
+        shift from print to digital: for an e-content vendor, share of wallet rather than new library money. Left out:
+        {" "}{count(leftOut["0 digital loans reported"])} systems reporting 0 digital loans in FY2024 (almost certainly
+        not reported), {count(leftOut["No own e-content spend"])} lending e-books with no e-content spend of their own
+        (bought by a state or consortium) and {count(leftOut["Only 1 of FY2022–24 usable"])} with only one usable year.
       </p>
     </div>
   );
