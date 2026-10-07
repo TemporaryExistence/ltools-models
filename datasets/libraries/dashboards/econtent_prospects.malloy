@@ -8,7 +8,7 @@ import "../libraries.malloy"
 #" consortium). The gap is average yearly collection budget x (band median e-content share - own share): extra
 #" e-content dollars a year at the typical share. Budgets are roughly fixed, so this is spend that would shift from
 #" print to digital (share-of-wallet for a vendor), not new money. Typical values are national, whatever state is picked.
-# artifact { title="Library e-content: a $724M market, and 25 libraries hold over half the gap" givens { STATE="" } } dashboard { columns=6 }
+# artifact { title="Library e-content: market and gap by library" givens { STATE="" } } dashboard { columns=6 }
 query: econtent_prospects_dashboard is econtent_prospects -> {
   where:
     state ~ $STATE,

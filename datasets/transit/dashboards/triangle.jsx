@@ -598,10 +598,7 @@ export default function Dashboard({ dashboard, givens }) {
 
   const peers = peersQ.rows;
   const tri = peers.find((r) => r.peer_metro === TRI) || {};
-  const rank = peers.findIndex((r) => r.peer_metro === TRI) + 1;
-  const title = tri.recovery_without_goraleigh != null
-    ? `The Triangle is back to ${share(tri.recovery_without_goraleigh)} of its 2019 transit riders once GoRaleigh's counting change is taken out`
-    : dashboard.title;
+  const title = dashboard.title;
 
   const peerRows = React.useMemo(() => peers.map((r, i) => ({
     metro: r.peer_metro === TRI ? (narrow ? "Triangle" : "Triangle (Raleigh + Durham)") : r.peer_metro,
@@ -611,11 +608,7 @@ export default function Dashboard({ dashboard, givens }) {
     service: r.service_vs_2019,
     hi: Math.max(r.recovery_without_goraleigh, r.service_vs_2019, r.recovery_vs_2019),
   })), [peers, narrow]);
-  const lead = peers[0];
-  const peerTitle = lead && rank
-    ? `${lead.peer_metro} leads its peers at ${share(lead.recovery_without_goraleigh)} of 2019 riders; the Triangle is ${ordinal(rank)} of ${peers.length}`
-    : "The Triangle against its peers";
-  const behindService = peers.filter((r) => r.service_vs_2019 - r.recovery_without_goraleigh > 0.1).length;
+  const peerTitle = "Riders and service vs 2019: Triangle and peer metros";
 
   const monthRows = React.useMemo(() => monthQ.rows.map((r) => ({ agency: agencyShort(r.agency_name), month: isoMonth(r.report_month), trips: r.trips_total })), [monthQ.rows]);
   const monthShown = React.useMemo(() => (narrow ? monthRows.filter((r) => r.month >= "2022-01-01") : monthRows), [monthRows, narrow]);
@@ -624,19 +617,11 @@ export default function Dashboard({ dashboard, givens }) {
     for (const r of monthRows) tot[r.agency] = (tot[r.agency] || 0) + r.trips;
     return Object.keys(tot).sort((a, b) => tot[b] - tot[a]);
   }, [monthRows]);
-  const gr = (m) => (monthRows.find((r) => r.agency === "GoRaleigh" && r.month === m) || {}).trips;
-  const jun = gr("2024-06-01"), jul = gr("2024-07-01");
 
   const below = belowQ.rows;
-  const lost = below.reduce((s, r) => s + (r.trips_lost_vs_2019 || 0), 0);
   const belowRows = below.slice(0, 10).map((r) => ({ ...r, name: r.agency_label.replace(/ \(NC\)$/, "") }));
 
-  const honestAg = agQ.rows.filter((r) => r.ntd_id !== "40007" && r.recovery_vs_2019 != null);
-  const pastAg = honestAg.filter((r) => r.recovery_vs_2019 >= 1).map((r) => agencyShort(r.agency_name));
-  const worstAg = honestAg.slice().sort((a, b) => a.recovery_vs_2019 - b.recovery_vs_2019)[0];
-  const insideTitle = worstAg
-    ? `Inside the Triangle: ${pastAg.length ? pastAg.join(" and ") + " past 2019" : "no agency past 2019"}; ${agencyShort(worstAg.agency_name)} furthest behind at ${share(worstAg.recovery_vs_2019)}`
-    : "Inside the Triangle";
+  const insideTitle = "Triangle agencies vs 2019";
   const peerChart = React.useMemo(() => peerSpec(t, narrow), [t, narrow]);
   const monthChart = React.useMemo(() => monthlySpec(t, narrow, agencyOrder), [t, narrow, agencyOrder]);
   const charlotte = peers.find((r) => r.peer_metro === "Charlotte") || {};
@@ -674,7 +659,7 @@ export default function Dashboard({ dashboard, givens }) {
 
         <Card
           title={peerTitle}
-          sub={`Latest 12 months as a share of 2019. Filled dot = riders (the Triangle without GoRaleigh; the grey diamond is its reported figure), ring = service hours. In ${behindService} of ${peers.length} metros riders trail service by more than 10 points.`}
+          sub={`Latest 12 months as a share of 2019. Filled dot = riders (the Triangle without GoRaleigh; the grey diamond is its reported figure), ring = service hours.`}
         >
           <div className="od-key">
             <span><i style={{ borderColor: t.pal.up }} />Riders vs 2019</span>
@@ -684,15 +669,15 @@ export default function Dashboard({ dashboard, givens }) {
         </Card>
 
         <Card
-          title={jun && jul ? `GoRaleigh's monthly boardings jumped from ${big(jun)} to ${big(jul)} in July 2024 on about the same service: a counting change, not riders` : "Monthly trips, Triangle agencies"}
-          sub={`Trips a month by agency since January ${narrow ? 2022 : 2018}. GoRaleigh's numbers after July 2024 cannot be compared with 2019, which is why the honest Triangle figure leaves it out.`}
+          title="Monthly trips by Triangle agency"
+          sub={`Trips a month by agency since January ${narrow ? 2022 : 2018}. GoRaleigh's numbers after July 2024 cannot be compared with 2019 and are left out of the Triangle figure.`}
         >
           <div className="od-vega">{monthShown.length > 0 && <VegaChart spec={monthChart} data={monthShown} />}</div>
         </Card>
 
         <div className="od-grid">
           <Card
-            title={`${below.length} North Carolina agencies are still below 2019, ${big(lost)} trips a year short`}
+            title="North Carolina agencies below 2019: trips lost"
             sub="Agencies with 100,000+ trips in 2019, by trips lost (latest 12 months vs 2019). Under each: riders and service as a share of 2019."
           >
             <Bars

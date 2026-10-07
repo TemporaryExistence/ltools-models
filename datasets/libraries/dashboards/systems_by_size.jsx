@@ -783,9 +783,7 @@ export default function Dashboard({ dashboard, givens }) {
   // Compare the smallest and largest bands that have at least 5 systems, so one odd library can't carry a headline.
   const solid = value.filter((r) => r.systems >= 5);
   const big = solid[0], small = solid[solid.length - 1];
-  const headline = big && small && big !== small
-    ? `${where ? `In ${where}, library` : "Library"} systems serving ${small.bandShort.toLowerCase()} people cost ${dollars(small.cost_per_visit)} a visit and those serving ${big.bandShort} ${dollars(big.cost_per_visit)}, ${small.vpp > big.vpp ? "while drawing" : "on"} ${dec1(small.vpp)} visits per person against ${dec1(big.vpp)}`
-    : dashboard.title;
+  const headline = where ? `${dashboard.title} — ${where}` : dashboard.title;
 
   const bands = (v.by_size_band || []).map((r) => {
     const b = bandOf(r.size_band);
@@ -793,24 +791,11 @@ export default function Dashboard({ dashboard, givens }) {
     const v19 = num(r.visits_per_capita_fy2019), v24 = num(r.visits_per_capita_fy2024), change = num(r.visits_change_vs_fy2019);
     return { bandName: b.name, bandShort: b.short, v19, v24, change, systems: num(r.systems_fy2024), changeText: change != null ? (narrow ? pct(change) : `${pct(change)} since FY2019`) : "" };
   }).filter((r) => r && r.v19 != null && r.v24 != null && keep.has(r.bandName));
-  const changes = bands.map((b) => b.change).filter((c) => c != null);
-  const lo = Math.min(...changes), hi = Math.max(...changes);
-  const dumbTitle = changes.length && hi < 0
-    ? `Every size band lost ${Math.round(-hi * 100)}% to ${Math.round(-lo * 100)}% of its visits per person since FY2019`
-    : "Visits per person, FY2019 against FY2024, by system size";
+  const dumbTitle = "Visits per person, FY2019 vs FY2024, by system size";
   const dMax = Math.max(...bands.map((b) => Math.max(b.v19, b.v24)), 1);
   const dumb = React.useMemo(() => dumbbellSpec(t, narrow, dMax), [t, narrow, dMax]);
 
-  const spendHigherSmall = big && small && small.spend_per_capita > big.spend_per_capita;
-  const visitCheaperSmall = big && small && small.cost_per_visit < big.cost_per_visit;
-  const costRatio = big && small ? small.cost_per_visit / big.cost_per_visit : null;
-  const valueTitle = big && small && big !== small
-    ? (Math.abs(costRatio - 1) < 0.06
-      ? `A visit costs about the same at every size (${dollars(small.cost_per_visit)} against ${dollars(big.cost_per_visit)})`
-      : spendHigherSmall && visitCheaperSmall
-      ? "Small systems spend more per person, but each visit costs less"
-      : visitCheaperSmall ? "Small systems get each visit for less" : "Bigger systems get each visit for less")
-    : "Spend per person and cost per visit by system size";
+  const valueTitle = "Spend per person and cost per visit by system size";
   const costSpec = React.useMemo(() => bandBarSpec(t, narrow, { field: "cost_per_visit", title: "Cost per visit", format: "$,.0f", labelFormat: "$,.2f" }), [t, narrow]);
   const spendSpec = React.useMemo(() => bandBarSpec(t, narrow, { field: "spend_per_capita", title: "Spend per person", format: "$,.0f", labelFormat: "$,.2f" }), [t, narrow]);
 
@@ -827,7 +812,6 @@ export default function Dashboard({ dashboard, givens }) {
   const cMax = Math.ceil(Math.max(...spread.map((r) => r.c90 || 0), 1) / 5) * 5;
   const vBox = React.useMemo(() => boxSpec(t, narrow, { prefix: "v", title: "Visits per person served", format: ".1f", max: vMax }), [t, narrow, vMax]);
   const cBox = React.useMemo(() => boxSpec(t, narrow, { prefix: "c", title: "Cost per visit", format: "$,.0f", max: cMax }), [t, narrow, cMax]);
-  const widest = spread.filter((r) => r.systems >= 5).sort((a, b) => (b.v90 - b.v10) - (a.v90 - a.v10))[0];
 
   const trend = (k.size_band_by_year || []).map((r) => {
     const b = bandOf(r.size_band) || {};
@@ -835,9 +819,6 @@ export default function Dashboard({ dashboard, givens }) {
   }).filter((r) => r.bandName && keep.has(r.bandName));
   const shownBands = BANDS.map((b) => b.name).filter((n) => keep.has(n));
   const trendS = React.useMemo(() => bandTrendSpec(t, narrow, shownBands), [t, narrow, shownBands.join("|")]);
-  const noneBack = bands.length > 0 && bands.every((b) => b.v24 < b.v19);
-  const solidSpread = spread.filter((r) => r.systems >= 5);
-  const cBig = solidSpread[0], cSmall = solidSpread[solidSpread.length - 1];
 
   return (
     <div className="od">
@@ -872,7 +853,7 @@ export default function Dashboard({ dashboard, givens }) {
 
         <Card
           title={dumbTitle}
-          sub="Visits per person served, by size of the population a system serves. Hollow: FY2019. Filled: FY2024. Smaller systems draw more visits per person."
+          sub="Visits per person served, by size of the population a system serves. Hollow: FY2019. Filled: FY2024."
         >
           <div className="od-vega"><VegaChart spec={dumb} data={bands} /></div>
         </Card>
@@ -892,17 +873,17 @@ export default function Dashboard({ dashboard, givens }) {
 
         <div className="od-grid">
           <Card
-            title={widest ? `Systems of the same size differ widely: the middle 80% of ${widest.bandShort === "Under 5k" ? "systems under 5k" : `${widest.bandShort} systems`} draw ${dec1(widest.v10)} to ${dec1(widest.v90)} visits per person` : "Spread of visits per person"}
+            title="Spread of visits per person by system size"
             sub="Each system's visits per person, FY2024. Box: middle half of systems. Whiskers: middle 80%. Labelled line: the typical (median) system."
           >
             <div className="od-vega"><VegaChart spec={vBox} data={spread} /></div>
           </Card>
-          <Card title={cBig && cSmall && cBig !== cSmall ? `The typical visit costs ${dollars(cBig.c50)} in the biggest systems and ${dollars(cSmall.c50)} in the smallest` : "Spread of cost per visit"} sub="Each system's operating spend per visit, FY2024. Box: middle half. Whiskers: middle 80%. Labelled line: the typical system.">
+          <Card title="Spread of cost per visit by system size" sub="Each system's operating spend per visit, FY2024. Box: middle half. Whiskers: middle 80%. Labelled line: the typical system.">
             <div className="od-vega"><VegaChart spec={cBox} data={spread} /></div>
           </Card>
         </div>
 
-        <Card title="Visits per person, FY2018 to FY2024, by system size" sub={`Shaded: the pandemic closures.${noneBack ? " Every band dropped together and none is back to its FY2019 level." : ""}`}>
+        <Card title="Visits per person, FY2018 to FY2024, by system size" sub="Shaded: the pandemic closures.">
           <div className="od-vega"><VegaChart spec={trendS} data={trend} /></div>
         </Card>
 

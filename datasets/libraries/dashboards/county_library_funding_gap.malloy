@@ -6,7 +6,7 @@ import "../libraries.malloy"
 #" median county in the same state, with the yearly cost to reach that median. Population growth 2020 - 2024 (Census).
 #" The median is a peer benchmark, not a standard of need. Who acts: county budget offices and commissioners setting the
 #" library appropriation; library directors making the budget case.
-# artifact { title="7 of North Carolina's 17 fast-growing counties spend below the median county on libraries; $8.5M a year would close the gap" givens { STATE="NC" } } dashboard { columns=6 }
+# artifact { title="Fast-growing counties: library spend vs state median" givens { STATE="NC" } } dashboard { columns=6 }
 query: county_library_funding_gap is county_spend_gap -> {
   where: state ~ $STATE
   # colspan=2

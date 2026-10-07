@@ -735,12 +735,13 @@ export default function Dashboard({ dashboard, givens }) {
     { field: "properties.prospects", type: "quantitative", title: "Libraries to pitch", format: "," },
     { field: "properties.systems", type: "quantitative", title: "Systems benchmarked", format: "," },
   ], []);
+  const place = givens && givens.STATE ? String(givens.STATE).replace(/'/g, "") : "";
   const leftOut = Object.fromEntries(leftQ.rows.map((r) => [r.benchmark_status, r.candidate_systems]));
 
   return (
     <div className="od">
       <style>{CSS + CSS_ABOUT}</style>
-      <h1>{dashboard.title}</h1>
+      <h1>{place ? `${dashboard.title} — ${place}` : dashboard.title}</h1>
       <HeadCaveat items={["FY2022 to FY2024 pooled", "Typical = size-band median", "Spend moving from print, not new money", "Central state buying looks low", "Current dollars"]} />
       <Controls />
       {error && <div className="err">{String(error)}</div>}
@@ -759,7 +760,7 @@ export default function Dashboard({ dashboard, givens }) {
           <div className="od-kpi hot">
             <div className="v">{money(k.top_25_gap)}</div>
             <div className="l">Held by the top 25 libraries</div>
-            <div className="s">{share(topShare)} of the gap: a short call list</div>
+            <div className="s">{share(topShare)} of the gap</div>
           </div>
           <div className="od-kpi">
             <div className="v">{money(k.high_demand_gap)}</div>
@@ -769,7 +770,7 @@ export default function Dashboard({ dashboard, givens }) {
         </div>
 
         <Card
-          title="The prospects sit below their peers on both counts"
+          title="E-content share vs digital borrowing, against the typical for size"
           sub={`Each dot is a library system with an average collection budget of $100k or more (${count(points.length)} systems), placed by how far its FY2022 to FY2024 shares sit from the typical for its size. Dot size: collection budget. Numbered: the five libraries to pitch with the biggest e-content gap.`}
         >
           <div className="od-vega"><VegaChart spec={quadrant} data={points} /></div>
@@ -781,10 +782,10 @@ export default function Dashboard({ dashboard, givens }) {
         </Card>
 
         <div className="od-grid">
-          <Card title="E-content spend is catching up with print" sub="Library spend on e-content and on print materials, US dollars as reported, FY2018 to FY2024">
+          <Card title="E-content and print spend, FY2018 to FY2024" sub="Library spend on e-content and on print materials, US dollars as reported, FY2018 to FY2024">
             <div className="od-vega"><VegaChart spec={market_} data={marketRows} /></div>
           </Card>
-          <Card title="Bigger systems put more of their budget into e-content" sub="E-content share of collection budget by system size, FY2022 to FY2024 average. Box: middle half. Whiskers: middle 80%. Labelled line: typical (median).">
+          <Card title="E-content share of collection budget by system size" sub="E-content share of collection budget by system size, FY2022 to FY2024 average. Box: middle half. Whiskers: middle 80%. Labelled line: typical (median).">
             <div className="od-vega"><VegaChart spec={box} data={spreadRows} /></div>
           </Card>
         </div>
@@ -826,8 +827,8 @@ export default function Dashboard({ dashboard, givens }) {
 
         <Card
           className="od-hd"
-          title={`High demand, low spend: ${money(k.high_demand_gap)} more across ${count(k.high_demand)} libraries`}
-          sub="Patrons here already borrow digitally at or above the typical for the library's size, but the library puts a smaller share of its collection budget into e-content than its peers (FY2022 to FY2024 average). Demand without budget usually means long holds queues: the pitch is to the collection-development manager, with the holds list and the peer benchmark. Libraries under half the typical cost per loan are left out (see the shared-collection list)."
+          title="High digital borrowing, low e-content spend"
+          sub="Patrons here already borrow digitally at or above the typical for the library's size, but the library puts a smaller share of its collection budget into e-content than its peers (FY2022 to FY2024 average). Libraries under half the typical cost per loan are left out (see the shared-collection list)."
         >
           <div className="od-hdlist">
             <Bars rows={highDemand.slice(0, 8)} value="gap" label="name" right={(r) => money(r.gap)} />
@@ -838,7 +839,7 @@ export default function Dashboard({ dashboard, givens }) {
         </Card>
 
         <div className="od-grid wide-left">
-          <Card title="Where libraries under-spend most on e-content" sub="Gap to pitch as a share of each state's collection budget, so big states don't win for being big. Read with care: states that buy databases for their libraries centrally (NC LIVE in North Carolina, GALILEO in Georgia, TexShare in Texas, MAGNOLIA in Mississippi) look like under-spenders here because the state, not the library, pays.">
+          <Card title="E-content gap by state" sub="Gap to pitch as a share of each state's collection budget, so big states don't win for being big. Read with care: states that buy databases for their libraries centrally (NC LIVE in North Carolina, GALILEO in Georgia, TexShare in Texas, MAGNOLIA in Mississippi) look like under-spenders here because the state, not the library, pays.">
             <StateMap
               t={t}
               values={mapValues}
@@ -849,7 +850,7 @@ export default function Dashboard({ dashboard, givens }) {
               tooltip={mapTooltip}
             />
           </Card>
-          <Card title={`Check for a shared collection first: ${count(k.shared_checks)} libraries`} sub={`Below peers on e-content share, but paying under half the typical e-content dollars per digital loan. A screen, not proof: a shared collection may supply their e-books (Hennepin County MN does), or the library runs its own (Wake County NC). ${money(k.shared_gap)} gap, kept out of the totals above.`}>
+          <Card title="Possible shared collections: e-content spend per digital loan" sub={`Below peers on e-content share, but paying under half the typical e-content dollars per digital loan. A screen, not proof: a shared collection may supply their e-books (Hennepin County MN does), or the library runs its own (Wake County NC). ${count(k.shared_checks)} libraries, ${money(k.shared_gap)} gap, kept out of the totals above.`}>
             <div className="od-sclist"><Bars
               rows={shared.slice(0, 8)}
               value="gap"

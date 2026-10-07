@@ -772,14 +772,14 @@ function RidershipConclusions({ t, narrow, f, bands, gr }) {
         chips={["Counting method changed July 2024 (GoRaleigh)", "GoCary missing after 2011", "Charlotte = NC agencies only", "Late filers understated"]}
       />
       <ConclCard
-        title="Restored service, riders came back"
+        title="Riders vs 2019, by whether service was restored"
         stat="All US agencies with 2019 trips, by size"
         spec={rSpec} data={rRows}
         chips={["Correlation, not cause", "Agency averages; agencies above 2x of 2019 left out", "Does not account for fare changes"]}
       />
       <ConclCard
         wide
-        title={`GoRaleigh "${abPct(g.recovery_vs_2019)} of 2019" is a counting change`}
+        title="GoRaleigh riders vs 2019, by counting method"
         stat={g.old_counting_vs_2019 != null ? `Old counting (Jul 2023 to Jun 2024): ${abPct(g.old_counting_vs_2019)} of 2019 fixed-route riders` : null}
         spec={gSpec} data={gRows}
         chips={["Fixed route only", "Cause inferred, not confirmed by the city", "Fares resumed 1 Sep 2024: fare effect not visible"]}
@@ -811,10 +811,8 @@ export default function Dashboard({ dashboard, givens }) {
   const agency = clean(givens && givens.AGENCY);
   const modeGroup = clean(givens && givens.MODE_GROUP);
   const place = agency || (singleState ? stateName(singleState) : st || "US");
-  const modeWord = modeGroup ? modeGroup.toLowerCase() + " " : "";
-  const title = k.recovery_vs_2019 != null
-    ? `${place} ${modeWord}transit is back to ${share(k.recovery_vs_2019)} of its 2019 riders on ${share(k.service_vs_2019)} of its 2019 service`
-    : dashboard.title;
+  const filterPlace = [place === "US" ? "" : place, modeGroup].filter(Boolean).join(", ");
+  const title = filterPlace ? `${dashboard.title} — ${filterPlace}` : dashboard.title;
 
   // Map ranking
   const ranked = React.useMemo(
@@ -822,13 +820,7 @@ export default function Dashboard({ dashboard, givens }) {
       .sort((a, b) => b.recovery_vs_2019 - a.recovery_vs_2019),
     [statesQ.rows]
   );
-  const rankOf = singleState ? ranked.findIndex((r) => r.state === singleState) + 1 : 0;
-  const lead = ranked[0];
-  const mapTitle = lead
-    ? rankOf > 0
-      ? `${stateName(singleState)} ranks ${ordinal(rankOf)} of ${ranked.length} on recovery; ${stateName(lead.state)} leads at ${share(lead.recovery_vs_2019)}`
-      : `${stateName(lead.state)} leads at ${share(lead.recovery_vs_2019)} of 2019 riders; ${stateName(ranked[ranked.length - 1].state)} trails at ${share(ranked[ranked.length - 1].recovery_vs_2019)}`
-    : "Recovery by state";
+  const mapTitle = "Riders vs 2019 by state";
 
   // Trend, indexed to 2019
   const trend = React.useMemo(() => {
@@ -840,13 +832,7 @@ export default function Dashboard({ dashboard, givens }) {
       { year: r.year, series: "Service hours", raw: r.revenue_hours, index: base.revenue_hours ? r.revenue_hours / base.revenue_hours : null },
     ]).filter((r) => r.index != null);
   }, [trendQ.rows]);
-  const t25 = trend.find((r) => r.year === 2025 && r.series === "Trips");
-  const s25 = trend.find((r) => r.year === 2025 && r.series === "Service hours");
-  const trendTitle = t25 && s25
-    ? s25.index - t25.index > 0.05
-      ? `Service is back to ${share(s25.index)} of 2019; riders only to ${share(t25.index)}`
-      : `Riders (${share(t25.index)} of 2019) are keeping pace with service (${share(s25.index)})`
-    : "Trips and service hours by year";
+  const trendTitle = "Trips and service hours vs 2019, by year";
 
   // Modes
   const modes = React.useMemo(
@@ -860,15 +846,10 @@ export default function Dashboard({ dashboard, givens }) {
     [modesQ.rows, narrow]
   );
   const newModes = modesQ.rows.filter((r) => r.trips_latest_12m > 0 && r.recovery_vs_2019 == null).map((r) => r.mode);
-  const modeTitle = modes.length >= 2
-    ? `${modes[0].mode} riders are back to ${share(modes[0].recovery)} of 2019, ${modes[1].mode.toLowerCase()} to ${share(modes[1].recovery)}`
-    : modes.length === 1 ? `${modes[0].mode} riders are back to ${share(modes[0].recovery)} of 2019` : "Recovery by mode";
+  const modeTitle = "Riders vs 2019 by mode";
 
   const agencies = agQ.rows;
-  const topShare = agencies[0] && k.trips_latest_12m ? agencies[0].trips_latest_12m / k.trips_latest_12m : null;
-  const agTitle = agencies[0]
-    ? `${agencies[0].agency_name.trim()} carries ${share(topShare)} of ${place === "US" ? "US" : place + "'s"} trips`
-    : "Largest agencies";
+  const agTitle = "Largest agencies";
 
   const trendChart = React.useMemo(() => trendSpec(t, narrow), [t, narrow]);
   const modeChart = React.useMemo(() => modeSpec(t, narrow, modes.length), [t, narrow, modes.length]);

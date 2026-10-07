@@ -675,19 +675,10 @@ export default function Dashboard({ dashboard, givens }) {
     n_restored: r.agencies_restored,
     n_not: r.agencies_not_restored,
   })), [restoreQ.rows, narrow]);
-  const both = restore.filter((r) => r.restored != null && r.not_restored != null);
   const nR = restore.reduce((s, r) => s + (r.n_restored || 0), 0);
   const nN = restore.reduce((s, r) => s + (r.n_not || 0), 0);
-  const avgR = nR ? restore.reduce((s, r) => s + (r.restored || 0) * r.n_restored, 0) / nR : null;
-  const avgN = nN ? restore.reduce((s, r) => s + (r.not_restored || 0) * r.n_not, 0) / nN : null;
-  const everyBand = both.length > 0 && both.length === restore.length && both.every((r) => r.restored > r.not_restored);
-  const widest = both.slice().sort((a, b) => (b.restored - b.not_restored) - (a.restored - a.not_restored))[0];
-  const title = avgR != null && avgN != null
-    ? `${place === "US" ? "Agencies" : place + ": agencies"} that restored their 2019 service are back to ${share(avgR)} of 2019 riders; those that did not, ${share(avgN)}`
-    : dashboard.title;
-  const restoreTitle = widest
-    ? `${everyBand ? "True in every size band. " : ""}The gap is widest at ${lower(bandName(widest.order))} agencies: ${share(widest.restored)} against ${share(widest.not_restored)}`
-    : "Recovery with and without 2019 service restored";
+  const title = st ? `${dashboard.title} — ${st}` : dashboard.title;
+  const restoreTitle = "Riders vs 2019, by whether 2019 service was restored";
 
   // Bands
   const bands = bandsQ.rows.filter((r) => r.size_band !== NO_BASE);
@@ -696,11 +687,7 @@ export default function Dashboard({ dashboard, givens }) {
     { band: narrow ? bandName(r.size_band) : bandFull(r.size_band), order: r.size_band, measure: "Riders", value: r.recovery_vs_2019 },
     { band: narrow ? bandName(r.size_band) : bandFull(r.size_band), order: r.size_band, measure: "Service", value: r.service_vs_2019 },
   ]).filter((r) => r.value != null), [bandsQ.rows, narrow]);
-  const bestBand = bands.slice().sort((a, b) => b.recovery_vs_2019 - a.recovery_vs_2019)[0];
-  const leastService = bands.slice().sort((a, b) => a.service_vs_2019 - b.service_vs_2019)[0];
-  const bandTitle = bestBand && leastService
-    ? `${bandName(bestBand.size_band)} agencies have recovered most (${share(bestBand.recovery_vs_2019)}); ${lower(bandName(leastService.size_band))} agencies run the least of their 2019 service (${share(leastService.service_vs_2019)})`
-    : "Riders and service by size band";
+  const bandTitle = "Riders and service vs 2019 by size band";
   const fixedBy = Object.fromEntries(fixedQ.rows.map((r) => [r.size_band, r]));
 
   // Mode mix
@@ -711,11 +698,7 @@ export default function Dashboard({ dashboard, givens }) {
     share: r.share_of_band,
     trips: r.trips_latest_12m,
   })), [mixQ.rows, narrow]);
-  const mixTop = mix.filter((r) => r.mode === "Rail").sort((x, y) => y.share - x.share)[0];
-  const busTop = mix.filter((r) => r.mode === "Bus" && (!mixTop || r.order !== mixTop.order)).sort((x, y) => y.share - x.share)[0];
-  const mixTitle = mixTop && busTop
-    ? `Rail carries ${share(mixTop.share)} of ${lower(bandName(mixTop.order))} agencies' trips; buses carry ${share(busTop.share)} at ${lower(bandName(busTop.order))} ones`
-    : busTop ? `Buses carry ${share(busTop.share)} of ${lower(bandName(busTop.order))} agencies' trips` : "Mode mix by size band";
+  const mixTitle = "Trips by mode and size band";
 
   // Trend, indexed to 2019
   const trend = React.useMemo(() => {
@@ -727,17 +710,9 @@ export default function Dashboard({ dashboard, givens }) {
       { year: r.year, series: "Service hours", raw: r.revenue_hours, index: base.revenue_hours ? r.revenue_hours / base.revenue_hours : null },
     ]).filter((r) => r.index != null);
   }, [trendQ.rows]);
-  const t25 = trend.find((r) => r.year === 2025 && r.series === "Trips");
-  const s25 = trend.find((r) => r.year === 2025 && r.series === "Service hours");
-  const trendTitle = t25 && s25
-    ? `In 2025 agencies ran ${share(s25.index)} of their 2019 service and carried ${share(t25.index)} of their 2019 riders`
-    : "Trips and service hours by year";
+  const trendTitle = "Trips and service hours vs 2019, by year";
 
-  const tphRows = bands.filter((r) => fixedBy[r.size_band] && fixedBy[r.size_band].trips_per_hour_12m != null);
-  const tphHi = tphRows[0], tphLo = tphRows[tphRows.length - 1];
-  const tphTitle = tphHi && tphLo && tphHi !== tphLo
-    ? `A service hour carries ${one(fixedBy[tphHi.size_band].trips_per_hour_12m)} riders at ${lower(bandName(tphHi.size_band))} agencies, ${one(fixedBy[tphLo.size_band].trips_per_hour_12m)} at ${lower(bandName(tphLo.size_band))} ones`
-    : "Riders per service hour by size band";
+  const tphTitle = "Riders per service hour by size band";
   const restoreChart = React.useMemo(() => restoreSpec(t, narrow), [t, narrow]);
   const bandChart = React.useMemo(() => bandSpec(t, narrow), [t, narrow]);
   const mixChart = React.useMemo(() => mixSpec(t, narrow), [t, narrow]);
@@ -809,7 +784,7 @@ export default function Dashboard({ dashboard, givens }) {
           </Card>
         </div>
 
-        <Card title={bigQ.rows[0] ? `${bigQ.rows[0].agency_name.trim()} alone carried ${big(bigQ.rows[0].trips_latest_12m)} trips in the latest 12 months` : "Largest agencies"} sub="The largest agencies in the selection by trips in 2019.">
+        <Card title="Largest agencies" sub="The largest agencies in the selection by trips in 2019.">
           <div className="od-tablewrap">
             <table>
               <thead>

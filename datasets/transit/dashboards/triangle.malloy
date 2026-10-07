@@ -7,7 +7,7 @@ import "../transit.malloy"
 #" and the rest of North Carolina: recovery since 2019, service restored, trips per resident. GoRaleigh's counts step
 #" up in July 2024 with little change in service, so the Triangle's honest recovery leaves GoRaleigh out (86%, not
 #" 98%). Latest 12 months = September 2025 to August 2026.
-# artifact { title="The Triangle is at 86% of 2019 transit riders once GoRaleigh's counting change is taken out" } dashboard { columns=6 }
+# artifact { title="Triangle vs peer metros: transit recovery" } dashboard { columns=6 }
 query: triangle is transit -> triangle_vs_peer_metros
 
 #" Chart: monthly trips for each Triangle agency since January 2018.

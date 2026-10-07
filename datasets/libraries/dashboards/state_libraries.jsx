@@ -874,7 +874,7 @@ function LibraryConclusions({ t, narrow, market, gapHead, pitch, growth, countie
       />
       {(picked || whole) && (
         <ConclCard
-          title={`${whole ? "US" : where}: people up, library visits down`}
+          title={`Population and library visits, ${whole ? "US" : where}`}
           stat="Population change 2020 to 2024 · library visits per resident FY2019 to FY2024"
           spec={gSpec} data={gRows}
           chips={["Association, not cause", "Visits fell nationwide after the pandemic", "Regional systems split by population", picked === "NC" ? "Durham FY2019 visits over-counted" : null]}
@@ -929,17 +929,7 @@ export default function Dashboard({ dashboard, givens }) {
   const fy23 = trend.find((r) => Number(r.fiscal_year) === 2023) || {};
   const usV = num(fy23.us_visits_per_capita);
   const usS = num(fy23.us_spend_per_capita);
-  const vGap = usV ? num(k.visits_per_capita) / usV - 1 : null;
-  const sGap = usS ? num(k.spend_per_capita) / usS - 1 : null;
-  const rel = (g) => (g == null ? "" : Math.abs(g) < 0.03 ? "about the US rate" : `${Math.round(Math.abs(g) * 100)}% ${g < 0 ? "below" : "above"} the US`);
-  const u19 = num((trend.find((r) => Number(r.fiscal_year) === 2019) || {}).us_visits_per_capita);
-  const u24 = num((trend.find((r) => Number(r.fiscal_year) === 2024) || {}).us_visits_per_capita);
-  const wholeRecovery = u19 ? `visits are still ${Math.round(Math.abs(u24 / u19 - 1) * 100)}% ${u24 < u19 ? "below" : "above"} FY2019` : "";
-  const headline = picked && k.visits_per_capita != null
-    ? `${where} libraries draw ${dec1(k.visits_per_capita)} visits per person, ${rel(vGap)}, and spend ${dollars0(k.spend_per_capita)} a resident, ${rel(sGap)}`
-    : whole && k.visits_per_capita != null
-      ? `US public libraries draw ${dec1(k.visits_per_capita)} visits per person on ${dollars0(k.spend_per_capita)} a resident; ${wholeRecovery}`
-      : dashboard.title;
+  const headline = picked || multi ? `${dashboard.title} — ${picked ? where : "picked states"}` : dashboard.title;
 
   const mapValues = React.useMemo(
     () => Object.fromEntries(mapQ.rows.map((r) => [r.state, num(metric === "visits" ? r.visits_per_capita : r.spend_per_capita)])),
@@ -967,13 +957,8 @@ export default function Dashboard({ dashboard, givens }) {
   const spendTrend = React.useMemo(() => longRows("state_spend_per_capita", "us_spend_per_capita"), [trendQ.rows, picked]);
   const vSpec = React.useMemo(() => trendSpec(t, narrow, { title: "Visits per person", format: ".1f", series }), [t, narrow, picked]);
   const sSpec = React.useMemo(() => trendSpec(t, narrow, { title: "Spend per person", format: "$,.0f", series }), [t, narrow, picked]);
-  const v19 = trend.find((r) => Number(r.fiscal_year) === 2019) || {};
-  const v24 = trend.find((r) => Number(r.fiscal_year) === 2024) || {};
-  const recovery = num(v19.state_visits_per_capita) ? num(v24.state_visits_per_capita) / num(v19.state_visits_per_capita) - 1 : null;
-  const spendUp = num(v19.state_spend_per_capita) ? num(v24.state_spend_per_capita) / num(v19.state_spend_per_capita) - 1 : null;
 
   const settings = (k.by_setting || []).filter((r) => r.setting !== "Unknown");
-  const topSetting = settings.slice().sort((a, b) => num(b.visits_per_capita) - num(a.visits_per_capita))[0];
   const setSpec = React.useMemo(() => settingSpec(t, narrow, num(k.visits_per_capita)), [t, narrow, k.visits_per_capita]);
 
   return (
@@ -1011,9 +996,7 @@ export default function Dashboard({ dashboard, givens }) {
 
         <Card
           className="od-mapcard"
-          title={metric === "visits"
-            ? `Library visits per person by state${picked && vRank ? `: ${where} ranks ${ordinal(vRank)} of 51` : ""}`
-            : `Library spend per person by state${picked && sRank ? `: ${where} ranks ${ordinal(sRank)} of 51` : ""}`}
+          title={metric === "visits" ? "Library visits per person by state" : "Library spend per person by state"}
           sub="FY2023, every public library system in the state, per person in the libraries' legal service areas. Darker is higher. Hover a state for both measures."
         >
           <Toggle
@@ -1035,13 +1018,13 @@ export default function Dashboard({ dashboard, givens }) {
 
         <div className="od-grid">
           <Card
-            title={recovery != null ? `Visits per person are still ${Math.round(Math.abs(recovery) * 100)}% ${recovery < 0 ? "below" : "above"} FY2019 in ${where}` : "Visits per person, FY2018 to FY2024"}
+            title="Visits per person, FY2018 to FY2024"
             sub={`${whole ? "The whole US" : `${picked ? where : "The picked states"} against the whole US`}, FY2018 to FY2024. Shaded: the pandemic closures (FY2020 to FY2021).`}
           >
             <div className="od-vega"><VegaChart spec={vSpec} data={visitsTrend} /></div>
           </Card>
           <Card
-            title={spendUp != null ? `Spend per person is up ${Math.round(spendUp * 100)}% since FY2019 in ${where}` : "Spend per person, FY2018 to FY2024"}
+            title="Spend per person, FY2018 to FY2024"
             sub="Operating spend per person served, US dollars as reported each year (not adjusted for inflation)."
           >
             <div className="od-vega"><VegaChart spec={sSpec} data={spendTrend} /></div>
@@ -1050,7 +1033,7 @@ export default function Dashboard({ dashboard, givens }) {
 
         <div className="od-grid wide-left">
           <Card
-            title={topSetting ? `${topSetting.setting} libraries draw the most visits per person` : "Visits per person by setting"}
+            title="Visits per person by setting"
             sub={`FY2023, by where the system's main library sits (city, suburb, town, rural). Dashed line: ${picked ? where : whole ? "the US" : "the picked states"} overall.`}
           >
             <div className="od-vega"><VegaChart spec={setSpec} data={settings} /></div>

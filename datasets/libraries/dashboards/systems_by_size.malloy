@@ -2,7 +2,7 @@
 import "../libraries.malloy"
 
 #" Do big library systems or small ones serve people better? Visits, borrowing, digital share, spend, cost per visit, staffing and hours by size band (population served), FY2024, and change in visits since FY2019. Pick a state (blank = all US) and a size band.
-# artifact { title="Small library systems cost $13.86 a visit, the biggest $23.42, and draw twice the visits per person" givens { STATE="" } } dashboard { columns=6 }
+# artifact { title="Library systems by size: cost and use" givens { STATE="" } } dashboard { columns=6 }
 query: systems_by_size is library_years -> {
   where:
     state ~ $STATE,

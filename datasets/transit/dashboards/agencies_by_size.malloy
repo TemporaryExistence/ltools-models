@@ -12,7 +12,7 @@ source: transit_selected is transit extend {
 #" Big transit systems against small ones, by agency size band (total trips in 2019): whether restoring service
 #" brought riders back, how far each band has come since 2019, riders per service hour, and each band's mix of bus,
 #" rail and ferry. Latest 12 months = September 2025 to August 2026. Pick a state and a size band to narrow it.
-# artifact { title="Agencies that restored 2019 service got more riders back, in every size band" givens { STATE="" } } dashboard { columns=6 }
+# artifact { title="Transit agencies by size: service restored and riders" givens { STATE="" } } dashboard { columns=6 }
 query: agencies_by_size is transit_selected -> {
   aggregate: agencies, trips_latest_12m, trips_2019, recovery_vs_2019, service_vs_2019, yoy_change, trips_per_hour_12m
 }

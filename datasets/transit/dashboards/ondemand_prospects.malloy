@@ -9,7 +9,7 @@ import "../ondemand.malloy"
 #" row's hours and operating expense split by its share of trips that are neither ADA nor sponsored). Spend is agency
 #" operating expense, not software revenue. "All on-demand hours since 2024 (incl. paratransit)" compares the latest
 #" 12 monthly reports (September 2025 to August 2026) with calendar 2024; the monthly file does not split out ADA.
-# artifact { title="Agencies spend an estimated $950M a year on general-public on-demand transit, up $246M of new service in two years" givens { STATE="" } } dashboard { columns=6 }
+# artifact { title="General-public on-demand transit: agencies and spend" givens { STATE="" } } dashboard { columns=6 }
 query: ondemand_prospects is ondemand_annual -> {
   where:
     is_urban and reports_ada_trips,

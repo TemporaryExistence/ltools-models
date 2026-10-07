@@ -832,8 +832,6 @@ export default function Dashboard({ dashboard, givens }) {
   }), [cq.rows, median]);
   const flagged = counties.filter((c) => c.groupOrder === 1).sort((a, b) => a.spend - b.spend);
   const callout = flagged[0];
-  const lowestSpend = counties.filter((c) => c.spend != null).sort((a, b) => a.spend - b.spend)[0];
-  const fastCount = counties.filter((c) => c.growth >= FAST).length;
   const maxGrowth = Math.max(...counties.map((c) => c.growth || 0), 0.01);
   const scatterLabels = React.useMemo(
     () => flagged.slice(0, narrow ? 2 : 4).map((c) => ({ ...c, right: c.growth > maxGrowth * (narrow ? 0.6 : 0.8) })),
@@ -842,9 +840,7 @@ export default function Dashboard({ dashboard, givens }) {
 
   const growth = num(k.population_growth_2020_2024);
   const change = num(k.visits_per_resident_change);
-  const headline = k.population_growth_2020_2024 != null
-    ? `${where} gained ${pct1(growth)} more residents since 2020, but library visits per resident are ${Math.round(Math.abs(change) * 100)}% ${change < 0 ? "below" : "above"} FY2019`
-    : dashboard.title;
+  const headline = picked ? `${dashboard.title} — ${where}` : dashboard.title;
 
   const growthScale = React.useMemo(() => ({ type: "linear", domain: [-0.1, 0, 0.2], range: [t.pal.divDown, t.pal.divMid, t.pal.divUp], clamp: true, interpolate: "lab" }), [t]);
   const spendScale = React.useMemo(() => ({ type: "linear", range: t.pal.seq, zero: true, interpolate: "lab", domainMax: 60, clamp: true }), [t]);
@@ -865,8 +861,6 @@ export default function Dashboard({ dashboard, givens }) {
   const sRows = years.map((r) => ({ fy: r.fy, series: where, value: num(r.spend_per_resident) }));
   const vSpec = React.useMemo(() => trendSpec(t, narrow, { title: "Visits per resident", format: ".1f", series }), [t, narrow, where]);
   const sSpec = React.useMemo(() => trendSpec(t, narrow, { title: "Spend per resident", format: "$,.0f", series }), [t, narrow, where]);
-  const s19 = years.find((r) => r.fy === "2019"), s24 = years.find((r) => r.fy === "2024");
-  const spendChange = s19 && s24 && num(s19.spend_per_resident) ? num(s24.spend_per_resident) / num(s19.spend_per_resident) - 1 : null;
 
   const ranked = (k.growth_gap || []);
   const regional = (k.regional_systems || []);
@@ -875,14 +869,6 @@ export default function Dashboard({ dashboard, givens }) {
     <div className="od">
       <style>{CSS + CSS2 + CSS_ABOUT}</style>
       <h1>{headline}</h1>
-      {callout && (
-        <p className="lede">
-          {callout.county} grew {pct1(callout.growth)} and spends {dollars(callout.spend)} a resident on its libraries,
-          {lowestSpend && lowestSpend.county_fips === callout.county_fips ? ` the least of any county in ${where};` : ""} the
-          median {where} county spends {dollars(median)}. {flagged.length} of {fastCount} fast-growing counties spend
-          below the median.
-        </p>
-      )}
       <HeadCaveat items={["Association, not cause", "Visits fell about a third US-wide too", "Regional systems split by population", "Durham FY2019 visits over-counted (NC)"]} />
       <Controls />
       {error && <div className="err">{String(error)}</div>}
@@ -901,7 +887,7 @@ export default function Dashboard({ dashboard, givens }) {
           <div className="od-kpi hot">
             <div className="v">{pct(change)}</div>
             <div className="l">Visits per resident vs FY2019</div>
-            <div className="s">Use has not caught up with the pandemic dip</div>
+            <div className="s">FY2024 vs FY2019</div>
           </div>
           <div className="od-kpi">
             <div className="v">{dollars(k.spend_per_resident_fy2024)}</div>
@@ -911,7 +897,7 @@ export default function Dashboard({ dashboard, givens }) {
         </div>
 
         <Card
-          title={`Where ${where} is growing, and what its libraries spend`}
+          title="Population growth and library spend by county"
           sub={`Top: population growth 2020 to 2024 (blue growing, red shrinking). Bottom: library operating spend per resident, FY2024 (darker is more). Outlined: fast-growing counties (8%+) that spend below the state median${callout ? `; ${callout.short} named` : ""}.`}
         >
           <div className="od-maps stack">
@@ -927,7 +913,7 @@ export default function Dashboard({ dashboard, givens }) {
         </Card>
 
         <Card
-          title={callout ? `${callout.short} is growing fast on the thinnest library budget` : "Growth against library spend per resident"}
+          title="Population growth vs library spend per resident"
           sub={`One dot per county, sized by residents. Orange: fast-growing (8%+) and spending below the median ${where} county.`}
         >
           <div className="od-vega"><VegaChart spec={scatter} data={counties} /></div>
@@ -935,13 +921,13 @@ export default function Dashboard({ dashboard, givens }) {
 
         <div className="od-grid">
           <Card
-            title={change != null ? `Visits per resident fell in the pandemic and are ${Math.round(Math.abs(change) * 100)}% ${change < 0 ? "below" : "above"} FY2019` : "Visits per resident"}
+            title="Visits per resident, FY2018 to FY2024"
             sub={`${where}, all systems, FY2018 to FY2024. Shaded: the pandemic closures.`}
           >
             <div className="od-vega"><VegaChart spec={vSpec} data={vRows} /></div>
           </Card>
           <Card
-            title={spendChange != null ? `Spend per resident is up ${Math.round(spendChange * 100)}% since FY2019` : "Spend per resident"}
+            title="Spend per resident, FY2018 to FY2024"
             sub="Operating spend per county resident, US dollars as reported (not adjusted for inflation)."
           >
             <div className="od-vega"><VegaChart spec={sSpec} data={sRows} /></div>

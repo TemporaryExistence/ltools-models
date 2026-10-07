@@ -845,12 +845,9 @@ export default function Dashboard({ dashboard, givens }) {
   );
   const outline = React.useMemo(() => new Set(marks.map((m) => m.county_fips)), [marks]);
   const totalCounties = cq.rows.length;
-  const fastCount = cq.rows.filter((r) => num(r.population_growth_2020_2024) >= FAST).length;
   const top = fast[0];
 
-  const headline = fast.length && k.fast_growth_cost != null
-    ? `${fast.length} of ${where}'s ${fastCount} fast-growing counties spend below the median county on libraries; ${money(k.fast_growth_cost)} a year would close the gap`
-    : dashboard.title;
+  const headline = picked ? `${dashboard.title} — ${where}` : dashboard.title;
 
   // Start the ramp at a visible blue so a small gap still reads apart from the grey "at or above the median".
   const scale = React.useMemo(() => ({ type: "sqrt", range: t.dark ? ["#294a70", "#b4d3f7"] : ["#a9c9ef", "#0d366b"], zero: true, interpolate: "lab" }), [t]);
@@ -878,14 +875,7 @@ export default function Dashboard({ dashboard, givens }) {
     ];
   });
   const band = React.useMemo(() => bandSpec(t, narrow, bandRows), [t, narrow, JSON.stringify(bandRows)]);
-  const fastBand = bands.find((b) => b.growth_band === "Fast (8%+)");
-  const slowBand = bands.find((b) => b.growth_band === "Slow or shrinking (under 3%)");
-  const rate = (b) => (b && num(b.counties) ? num(b.counties_below_median) / num(b.counties) : null);
-  const bandTitle = fastBand && slowBand && rate(fastBand) != null && rate(slowBand) != null
-    ? (rate(fastBand) < rate(slowBand)
-      ? `Fast-growing counties are less often below the median (${share(rate(fastBand))} vs ${share(rate(slowBand))}), but their gaps cost more to close`
-      : `${share(rate(fastBand))} of fast-growing counties spend below the median, against ${share(rate(slowBand))} of slow-growing ones`)
-    : "Counties below the median, by population growth";
+  const bandTitle = "Counties below the median, by population growth";
 
   const all = (k.cost_to_reach_state_median_by_county || []);
 
@@ -893,13 +883,6 @@ export default function Dashboard({ dashboard, givens }) {
     <div className="od">
       <style>{CSS + CSS2 + CSS_ABOUT}</style>
       <h1>{headline}</h1>
-      {top && (
-        <p className="lede">
-          {top.county} grew {pct1(top.growth)} since 2020 and spends {dollars(top.spend)} a resident on its libraries,
-          against {dollars(top.median)} for the median {where} county: {money(top.cost)} a year to reach it. The median is
-          a peer benchmark, not a standard of need.
-        </p>
-      )}
       <HeadCaveat items={["Median = peer benchmark, not need", "Operating spend only, FY2024", "Regional systems split by population", "Compared within each state"]} />
       <Controls />
       {error && <div className="err">{String(error)}</div>}
@@ -928,7 +911,7 @@ export default function Dashboard({ dashboard, givens }) {
         </div>
 
         <Card
-          title={top ? `Closing the gap would cost most in ${top.short}` : "Yearly cost to reach the state median, by county"}
+          title="Yearly cost to reach the state median, by county"
           sub="Yearly cost for each county to reach its state's median library spend per resident (darker is more). Grey: at or above the median. Numbered and outlined: the fast-growing counties below the median, by cost."
         >
           <div className="od-maps stack">
@@ -954,8 +937,8 @@ export default function Dashboard({ dashboard, givens }) {
         </Card>
 
         <Card
-          title={`The ${fast.length} fast-growing counties below the median, and what each would need`}
-          sub={`Spend per resident today (orange dot) against the state median (grey tick), FY2024, with the yearly cost to close the gap. Fast-growing: population up 8% or more from 2020 to 2024, about three times the US rate.`}
+          title="Fast-growing counties below the median: spend per resident"
+          sub="Spend per resident today (orange dot) against the state median (grey tick), FY2024, with the yearly cost to close the gap. Fast-growing: population up 8% or more from 2020 to 2024."
         >
           <div className="od-vega"><VegaChart spec={dumb} data={dumbRows} /></div>
         </Card>

@@ -2,7 +2,7 @@
 import "../libraries.malloy"
 
 #" How a state's public libraries are used: visits, borrowing, digital share and cost, by system and setting.
-# artifact { title="North Carolina libraries draw 25% fewer visits per person than the US, on 41% less spend" } dashboard { columns=6 }
+# artifact { title="State libraries: visits, borrowing and spend" } dashboard { columns=6 }
 query: state_libraries is library_systems -> {
   where: state ~ $STATE
   # colspan=1

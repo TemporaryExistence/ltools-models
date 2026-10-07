@@ -637,7 +637,7 @@ export default function Dashboard({ dashboard, givens }) {
   const ranked = (main.rows[0] && main.rows[0].ranked) || [];
   const m = moneyQ.rows[0] || {};
   const stateName = givens && givens.STATE ? String(givens.STATE).replace(/'/g, "") : "";
-  const title = stateName ? `Microtransit prospects in ${stateName}` : dashboard.title;
+  const title = stateName ? `${dashboard.title} — ${stateName}` : dashboard.title;
   const spendGrowth = m.spend_2022 ? m.spend_2024 / m.spend_2022 - 1 : null;
   const hoursGrowth = m.hours_2022 ? m.hours_2024 / m.hours_2022 - 1 : null;
   // Only meaningful with many agencies: in one state the top 15 can be nearly everyone, and cutters can push the
@@ -706,13 +706,13 @@ export default function Dashboard({ dashboard, givens }) {
 
         <div className="od-grid wide-left">
           <Card
-            title="The buyers are the agencies adding general-public service, not the biggest on-demand operators"
+            title="On-demand hours 2024 vs new general-public hours, by agency"
             sub="Each dot is an urban agency with 20k+ on-demand hours in 2024; size = its on-demand hours. Numbered: the eight that added the most new general-public hours."
           >
             <div className="od-vega"><VegaChart spec={prospectChart} data={pointRows} /></div>
           </Card>
           <Card
-            title="Most on-demand service is still ADA paratransit; the general-public slice is the part growing"
+            title="On-demand hours by type, by year"
             sub="Urban agencies, vehicle revenue hours a year; the general-public share is under each year."
           >
             <div className="od-vega"><VegaChart spec={mixChart} data={mixRows} /></div>
@@ -729,14 +729,14 @@ export default function Dashboard({ dashboard, givens }) {
               note={(r) => plusMoney(r.spend_added) + " a year"}
             />
           </Card>
-          <Card title="Check before calling: all on-demand hours since 2024 (incl. paratransit)" sub="Latest 12 monthly reports (Sep 2025 to Aug 2026) vs calendar 2024; the monthly file does not split out ADA paratransit">
+          <Card title="All on-demand hours since 2024 (incl. paratransit)" sub="Latest 12 monthly reports (Sep 2025 to Aug 2026) vs calendar 2024; the monthly file does not split out ADA paratransit">
             <div className="od-vega"><VegaChart spec={momentumChart} data={momentumRows} /></div>
           </Card>
         </div>
 
         <Card
-          title="Not microtransit buyers: the largest on-demand operators run ADA paratransit"
-          sub="Largest on-demand operators of 2024 and the share of their trips that are ADA paratransit. A ranking by all on-demand growth puts these on top."
+          title="Largest on-demand operators: ADA paratransit share"
+          sub="Largest on-demand operators of 2024 and the share of their trips that are ADA paratransit."
         >
           <Bars
             rows={largest.rows}
@@ -747,7 +747,7 @@ export default function Dashboard({ dashboard, givens }) {
           />
         </Card>
 
-        <Card title="Prospect list: who a microtransit vendor should call first" sub={`Top ${ranked.length} urban agencies by new general-public on-demand hours, 2022 to 2024. Hours re-flagged from ADA to general public are not counted as new${m.hours_reflagged > 0 ? ` (${compact(m.hours_reflagged)} hours at ${m.agencies_reflagged} agencies in this selection)` : ""}.`}>
+        <Card title="Prospect list: new general-public on-demand hours" sub={`Top ${ranked.length} urban agencies by new general-public on-demand hours, 2022 to 2024. Hours re-flagged from ADA to general public are not counted as new${m.hours_reflagged > 0 ? ` (${compact(m.hours_reflagged)} hours at ${m.agencies_reflagged} agencies in this selection)` : ""}.`}>
           <div className="od-tablewrap">
             <table>
               <thead>
