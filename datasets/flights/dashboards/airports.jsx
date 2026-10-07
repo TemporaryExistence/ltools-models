@@ -341,6 +341,129 @@ function scatterSpec(t, narrow, sel) {
   };
 }
 
+// ---- About this data + caveats ----
+// The same block sits in every flights dashboard (a component can import only React and @malloyyo/dashboard, so it
+// can't be shared). Facts verified 2026-10-07: outputs/2026-10-07_flights-source-check.md in the LTools unit.
+
+const ABOUT_CSS = `
+.od-src { font-size: 13px; color: var(--dash-muted); margin: -8px 0 14px; line-height: 1.5; }
+.od-src a, .od-about a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.od-cav { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: -8px 0 22px; font-size: 12px; color: var(--dash-muted); align-items: baseline; }
+.od-cav b { font-weight: 600; color: var(--dash-fg); margin-right: 2px; }
+.od-cav span { border: 1px solid var(--dash-border); border-radius: 999px; padding: 2px 9px; line-height: 1.4; }
+.od-card .cav { font-size: 12px; color: var(--dash-muted); margin: 12px 0 0; line-height: 1.45; }
+.od-card .cav b { font-weight: 600; }
+.od-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; font-size: 11.5px; color: var(--dash-muted); }
+.od-tags span { border: 1px solid var(--dash-border); border-radius: 999px; padding: 1px 8px; line-height: 1.5; white-space: nowrap; }
+.od-about { margin-top: 16px; }
+.od-about dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px 20px; margin: 4px 0 0; font-size: 14px; line-height: 1.45; }
+.od-about dt { font-weight: 600; color: var(--dash-muted); font-size: 13px; padding-top: 1px; }
+.od-about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.od-about ul { margin: 0; padding-left: 18px; }
+.od-about li { margin-bottom: 4px; }
+@media (max-width: 560px) {
+  .od-about dl { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .od-about dd { margin-bottom: 10px; }
+}
+`;
+
+const DATA = {
+  source: "BTS Reporting Carrier On-Time Performance (1987–present)",
+  sourceUrl: "https://www.transtats.bts.gov/Fields.asp?gnoyr_VQ=FGJ",
+  publisher: "Bureau of Transportation Statistics, US Department of Transportation",
+  coverage: "1 May to 31 July 2026 (92 days; three monthly files, the latest BTS had published)",
+  rows: "1,851,282 scheduled US domestic flights from 354 departure airports, 13 reporting airlines",
+  refreshed: "Downloaded from BTS and loaded on 6 October 2026. Re-checked 7 October 2026: row count, dates and monthly totals match the published model, and cancellation rates match DOT's published May 2026 figures.",
+  licence: "US government work: public domain, free to reuse (17 U.S.C. §105). Airport positions: OurAirports, public domain.",
+};
+
+// Caveats that apply to every conclusion on every flights dashboard.
+const CAVEATS = [
+  "One season only: May–July 2026, summer thunderstorm season. Other months may rank airlines, airports and hours differently.",
+  "Not adjusted for weather or season. BTS records weather as a delay cause, but these comparisons do not separate stormy days from clear ones.",
+  "Correlation, not cause. A pattern here (a late hour, a late airline) can come partly from what flies then and where, not only from the hour or airline itself.",
+  "Booking dates are not known. BTS records the scheduled departure time, not when the ticket was bought, so nothing here says when to book.",
+  "Late = arrived 15+ minutes after the scheduled arrival (BTS/DOT definition), out of flights that operated. Cancelled and diverted flights are not in the late rate; they are shown as their own rates.",
+  "Airline = the airline that operated the flight. Regional airlines (Envoy, Republic, SkyWest, PSA, Endeavor) appear under their own names, not the American Eagle, United Express or Delta Connection brand on the ticket.",
+  "Only the airlines BTS requires to report (those with at least 0.5% of US domestic scheduled passenger revenue). Spirit reported just 354 flights in these months.",
+];
+
+function scrollToAbout(e) {
+  if (e) e.preventDefault();
+  const el = typeof document !== "undefined" ? document.getElementById("about-this-data") : null;
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// One line under the title: where the numbers come from, with a jump to the full panel.
+function SourceLine() {
+  return (
+    <p className="od-src">
+      Data: <a href={DATA.sourceUrl} target="_blank" rel="noopener noreferrer">BTS Reporting Carrier On-Time Performance</a>
+      {" · "}May–July 2026{" · "}1,851,282 flights{" · "}refreshed 6 Oct 2026{" · "}public domain{" · "}
+      <a href="#about-this-data" onClick={scrollToAbout}>About this data and its caveats</a>
+    </p>
+  );
+}
+
+// Short caveats shown right next to a conclusion.
+function Caveats({ items }) {
+  return (
+    <div className="od-cav">
+      <b>Read with:</b>
+      {items.map((c) => <span key={c}>{c}</span>)}
+    </div>
+  );
+}
+
+// Short caveat tags attached to a chart.
+function Tags({ items }) {
+  return <div className="od-tags">{items.map((c) => <span key={c}>{c}</span>)}</div>;
+}
+
+// The full "About this data" panel. `notes` adds this dashboard's own caveats (sample guards, method limits).
+function AboutData({ notes }) {
+  return (
+    <section className="od-card od-about" id="about-this-data">
+      <h2>About this data</h2>
+      <p className="sub">Where every number on this page comes from, so you can check it or explore it yourself.</p>
+      <dl>
+        <dt>Source</dt>
+        <dd>
+          <a href={DATA.sourceUrl} target="_blank" rel="noopener noreferrer">{DATA.source}</a>, {DATA.publisher}. Every
+          scheduled domestic flight the reporting airlines operated or cancelled, one row per flight.
+        </dd>
+        <dt>Coverage</dt>
+        <dd>{DATA.coverage}</dd>
+        <dt>Rows</dt>
+        <dd>{DATA.rows}</dd>
+        <dt>Last refreshed</dt>
+        <dd>{DATA.refreshed}</dd>
+        <dt>Licence</dt>
+        <dd>{DATA.licence}</dd>
+        <dt>"Late" means</dt>
+        <dd>
+          Arrived 15 or more minutes after the scheduled arrival time (the BTS and DOT definition). Late rate = late
+          arrivals ÷ flights that operated. On-time rate = 1 − late rate.
+        </dd>
+        <dt>Caveats</dt>
+        <dd>
+          <ul>
+            {CAVEATS.concat(notes || []).map((c) => <li key={c}>{c}</li>)}
+          </ul>
+        </dd>
+      </dl>
+    </section>
+  );
+}
+
+// This dashboard's own caveats, added to the shared list in the About panel.
+const ABOUT_NOTES = [
+  "Small-sample guards: the airport map shows airports with 300+ flights, the inbound table airports with 100+ flights, the routes table routes with 300+ flights.",
+  "Aircraft are followed by tail number through each local calendar day, ordered by scheduled departure. For 98.5% of later flights the previous flight landed where this one leaves from. 3,216 flights (almost all cancelled) have no tail number and are left out of the aircraft-day measures.",
+  "Delay chains are association, not proof: a stormy day makes an aircraft's first and later flights late together. Counts of where chains start are small at most airports; read them as a ranking.",
+  "Airport size bands are this dashboard's own cut points (average departures a day), not FAA hub classes.",
+];
+
 export default function Dashboard({ dashboard, givens }) {
   const t = useTheme();
   const narrow = useNarrow();
@@ -400,8 +523,9 @@ export default function Dashboard({ dashboard, givens }) {
 
   return (
     <div className="od" style={{ "--hot": t.pal.orange }}>
-      <style>{CSS}</style>
+      <style>{CSS + ABOUT_CSS}</style>
       <h1>{dashboard.title}</h1>
+      <SourceLine />
       <Controls />
       {q.error && <div className="err">{String(q.error)}</div>}
       <div className={q.loading ? "loading" : ""}>
@@ -420,7 +544,7 @@ export default function Dashboard({ dashboard, givens }) {
           </div>
           <div className="od-kpi">
             <div className="v">{share(k.airport_chain_share)}</div>
-            <div className="l">Of late flights: plane was already late</div>
+            <div className="l">Late flights with a late inbound plane</div>
             <div className="s">The aircraft's previous flight that day arrived late</div>
           </div>
           <div className="od-kpi">
@@ -429,26 +553,29 @@ export default function Dashboard({ dashboard, givens }) {
             <div className="s">Of scheduled departures</div>
           </div>
         </div>
+        <Caveats items={["May–Jul 2026 only", "Not adjusted for weather or season", "Correlation, not cause", "Late = arrived 15+ min after schedule; cancellations counted separately"]} />
 
         <div className="od-grid">
-          <Card title="Each flight of the aircraft's day is more likely to arrive late" sub="Share arriving 15+ minutes late, by which flight of the day it is for that aircraft">
+          <Card title="Late arrivals by leg of the aircraft's day" sub="Share arriving 15+ minutes late, by which flight of the day it is for that aircraft">
             <Key items={[["All US airports", t.pal.blue, true]].concat(sel ? [[sel, t.pal.orange, true]] : [])} />
             <div className="od-vega"><VegaChart spec={specs.leg} data={legRows} /></div>
           </Card>
-          <Card title="Lateness builds through the day, faster at hubs" sub="Share arriving 15+ minutes late, by scheduled departure hour">
+          <Card title="Late arrivals by departure hour and airport size" sub="Share arriving 15+ minutes late, by scheduled departure hour">
             <Key items={hourSeries.map(([l, c]) => [l, c])} />
             <div className="od-vega"><VegaChart spec={specs.hour} data={hourRows} /></div>
+            <Tags items={["Departure time, not booking date", "Not adjusted for weather or season", "May–Jul 2026 only"]} />
           </Card>
         </div>
 
         <div className="od-grid one">
-          <Card title="Every airport: size, lateness and the delay chains it starts" sub="One dot per airport with 300+ flights; bigger dots start costlier delay chains (late-aircraft minutes on the same plane's later flights, at $100.76 a minute)">
+          <Card title="Airports: size, late rate and delay-chain cost" sub="One dot per airport with 300+ flights; bigger dots start costlier delay chains (late-aircraft minutes on the same plane's later flights, at $100.76 a minute)">
             <div className="od-vega"><VegaChart spec={specs.scatter} data={scatRows} /></div>
+            <Tags items={["Airports under 300 flights hidden", "Chain cost = upper bound", "Attribution, not proof"]} />
           </Card>
         </div>
 
         <div className="od-grid">
-          <Card title={sel ? `A late first flight follows the aircraft out of ${sel}` : "A late first flight follows the aircraft"} sub="Later flights of the day: share arriving 15+ minutes late, by how the aircraft's first flight went">
+          <Card title={sel ? `Later flights late, by how the day started — ${sel}` : "Later flights late, by how the day started"} sub="Later flights of the day: share arriving 15+ minutes late, by how the aircraft's first flight went">
             <div className="vs">
               <div className="late">
                 <div className="big">{share(effLate && effLate.late_rate)}</div>
@@ -470,14 +597,16 @@ export default function Dashboard({ dashboard, givens }) {
                 <div className="cap">when it arrived on time ({whole(inbOn && inbOn.legs)} flights)</div>
               </div>
             </div>
+            <Tags items={["Correlation, not cause", "Not adjusted for weather or season", "May–Jul 2026 only"]} />
           </Card>
-          <Card title="Where the late chains start" sub={`Airports whose late first flight of the day ended in a late departure${sel ? " from " + sel : ""}`}>
+          <Card title="Delay-chain start airports" sub={`Airports whose late first flight of the day ended in a late departure${sel ? " from " + sel : ""}`}>
             <Bars rows={(starts.rows || []).slice(0, 8)} value="late_legs" label="first_origin" right={(r) => whole(r.late_legs)} note={() => "late flights"} />
+            <Tags items={["Small counts: ranking only", "Correlation, not cause"]} />
           </Card>
         </div>
 
         <div className="od-grid">
-          <Card title="Where the aircraft fly in from" sub="Later flights of the day, by the previous airport (100+ flights)">
+          <Card title="Inbound aircraft by previous airport" sub="Later flights of the day, by the previous airport (100+ flights)">
             <div className="od-tablewrap">
               <table>
                 <thead><tr><th className="name">From</th><th className="hide-sm">Flights</th><th>Arrived late</th><th>Left late</th></tr></thead>
@@ -494,7 +623,7 @@ export default function Dashboard({ dashboard, givens }) {
               </table>
             </div>
           </Card>
-          <Card title="Airlines here" sub="Most departures first">
+          <Card title="Airlines at this airport" sub="Most departures first">
             <div className="od-tablewrap">
               <table>
                 <thead><tr><th className="name">Airline</th><th className="hide-sm">Flights</th><th>Late</th><th>Cancelled</th></tr></thead>
@@ -514,7 +643,7 @@ export default function Dashboard({ dashboard, givens }) {
         </div>
 
         {(routes.rows || []).length > 0 && (
-          <Card title="Busy routes that run late most" sub="Routes with 300+ flights in the selection">
+          <Card title="Late arrivals by route (worst 10)" sub="Routes with 300+ flights in the selection">
             <div className="od-tablewrap">
               <table>
                 <thead><tr><th className="name">Route</th><th className="hide-sm">Flights</th><th>Late</th><th>Avg delay</th></tr></thead>
@@ -533,6 +662,7 @@ export default function Dashboard({ dashboard, givens }) {
           </Card>
         )}
       </div>
+      <AboutData notes={ABOUT_NOTES} />
       <p className="foot">
         Source: BTS Reporting Carrier On-Time Performance, May–July 2026. Each aircraft (tail number) is followed through
         its day; late means arriving 15+ minutes after schedule, of flights that operated. Airport size is average

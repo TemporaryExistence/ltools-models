@@ -27,3 +27,14 @@ query: triangle_agencies_table is transit -> triangle_agencies
 
 #" Contrast: North Carolina as the Triangle, Charlotte and the rest.
 query: triangle_nc_regions is transit -> nc_regions
+
+// ---- "About this data" panel (added 2026-10-07): rows and months in the table the dashboard reads, filters ignored. ----
+
+#" About this data: rows and months in the table the dashboard reads (whole table, filters ignored).
+query: triangle_about is transit -> {
+  aggregate:
+    table_rows is count()
+    first_month is report_month.min()
+    last_month is report_month.max()
+    agency_ids is count(ntd_id)
+}

@@ -535,10 +535,228 @@ const SMALL_COLS = [
   { key: "cost_per_visit", label: "Cost / visit", fmt: dollars },
 ];
 
+// ---- Conclusion charts, caveat chips and "About this data" (added 2026-10-07). The same block sits in every
+// libraries and transit dashboard: a component can import only React and @malloyyo/dashboard, so it is repeated. ----
+
+const CSS_ABOUT = `
+.od-concl { margin: 16px 0 26px; }
+.od-concl > h2 { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--dash-accent); margin: 0 0 10px; }
+.od-concl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.od-concl-card { border: 1px solid var(--dash-border); border-radius: 12px; padding: 14px 16px 12px; min-width: 0; }
+.od-concl-card.wide { grid-column: 1 / -1; }
+.od-concl-card h3 { font-size: 15px; margin: 0 0 2px; line-height: 1.3; }
+.od-concl-card .stat { font-size: 13px; color: var(--dash-muted); margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.od-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; }
+.od-chips li { font-size: 12px; line-height: 1.3; color: var(--dash-muted); border: 1px solid var(--dash-border); border-radius: 999px; padding: 3px 9px; }
+.od-chips li::before { content: "⚠ "; color: var(--dash-muted); }
+.od-headchips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: -6px 0 16px; }
+.od-headchips .od-chips { margin: 0; }
+.od-headchips .od-jump { font-size: 12px; }
+.od-findnote { font-size: 12px; color: var(--dash-muted); margin: 8px 0 0; }
+.od a.od-jump { color: var(--dash-accent); cursor: pointer; text-decoration: underline; white-space: nowrap; }
+.od-about h3 { font-size: 14px; margin: 18px 0 6px; }
+.od-about .od-src { border-top: 1px solid var(--dash-border); padding-top: 10px; margin-top: 12px; }
+.od-about .od-src h3 { margin-top: 0; }
+.od-about dl { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 5px 16px; font-size: 13px; margin: 0; line-height: 1.45; }
+.od-about dt { color: var(--dash-muted); font-weight: 600; }
+.od-about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.od-about a { color: var(--dash-accent); }
+.od-about p.txt { font-size: 13px; line-height: 1.5; margin: 0; max-width: 95ch; }
+.od-about ul { font-size: 13px; line-height: 1.5; margin: 0; padding-left: 18px; max-width: 95ch; }
+.od-about li + li { margin-top: 4px; }
+@media (max-width: 560px) {
+  .od-concl-grid { grid-template-columns: minmax(0, 1fr); }
+  .od-about dl { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .od-about dd { margin-bottom: 6px; }
+}
+`;
+
+const abPct = (p) => (p == null || isNaN(p) ? "–" : Math.round(p * 100) + "%");
+const abPct1 = (p) => (p == null || isNaN(p) ? "–" : (Math.round(p * 1000) / 10).toFixed(1) + "%");
+const abInt = (n) => (n == null || isNaN(n) ? "–" : Math.round(Number(n)).toLocaleString("en-US"));
+const abBig = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(1) + " billion";
+  if (a >= 1e6) return (n / 1e6).toFixed(1) + " million";
+  return abInt(n);
+};
+const abMoney = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e8) return "$" + Math.round(n / 1e6) + "M";
+  if (a >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+  if (a >= 1000) return "$" + Math.round(n).toLocaleString("en-US");
+  return "$" + Number(n).toFixed(2);
+};
+const abMonth = (v) => {
+  if (v == null) return "–";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+};
+const abOne = (x) => (Array.isArray(x) ? x[0] : x) || null;
+const abOrdinal = (n) => {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
+// Scrolls to the About panel (an in-page link; the dashboard frame may not follow #anchors).
+function AboutLink({ children }) {
+  const go = (e) => {
+    e.preventDefault();
+    const el = document.getElementById("about-this-data");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  return <a className="od-jump" href="#about-this-data" onClick={go}>{children || "About this data"}</a>;
+}
+
+// Short caveat labels shown as chips.
+function Chips({ items }) {
+  const shown = (items || []).filter(Boolean);
+  if (!shown.length) return null;
+  return (
+    <ul className="od-chips" aria-label="Caveats">
+      {shown.map((c) => <li key={c}>{c}</li>)}
+    </ul>
+  );
+}
+
+// The caveats that apply to a dashboard's headline, as chips right under it.
+function HeadCaveat({ items }) {
+  return (
+    <div className="od-headchips"><Chips items={items} /><AboutLink>Sources and definitions</AboutLink></div>
+  );
+}
+
+// One conclusion as a chart: a short label, an optional one-line figure, the chart, and its caveat chips.
+function ConclCard({ title, stat, spec, data, chips, wide }) {
+  return (
+    <section className={"od-concl-card" + (wide ? " wide" : "")}>
+      <h3>{title}</h3>
+      {stat && <p className="stat">{stat}</p>}
+      {spec && data && data.length > 0 ? <div className="od-vega"><VegaChart spec={spec} data={data} /></div> : <p className="stat">Loading…</p>}
+      <Chips items={chips} />
+    </section>
+  );
+}
+
+// The conclusion charts at the top of a dataset's main dashboard.
+function Conclusions({ children }) {
+  return (
+    <section className="od-concl" aria-label="What the data shows">
+      <h2>What the data shows</h2>
+      <div className="od-concl-grid">{children}</div>
+      <p className="od-findnote">Computed live from the data behind this page. Sources and checks: <AboutLink />.</p>
+    </section>
+  );
+}
+
+// A neutral bar colour for the marks that are context, not the point.
+const abNeutral = (t) => (t.dark ? "#5b616b" : "#b4b8bf");
+
+// Source, coverage, rows, refresh date, licence, definitions and caveats. `live` is the page's *_about query row.
+function AboutData({ about, live }) {
+  return (
+    <section className="od-card od-about" id="about-this-data">
+      <h2>About this data</h2>
+      <p className="sub">{about.summary}{live && about.liveLine ? " " + about.liveLine(live) : ""}</p>
+      {about.sources.map((s) => (
+        <div className="od-src" key={s.name}>
+          <h3>{s.name}</h3>
+          <dl>
+            <dt>Publisher</dt><dd>{s.publisher}</dd>
+            <dt>Link</dt><dd><a href={s.url} target="_blank" rel="noopener noreferrer">{s.url}</a></dd>
+            <dt>Coverage</dt><dd>{s.coverage}</dd>
+            <dt>Rows</dt><dd>{s.rows}</dd>
+            <dt>Last refreshed</dt><dd>{s.refreshed}</dd>
+            <dt>Licence</dt><dd>{s.licence}</dd>
+          </dl>
+        </div>
+      ))}
+      <h3>How the numbers were checked</h3>
+      <p className="txt">{about.checks}</p>
+      <h3>Definitions</h3>
+      <dl>
+        {about.definitions.map(([term, text]) => (
+          <React.Fragment key={term}><dt>{term}</dt><dd>{text}</dd></React.Fragment>
+        ))}
+      </dl>
+      <h3>Caveats</h3>
+      <ul>
+        {about.caveats.map((c, i) => <li key={i}>{c}</li>)}
+      </ul>
+    </section>
+  );
+}
+
+// Source facts for this page, checked against the publishers on 7 October 2026
+// (/home/andrew/Project/work/units/ltools/outputs/2026-10-07_libraries-transit-source-check.md).
+const ABOUT = {
+  summary:
+    "Every US public library system in the Institute of Museum and Library Services (IMLS) Public Libraries Survey, " +
+    "FY2018 to FY2024, with US Census Bureau county population 2010 to 2025.",
+  liveLine: (r) =>
+    `The multi-year table behind this page has ${abInt(r.table_rows)} rows (one per library system per year), ` +
+    `FY${r.first_fy} to FY${r.last_fy}; ${abInt(r.systems_fy2024)} systems in FY2024, ` +
+    `${abInt(r.borrowing_unreported_fy2024)} of which have no borrowing figure (counted live).`,
+  sources: [
+    {
+      name: "IMLS Public Libraries Survey (PLS), FY2018 to FY2024",
+      publisher: "Institute of Museum and Library Services",
+      url: "https://www.imls.gov/research-evaluation/surveys/public-libraries-survey-pls",
+      coverage:
+        "Seven fiscal years, FY2018 to FY2024 (a fiscal year is named for the year it ends; most end mid-year). Library " +
+        "system (administrative entity) files for every year, plus the FY2023 outlet file (branches and bookmobiles). " +
+        "50 states, DC and four territories (American Samoa, Guam, Northern Mariana Islands, US Virgin Islands).",
+      rows:
+        "64,730 system-years (9,215 to 9,261 systems a year); FY2023 snapshot 9,252 systems and 17,586 outlets (the " +
+        "counts IMLS's own file notes give).",
+      refreshed: "Downloaded 6 October 2026. FY2024 is the latest year (IMLS released it in June 2026).",
+      licence: "IMLS: public-use data files are publicly available without restriction and do not require a licence.",
+    },
+    {
+      name: "US Census Bureau Population Estimates, county totals",
+      publisher: "US Census Bureau",
+      url: "https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/counties/totals/co-est2025-alldata.csv",
+      coverage:
+        "July 1 estimates for every county: Vintage 2025 for 2020 to 2025, Vintage 2020 for 2010 to 2019 " +
+        "(https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/counties/totals/co-est2020-alldata.csv).",
+      rows: "50,294 county-years (3,144 counties).",
+      refreshed: "Downloaded 6 October 2026 (Vintage 2025 file dated 26 March 2026).",
+      licence: "U.S. Government work, not subject to copyright (public domain).",
+    },
+  ],
+  checks:
+    "On 7 October 2026 the FY2024 totals were recomputed from IMLS's own FY2024 file and match exactly (9,249 systems, " +
+    "869,277,559 visits, $16.17B operating spend, $723.7M e-content spend); the FY2023 system and outlet counts match " +
+    "IMLS's file notes; FY2019 agrees with IMLS's published summary (1.2 billion visits, 2.2 billion loans, $13.3B " +
+    "operating spend for systems meeting the public-library definition). Census: North Carolina's 2024 population " +
+    "(11,052,061) and the US total (340,003,797) match the Census state rows.",
+  definitions: [
+    ["Per person", "Per person in the libraries' legal service areas (the survey's population served), not Census residents; service areas can overlap."],
+    ["Per resident", "Per Census county resident. A multi-county system's visits and spend are shared across its counties by population."],
+    ["Visits", "In-person visits to library buildings and bookmobiles."],
+    ["Borrowing", "Total circulation: print and digital checkouts and renewals."],
+    ["E-content spend", "Spending on e-books, e-audio, e-video, databases and e-serials (survey item ELMATEXP)."],
+    ["Dollars", "As reported each year, not adjusted for inflation."],
+    ["Typical", "The median system in the same size band (by population served)."],
+  ],
+  caveats: [
+    "FY2024: 2,791 systems have no borrowing figure (2,786 marked not reported, including Chicago, Miami-Dade and Broward, plus 5 temporarily closed). Per-person rates divide only by systems that reported, so FY2024 national borrowing totals undercount but rates do not.",
+    "FY2024 dropped three survey items (e-book holdings, children's borrowing, website visits) for new versions that are not comparable; they are blank for FY2024. FY2018 to FY2020 lack physical items and age 0-5 attendance.",
+    "National totals here include the territories and the few entities that do not meet the public-library definition, so they run about 1% above IMLS's published totals.",
+    "Durham County Library (NC) reported 1.33M visits in FY2019 against 746k in FY2018; FY2019 looks like a counting change, so Durham's change since FY2019 is overstated.",
+    "A system is placed in counties by where its buildings are. 256 of the FY2024 system-county links (1,245 over all years) name a county that does not match the Census file and are left out of county figures.",
+    "Encodings differ by year (FY2021 is UTF-8, other years Windows-1252, Census Latin-1); all were converted to UTF-8 before loading.",
+  ],
+};
+
 export default function Dashboard({ dashboard, givens }) {
   const t = useT();
   const narrow = useNarrow();
   const q = useQuery({ query: "systems_by_size", givens });
+  const aboutQ = useQuery({ query: "size_about", givens });
   const vq = useQuery({ query: "systems_by_size_value", givens });
   const sq = useQuery({ query: "systems_by_size_spread", givens });
   const error = [q, vq, sq].map((x) => x.error).find(Boolean);
@@ -623,8 +841,9 @@ export default function Dashboard({ dashboard, givens }) {
 
   return (
     <div className="od">
-      <style>{CSS + CSS2}</style>
+      <style>{CSS + CSS2 + CSS_ABOUT}</style>
       <h1>{headline}</h1>
+      <HeadCaveat items={["Cost per visit is not the whole value", "Small systems: often rural, fewer alternatives", "FY2024, dollars as reported", "Non-comparable systems left out"]} />
       <Controls />
       {error && <div className="err">{String(error)}</div>}
       <div className={q.loading ? "loading" : ""}>
@@ -694,6 +913,7 @@ export default function Dashboard({ dashboard, givens }) {
             <SystemTable rows={(k.busiest_small_systems || []).slice(0, 12)} cols={SMALL_COLS} />
           </Card>
       </div>
+      <AboutData about={ABOUT} live={aboutQ.rows[0]} />
       <p className="foot">
         Source: IMLS Public Libraries Survey FY2018 to FY2024 (public domain). Size bands by population served that
         year: 500k+ (the top ~1%), 100k–500k, 25k–100k, 5k–25k and under 5k. Charts leave out systems the survey marks as

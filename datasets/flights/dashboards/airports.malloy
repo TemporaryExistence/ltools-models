@@ -5,7 +5,7 @@ import "../summaries.malloy"
 #" How reliable is flying out of an airport, how it compares with airports of other sizes, and how far a late
 #" aircraft carries its delay through the day. Opens on RDU; pick any origin airport, size band or month. Reads the
 #" small summary files (summaries.malloy); the numbers match the `aircraft_legs` source.
-# artifact { title="Once an aircraft runs late, every later flight that day pays for it" givens { ORIGIN="RDU" } } dashboard { columns=6 }
+# artifact { title="Airport reliability and delay chains" givens { ORIGIN="RDU" } } dashboard { columns=6 }
 query: airports is legs_summary -> {
   where:
     month_label ~ $FLIGHT_MONTH,

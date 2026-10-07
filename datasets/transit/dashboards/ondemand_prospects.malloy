@@ -121,3 +121,14 @@ query: ondemand_largest is ondemand_annual -> {
   order_by: ondemand_hours desc
   limit: 10
 }
+
+// ---- "About this data" panel (added 2026-10-07): rows and years in the table the dashboard reads, filters ignored. ----
+
+#" About this data: rows and report years in ondemand_annual (whole table, filters ignored).
+query: ondemand_about is ondemand_annual -> {
+  aggregate:
+    table_rows is count()
+    first_year is report_year.min()
+    last_year is report_year.max()
+    agency_ids is count(ntd_id)
+}

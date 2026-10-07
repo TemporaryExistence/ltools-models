@@ -9,7 +9,7 @@ import "../summaries.malloy"
 #" at $100.76 a minute (A4A 2024 block-minute cost). This is attribution, not proof that every minute was avoidable;
 #" storms delay first and later flights together. Slot ranks and the top-50 share are national (upper-bound ranking),
 #" so they hold when filtered.
-# artifact { title="A few early-morning departures start the most expensive delay chains" } dashboard { columns=6 }
+# artifact { title="Delay-chain cost by airport, airline and departure slot" } dashboard { columns=6 }
 query: delay_chain_cost is chain_slots_summary -> {
   where:
     airline ~ $AIRLINE,

@@ -297,6 +297,128 @@ function ChainMap({ t, rows, narrow }) {
   );
 }
 
+// ---- About this data + caveats ----
+// The same block sits in every flights dashboard (a component can import only React and @malloyyo/dashboard, so it
+// can't be shared). Facts verified 2026-10-07: outputs/2026-10-07_flights-source-check.md in the LTools unit.
+
+const ABOUT_CSS = `
+.od-src { font-size: 13px; color: var(--dash-muted); margin: -8px 0 14px; line-height: 1.5; }
+.od-src a, .od-about a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.od-cav { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: -8px 0 22px; font-size: 12px; color: var(--dash-muted); align-items: baseline; }
+.od-cav b { font-weight: 600; color: var(--dash-fg); margin-right: 2px; }
+.od-cav span { border: 1px solid var(--dash-border); border-radius: 999px; padding: 2px 9px; line-height: 1.4; }
+.od-card .cav { font-size: 12px; color: var(--dash-muted); margin: 12px 0 0; line-height: 1.45; }
+.od-card .cav b { font-weight: 600; }
+.od-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; font-size: 11.5px; color: var(--dash-muted); }
+.od-tags span { border: 1px solid var(--dash-border); border-radius: 999px; padding: 1px 8px; line-height: 1.5; white-space: nowrap; }
+.od-about { margin-top: 16px; }
+.od-about dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px 20px; margin: 4px 0 0; font-size: 14px; line-height: 1.45; }
+.od-about dt { font-weight: 600; color: var(--dash-muted); font-size: 13px; padding-top: 1px; }
+.od-about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.od-about ul { margin: 0; padding-left: 18px; }
+.od-about li { margin-bottom: 4px; }
+@media (max-width: 560px) {
+  .od-about dl { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .od-about dd { margin-bottom: 10px; }
+}
+`;
+
+const DATA = {
+  source: "BTS Reporting Carrier On-Time Performance (1987–present)",
+  sourceUrl: "https://www.transtats.bts.gov/Fields.asp?gnoyr_VQ=FGJ",
+  publisher: "Bureau of Transportation Statistics, US Department of Transportation",
+  coverage: "1 May to 31 July 2026 (92 days; three monthly files, the latest BTS had published)",
+  rows: "1,851,282 scheduled US domestic flights from 354 departure airports, 13 reporting airlines",
+  refreshed: "Downloaded from BTS and loaded on 6 October 2026. Re-checked 7 October 2026: row count, dates and monthly totals match the published model, and cancellation rates match DOT's published May 2026 figures.",
+  licence: "US government work: public domain, free to reuse (17 U.S.C. §105). Airport positions: OurAirports, public domain.",
+};
+
+// Caveats that apply to every conclusion on every flights dashboard.
+const CAVEATS = [
+  "One season only: May–July 2026, summer thunderstorm season. Other months may rank airlines, airports and hours differently.",
+  "Not adjusted for weather or season. BTS records weather as a delay cause, but these comparisons do not separate stormy days from clear ones.",
+  "Correlation, not cause. A pattern here (a late hour, a late airline) can come partly from what flies then and where, not only from the hour or airline itself.",
+  "Booking dates are not known. BTS records the scheduled departure time, not when the ticket was bought, so nothing here says when to book.",
+  "Late = arrived 15+ minutes after the scheduled arrival (BTS/DOT definition), out of flights that operated. Cancelled and diverted flights are not in the late rate; they are shown as their own rates.",
+  "Airline = the airline that operated the flight. Regional airlines (Envoy, Republic, SkyWest, PSA, Endeavor) appear under their own names, not the American Eagle, United Express or Delta Connection brand on the ticket.",
+  "Only the airlines BTS requires to report (those with at least 0.5% of US domestic scheduled passenger revenue). Spirit reported just 354 flights in these months.",
+];
+
+function scrollToAbout(e) {
+  if (e) e.preventDefault();
+  const el = typeof document !== "undefined" ? document.getElementById("about-this-data") : null;
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// One line under the title: where the numbers come from, with a jump to the full panel.
+function SourceLine() {
+  return (
+    <p className="od-src">
+      Data: <a href={DATA.sourceUrl} target="_blank" rel="noopener noreferrer">BTS Reporting Carrier On-Time Performance</a>
+      {" · "}May–July 2026{" · "}1,851,282 flights{" · "}refreshed 6 Oct 2026{" · "}public domain{" · "}
+      <a href="#about-this-data" onClick={scrollToAbout}>About this data and its caveats</a>
+    </p>
+  );
+}
+
+// Short caveats shown right next to a conclusion.
+function Caveats({ items }) {
+  return (
+    <div className="od-cav">
+      <b>Read with:</b>
+      {items.map((c) => <span key={c}>{c}</span>)}
+    </div>
+  );
+}
+
+// Short caveat tags attached to a chart.
+function Tags({ items }) {
+  return <div className="od-tags">{items.map((c) => <span key={c}>{c}</span>)}</div>;
+}
+
+// The full "About this data" panel. `notes` adds this dashboard's own caveats (sample guards, method limits).
+function AboutData({ notes }) {
+  return (
+    <section className="od-card od-about" id="about-this-data">
+      <h2>About this data</h2>
+      <p className="sub">Where every number on this page comes from, so you can check it or explore it yourself.</p>
+      <dl>
+        <dt>Source</dt>
+        <dd>
+          <a href={DATA.sourceUrl} target="_blank" rel="noopener noreferrer">{DATA.source}</a>, {DATA.publisher}. Every
+          scheduled domestic flight the reporting airlines operated or cancelled, one row per flight.
+        </dd>
+        <dt>Coverage</dt>
+        <dd>{DATA.coverage}</dd>
+        <dt>Rows</dt>
+        <dd>{DATA.rows}</dd>
+        <dt>Last refreshed</dt>
+        <dd>{DATA.refreshed}</dd>
+        <dt>Licence</dt>
+        <dd>{DATA.licence}</dd>
+        <dt>"Late" means</dt>
+        <dd>
+          Arrived 15 or more minutes after the scheduled arrival time (the BTS and DOT definition). Late rate = late
+          arrivals ÷ flights that operated. On-time rate = 1 − late rate.
+        </dd>
+        <dt>Caveats</dt>
+        <dd>
+          <ul>
+            {CAVEATS.concat(notes || []).map((c) => <li key={c}>{c}</li>)}
+          </ul>
+        </dd>
+      </dl>
+    </section>
+  );
+}
+
+// This dashboard's own caveats, added to the shared list in the About panel.
+const ABOUT_NOTES = [
+  "Cost is always a range. Conservative: only the next flight's late-aircraft minutes, at $69.07 a minute (Airlines for America 2025 block-minute cost less fuel). Upper bound: every later flight's minutes that day, at $100.76 a minute (A4A 2024). Both rates are industry averages, not any one airline's costs.",
+  "Attribution, not proof: storms delay an aircraft's first and later flights together, so not every minute counted was avoidable. Late-aircraft minutes are as reported by the airlines to BTS.",
+  "Slot ranks and the top-50 share are national (upper-bound ranking), so they hold when filtered.",
+];
+
 export default function Dashboard({ dashboard, givens }) {
   const t = useTheme();
   const narrow = useNarrow();
@@ -314,8 +436,9 @@ export default function Dashboard({ dashboard, givens }) {
 
   return (
     <div className="od" style={{ "--bar": t.pal.orange }}>
-      <style>{CSS}</style>
+      <style>{CSS + ABOUT_CSS}</style>
       <h1>{dashboard.title}</h1>
+      <SourceLine />
       <Controls />
       {q.error && <div className="err">{String(q.error)}</div>}
       <div className={q.loading ? "loading" : ""}>
@@ -327,7 +450,7 @@ export default function Dashboard({ dashboard, givens }) {
           </div>
           <div className="od-kpi hot">
             <div className="v">{share(k.share_in_top_50_slots)}</div>
-            <div className="l">Started by just 50 departure slots</div>
+            <div className="l">Share from the 50 costliest slots</div>
             <div className="s">
               {range(k.conservative_cost_in_top_50_slots, k.cost_in_top_50_slots)} from 50 of {k.slots != null ? k.slots.toLocaleString() : "–"} slots
             </div>
@@ -343,18 +466,21 @@ export default function Dashboard({ dashboard, givens }) {
             <div className="s">{slots[0] ? slotName(slots[0]) : "–"}</div>
           </div>
         </div>
+        <Caveats items={["May–Jul 2026 only", "Cost is a range, not a point", "Attribution, not proof", "Not adjusted for weather or season", "Late = arrived 15+ min after schedule"]} />
 
         <div className="od-grid one">
-          <Card title="Where the chains start" sub="Each dot is an airport, sized by the delay-chain cost its late first flights of the day set off">
+          <Card title="Delay-chain cost by starting airport" sub="Each dot is an airport, sized by the delay-chain cost its late first flights of the day set off">
             <ChainMap t={t} rows={mapRows} narrow={narrow} />
+            <Tags items={["Dot size = upper-bound cost", "Attribution, not proof", "Not adjusted for weather or season"]} />
           </Card>
         </div>
 
         <div className="od-grid">
-          <Card title="The early bank sets up the day" sub="Delay-chain cost by the scheduled hour of the late first flight">
+          <Card title="Delay-chain cost by departure hour" sub="Delay-chain cost by the scheduled hour of the late first flight">
             <div className="od-vega"><VegaChart spec={hourSpec} data={h.rows || []} /></div>
+            <Tags items={["Scheduled hour of the first flight", "Not adjusted for weather or season", "Correlation, not cause"]} />
           </Card>
-          <Card title="The costliest departure slots" sub="Airline · first-flight airport · scheduled hour, ranked nationally; bar = upper bound, label = conservative–upper">
+          <Card title="Delay-chain cost by departure slot (top 10)" sub="Airline · first-flight airport · scheduled hour, ranked nationally; bar = upper bound, label = conservative–upper">
             <Bars
               rows={slots.slice(0, narrow ? 8 : 10).map((r) => ({ ...r, name: `${r.slot_rank}. ${slotName(r)}` }))}
               value="downstream_cost_usd"
@@ -365,7 +491,7 @@ export default function Dashboard({ dashboard, givens }) {
           </Card>
         </div>
 
-        <Card title="Departures to protect first" sub="Where a spare aircraft, more turn time or priority handling would pay back first">
+        <Card title="Departure slots ranked by delay-chain cost" sub="Airline · first-flight airport · scheduled hour; conservative to upper bound">
           <div className="od-tablewrap">
             <table>
               <thead>
@@ -392,8 +518,10 @@ export default function Dashboard({ dashboard, givens }) {
               </tbody>
             </table>
           </div>
+          <Tags items={["Cost is a range", "Attribution, not proof", "Not adjusted for weather or season", "May–Jul 2026 only"]} />
         </Card>
       </div>
+      <AboutData notes={ABOUT_NOTES} />
       <p className="foot">
         Source: BTS on-time performance, May–July 2026. When an aircraft's first flight of the day arrived 15+ minutes
         late, the late-aircraft delay minutes on its later flights that day are attributed to that first flight's

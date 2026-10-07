@@ -432,11 +432,371 @@ function modeSpec(t, narrow, n) {
   };
 }
 
+// ---- Conclusion charts, caveat chips and "About this data" (added 2026-10-07). The same block sits in every
+// libraries and transit dashboard: a component can import only React and @malloyyo/dashboard, so it is repeated. ----
+
+const CSS_ABOUT = `
+.od-concl { margin: 16px 0 26px; }
+.od-concl > h2 { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--dash-accent); margin: 0 0 10px; }
+.od-concl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.od-concl-card { border: 1px solid var(--dash-border); border-radius: 12px; padding: 14px 16px 12px; min-width: 0; }
+.od-concl-card.wide { grid-column: 1 / -1; }
+.od-concl-card h3 { font-size: 15px; margin: 0 0 2px; line-height: 1.3; }
+.od-concl-card .stat { font-size: 13px; color: var(--dash-muted); margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.od-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; }
+.od-chips li { font-size: 12px; line-height: 1.3; color: var(--dash-muted); border: 1px solid var(--dash-border); border-radius: 999px; padding: 3px 9px; }
+.od-chips li::before { content: "⚠ "; color: var(--dash-muted); }
+.od-headchips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: -6px 0 16px; }
+.od-headchips .od-chips { margin: 0; }
+.od-headchips .od-jump { font-size: 12px; }
+.od-findnote { font-size: 12px; color: var(--dash-muted); margin: 8px 0 0; }
+.od a.od-jump { color: var(--dash-accent); cursor: pointer; text-decoration: underline; white-space: nowrap; }
+.od-about h3 { font-size: 14px; margin: 18px 0 6px; }
+.od-about .od-src { border-top: 1px solid var(--dash-border); padding-top: 10px; margin-top: 12px; }
+.od-about .od-src h3 { margin-top: 0; }
+.od-about dl { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 5px 16px; font-size: 13px; margin: 0; line-height: 1.45; }
+.od-about dt { color: var(--dash-muted); font-weight: 600; }
+.od-about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.od-about a { color: var(--dash-accent); }
+.od-about p.txt { font-size: 13px; line-height: 1.5; margin: 0; max-width: 95ch; }
+.od-about ul { font-size: 13px; line-height: 1.5; margin: 0; padding-left: 18px; max-width: 95ch; }
+.od-about li + li { margin-top: 4px; }
+@media (max-width: 560px) {
+  .od-concl-grid { grid-template-columns: minmax(0, 1fr); }
+  .od-about dl { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .od-about dd { margin-bottom: 6px; }
+}
+`;
+
+const abPct = (p) => (p == null || isNaN(p) ? "–" : Math.round(p * 100) + "%");
+const abPct1 = (p) => (p == null || isNaN(p) ? "–" : (Math.round(p * 1000) / 10).toFixed(1) + "%");
+const abInt = (n) => (n == null || isNaN(n) ? "–" : Math.round(Number(n)).toLocaleString("en-US"));
+const abBig = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(1) + " billion";
+  if (a >= 1e6) return (n / 1e6).toFixed(1) + " million";
+  return abInt(n);
+};
+const abMoney = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e8) return "$" + Math.round(n / 1e6) + "M";
+  if (a >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+  if (a >= 1000) return "$" + Math.round(n).toLocaleString("en-US");
+  return "$" + Number(n).toFixed(2);
+};
+const abMonth = (v) => {
+  if (v == null) return "–";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+};
+const abOne = (x) => (Array.isArray(x) ? x[0] : x) || null;
+const abOrdinal = (n) => {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
+// Scrolls to the About panel (an in-page link; the dashboard frame may not follow #anchors).
+function AboutLink({ children }) {
+  const go = (e) => {
+    e.preventDefault();
+    const el = document.getElementById("about-this-data");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  return <a className="od-jump" href="#about-this-data" onClick={go}>{children || "About this data"}</a>;
+}
+
+// Short caveat labels shown as chips.
+function Chips({ items }) {
+  const shown = (items || []).filter(Boolean);
+  if (!shown.length) return null;
+  return (
+    <ul className="od-chips" aria-label="Caveats">
+      {shown.map((c) => <li key={c}>{c}</li>)}
+    </ul>
+  );
+}
+
+// The caveats that apply to a dashboard's headline, as chips right under it.
+function HeadCaveat({ items }) {
+  return (
+    <div className="od-headchips"><Chips items={items} /><AboutLink>Sources and definitions</AboutLink></div>
+  );
+}
+
+// One conclusion as a chart: a short label, an optional one-line figure, the chart, and its caveat chips.
+function ConclCard({ title, stat, spec, data, chips, wide }) {
+  return (
+    <section className={"od-concl-card" + (wide ? " wide" : "")}>
+      <h3>{title}</h3>
+      {stat && <p className="stat">{stat}</p>}
+      {spec && data && data.length > 0 ? <div className="od-vega"><VegaChart spec={spec} data={data} /></div> : <p className="stat">Loading…</p>}
+      <Chips items={chips} />
+    </section>
+  );
+}
+
+// The conclusion charts at the top of a dataset's main dashboard.
+function Conclusions({ children }) {
+  return (
+    <section className="od-concl" aria-label="What the data shows">
+      <h2>What the data shows</h2>
+      <div className="od-concl-grid">{children}</div>
+      <p className="od-findnote">Computed live from the data behind this page. Sources and checks: <AboutLink />.</p>
+    </section>
+  );
+}
+
+// A neutral bar colour for the marks that are context, not the point.
+const abNeutral = (t) => (t.dark ? "#5b616b" : "#b4b8bf");
+
+// Source, coverage, rows, refresh date, licence, definitions and caveats. `live` is the page's *_about query row.
+function AboutData({ about, live }) {
+  return (
+    <section className="od-card od-about" id="about-this-data">
+      <h2>About this data</h2>
+      <p className="sub">{about.summary}{live && about.liveLine ? " " + about.liveLine(live) : ""}</p>
+      {about.sources.map((s) => (
+        <div className="od-src" key={s.name}>
+          <h3>{s.name}</h3>
+          <dl>
+            <dt>Publisher</dt><dd>{s.publisher}</dd>
+            <dt>Link</dt><dd><a href={s.url} target="_blank" rel="noopener noreferrer">{s.url}</a></dd>
+            <dt>Coverage</dt><dd>{s.coverage}</dd>
+            <dt>Rows</dt><dd>{s.rows}</dd>
+            <dt>Last refreshed</dt><dd>{s.refreshed}</dd>
+            <dt>Licence</dt><dd>{s.licence}</dd>
+          </dl>
+        </div>
+      ))}
+      <h3>How the numbers were checked</h3>
+      <p className="txt">{about.checks}</p>
+      <h3>Definitions</h3>
+      <dl>
+        {about.definitions.map(([term, text]) => (
+          <React.Fragment key={term}><dt>{term}</dt><dd>{text}</dd></React.Fragment>
+        ))}
+      </dl>
+      <h3>Caveats</h3>
+      <ul>
+        {about.caveats.map((c, i) => <li key={i}>{c}</li>)}
+      </ul>
+    </section>
+  );
+}
+
+// Source facts for this page, checked against the publisher on 7 October 2026
+// (/home/andrew/Project/work/units/ltools/outputs/2026-10-07_libraries-transit-source-check.md).
+const ABOUT = {
+  summary:
+    "Monthly ridership and service for every transit agency reporting to the Federal Transit Administration's National " +
+    "Transit Database (NTD), with agency names and urbanized-area population from the NTD agency file.",
+  liveLine: (r) =>
+    `The table behind this page has ${abInt(r.table_rows)} rows covering ${abMonth(r.first_month)} to ` +
+    `${abMonth(r.last_month)} and ${abInt(r.agency_ids)} agencies (counted live).`,
+  sources: [
+    {
+      name: "Complete Monthly Ridership (with Adjustments and Estimates)",
+      publisher: "Federal Transit Administration, National Transit Database (data.transportation.gov, dataset 8bui-9xvu)",
+      url: "https://data.transportation.gov/d/8bui-9xvu",
+      coverage: "January 2002 to August 2026, monthly. One row per agency, mode, type of service and month: trips, vehicle revenue hours and miles, peak vehicles.",
+      rows: "372,801 (the same count the publisher's API returns)",
+      refreshed: "Downloaded 6 October 2026. The publisher last updated the dataset on 1 October 2026; it adds a month roughly monthly.",
+      licence: "Public domain, U.S. Government work (stated on the dataset page).",
+    },
+    {
+      name: "2024 NTD Annual Data: Reporter Agency Information",
+      publisher: "Federal Transit Administration, National Transit Database (data.transportation.gov, dataset ccvf-fykn)",
+      url: "https://data.transportation.gov/d/ccvf-fykn",
+      coverage: "One row per reporting agency, report year 2024. Used for brand names (GoRaleigh, GoTriangle), city, and 2020 Census urbanized-area population.",
+      rows: "Joined onto the monthly rows; not a separate table here.",
+      refreshed: "Downloaded 6 October 2026 (publisher last updated 7 July 2026).",
+      licence: "Public domain, U.S. Government work (stated on the dataset page).",
+    },
+  ],
+  checks:
+    "On 7 October 2026 the copy behind this page was compared with the publisher's live API: total rows (372,801), " +
+    "calendar 2019 trips (9,695,330,196), trips from September 2025 to August 2026 (8,006,939,304) and GoRaleigh's " +
+    "June and July 2024 bus boardings (334,075 and 689,105) all match exactly, and the latest month is August 2026 in both.",
+  definitions: [
+    ["Trips", "Unlinked passenger trips: every boarding counts once, so a bus-to-train transfer is two trips."],
+    ["Service", "Vehicle revenue hours: hours vehicles spend in passenger service."],
+    ["Latest 12 months", "September 2025 to August 2026, the newest 12 months in the file."],
+    ["2019", "Calendar 2019, the last full year before the pandemic, used as the baseline."],
+    ["Recovery", "Trips in the latest 12 months divided by trips in 2019 (100% = back to 2019)."],
+    ["Riders per service hour", "Trips divided by vehicle revenue hours, counting only rows that report hours."],
+    ["Fixed route", "Every mode except demand response (dial-a-ride, paratransit, microtransit) and vanpool."],
+  ],
+  caveats: [
+    "GoRaleigh's boardings doubled from June to July 2024 while service rose about 5%: a change in how boardings are counted (inferred; the city has not confirmed the cause). It lifts GoRaleigh, the Triangle and North Carolina. The NTD does not flag breaks like this, and other agencies may have them.",
+    "Agencies that file late are understated in the latest 12 months (VIA San Antonio reported about a quarter of its usual demand-response hours for July and August 2026).",
+    "GoCary (Cary, NC) stops appearing after 2011, so the Triangle is understated throughout.",
+    "GoRaleigh moved its buses from directly operated to purchased transportation after 2019; read agency totals, not type-of-service rows.",
+    "Urbanized-area population is the 2020 Census, so trips per resident overstate use in metros that have grown since.",
+    "Demand response lumps ADA paratransit together with microtransit; the monthly file cannot separate them.",
+    "2002 service hours are incomplete and 2026 is January to August only.",
+  ],
+};
+
+// Conclusion charts for the ridership dashboard. Data from the ridership_findings*, ridership_goraleigh_monthly
+// queries (whole US and North Carolina, filters ignored), so they always show the same conclusions.
+
+// Riders vs 2019: North Carolina's regions, the Triangle with and without GoRaleigh, and the US for reference.
+function regionRows(f) {
+  if (!f) return [];
+  const reg = Object.fromEntries((f.nc || []).map((r) => [r.nc_region, r]));
+  const tri = abOne(f.triangle) || {};
+  const row = (label, v, s, kind) => (v == null ? null : { label, v, kind, lab: abPct(v) + (s != null ? `  ·  service ${abPct(s)}` : "") });
+  return [
+    row("Triangle, as reported", reg.Triangle && reg.Triangle.recovery_vs_2019, reg.Triangle && reg.Triangle.service_vs_2019, "flag"),
+    row("Triangle without GoRaleigh", tri.recovery_without_goraleigh, null, "hl"),
+    row("US", f.us_recovery, f.us_service, "ref"),
+    row("Rest of NC", reg["Rest of NC"] && reg["Rest of NC"].recovery_vs_2019, reg["Rest of NC"] && reg["Rest of NC"].service_vs_2019, "ref"),
+    row("Charlotte", reg.Charlotte && reg.Charlotte.recovery_vs_2019, reg.Charlotte && reg.Charlotte.service_vs_2019, "low"),
+  ].filter(Boolean);
+}
+
+const RY = (narrow) => ({ field: "label", type: "nominal", sort: null, axis: { title: null, labelLimit: narrow ? 120 : 190, labelFontSize: 12 } });
+
+function regionSpec(t, narrow) {
+  const n = abNeutral(t);
+  return {
+    config: vegaConfig(t),
+    height: 5 * (narrow ? 34 : 36),
+    layer: [
+      { mark: { type: "bar", cornerRadiusEnd: 3, height: { band: 0.62 } },
+        encoding: {
+          y: RY(narrow),
+          x: { field: "v", type: "quantitative", scale: { domain: [0, 1.45] }, axis: { title: "Riders, latest 12 months, as a share of 2019", format: ".0%", values: [0, 0.5, 1] } },
+          color: { field: "kind", type: "nominal", legend: null,
+            scale: { domain: ["hl", "flag", "ref", "low"], range: [t.pal.up, t.dark ? "#2a4f7d" : "#a9c7ee", n, t.pal.down] } },
+          tooltip: [{ field: "label", title: "Area" }, { field: "v", type: "quantitative", title: "Riders vs 2019", format: ".0%" }],
+        } },
+      { mark: { type: "rule", color: t.muted, strokeDash: [3, 3] }, encoding: { x: { datum: 1 } } },
+      { mark: { type: "text", align: "left", dx: 5, fontSize: 12, fontWeight: 600, color: t.fg },
+        encoding: { y: RY(narrow), x: { field: "v", type: "quantitative" }, text: { field: "lab" } } },
+    ],
+  };
+}
+
+// GoRaleigh fixed-route boardings per service hour by month, with the July 2024 break marked.
+const abIso = (v) => (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10);
+
+function goraleighRows(rows) {
+  return (rows || []).filter((r) => r.revenue_hours > 0).map((r) => ({
+    month: abIso(r.report_month),
+    tph: r.trips_total / r.revenue_hours,
+    trips: r.trips_total,
+    hours: r.revenue_hours,
+    mark: ["2024-06-01", "2024-07-01"].includes(abIso(r.report_month)),
+    brk: abIso(r.report_month) === "2024-07-01",
+  }));
+}
+
+function goraleighSpec(t, narrow) {
+  const x = { field: "month", type: "temporal", axis: { title: null, format: "%Y", tickCount: narrow ? 4 : 9, labelAngle: 0 } };
+  return {
+    config: vegaConfig(t),
+    height: narrow ? 200 : 230,
+    layer: [
+      { transform: [{ filter: "datum.brk" }], mark: { type: "rule", color: t.pal.down, strokeDash: [4, 3], strokeWidth: 1.5 }, encoding: { x } },
+      { transform: [{ filter: "datum.brk" }], mark: { type: "text", align: "right", baseline: "top", dx: -6, dy: 2, fontSize: 12, fontWeight: 700, color: t.pal.down },
+        encoding: { x, y: { datum: 33, type: "quantitative" }, text: { value: "Counting change, July 2024" } } },
+      { mark: { type: "line", strokeWidth: 2, interpolate: "monotone", color: t.pal.up },
+        encoding: {
+          x, y: { field: "tph", type: "quantitative", scale: { domain: [0, 34] }, axis: { title: "Boardings per service hour", tickCount: 4 } },
+          tooltip: [
+            { field: "month", type: "temporal", title: "Month", format: "%b %Y" },
+            { field: "tph", type: "quantitative", title: "Boardings per hour", format: ".1f" },
+            { field: "trips", type: "quantitative", title: "Boardings", format: "," },
+            { field: "hours", type: "quantitative", title: "Service hours", format: "," },
+          ],
+        } },
+      { transform: [{ filter: "datum.mark" }], mark: { type: "point", filled: true, size: 60, color: t.pal.up }, encoding: { x, y: { field: "tph", type: "quantitative" } } },
+      { transform: [{ filter: "datum.mark" }, { calculate: "format(datum.tph, '.1f') + ' (' + format(datum.trips, ',') + ' boardings)'", as: "lab" }],
+        mark: { type: "text", align: "left", dx: 8, fontSize: 11, fontWeight: 600, color: t.fg },
+        encoding: { x, y: { field: "tph", type: "quantitative" }, text: { field: "lab" } } },
+    ],
+  };
+}
+
+// Average recovery of agencies that restored 2019 service vs those that did not, by size band.
+function restoreRows(bands) {
+  return (bands || []).flatMap((b) => {
+    const band = String(b.size_band).replace(/^\d\s*/, "");
+    return [
+      { band, order: b.size_band, group: "Restored 2019 service", v: b.recovery_if_restored, n: b.agencies_restored },
+      { band, order: b.size_band, group: "Did not", v: b.recovery_if_not_restored, n: b.agencies_not_restored },
+    ].filter((r) => r.v != null);
+  });
+}
+
+function restoreSpec(t, narrow) {
+  const y = { field: "band", type: "nominal", sort: null, axis: { title: null, labelFontSize: 12 } };
+  const yOffset = { field: "group", sort: ["Restored 2019 service", "Did not"] };
+  return {
+    config: vegaConfig(t),
+    height: 5 * (narrow ? 44 : 46),
+    layer: [
+      { mark: { type: "bar", cornerRadiusEnd: 3 },
+        encoding: {
+          y, yOffset,
+          x: { field: "v", type: "quantitative", scale: { domain: [0, 1.25] }, axis: { title: "Average agency's riders vs 2019", format: ".0%", values: [0, 0.5, 1] } },
+          color: { field: "group", type: "nominal", scale: { domain: ["Restored 2019 service", "Did not"], range: [t.pal.up, abNeutral(t)] },
+            legend: { orient: "top", title: null, direction: "horizontal", symbolType: "square" } },
+          tooltip: [{ field: "band", title: "Size" }, { field: "group", title: "Service" }, { field: "v", type: "quantitative", title: "Riders vs 2019", format: ".0%" }, { field: "n", title: "Agencies" }],
+        } },
+      { mark: { type: "rule", color: t.muted, strokeDash: [3, 3] }, encoding: { x: { datum: 1 } } },
+      { mark: { type: "text", align: "left", dx: 4, fontSize: 11, fontWeight: 600, color: t.fg },
+        encoding: { y, yOffset, x: { field: "v", type: "quantitative" }, text: { field: "v", type: "quantitative", format: ".0%" } } },
+    ],
+  };
+}
+
+function RidershipConclusions({ t, narrow, f, bands, gr }) {
+  const regions = React.useMemo(() => regionRows(f), [f]);
+  const gRows = React.useMemo(() => goraleighRows(gr), [gr]);
+  const rRows = React.useMemo(() => restoreRows(bands), [bands]);
+  const regSpec = React.useMemo(() => regionSpec(t, narrow), [t, narrow]);
+  const gSpec = React.useMemo(() => goraleighSpec(t, narrow), [t, narrow]);
+  const rSpec = React.useMemo(() => restoreSpec(t, narrow), [t, narrow]);
+  const g = abOne(f && f.goraleigh) || {};
+  return (
+    <Conclusions>
+      <ConclCard
+        title="North Carolina riders vs 2019"
+        stat="Latest 12 months (Sep 2025 to Aug 2026) as a share of calendar 2019"
+        spec={regSpec} data={regions}
+        chips={["Counting method changed July 2024 (GoRaleigh)", "GoCary missing after 2011", "Charlotte = NC agencies only", "Late filers understated"]}
+      />
+      <ConclCard
+        title="Restored service, riders came back"
+        stat="All US agencies with 2019 trips, by size"
+        spec={rSpec} data={rRows}
+        chips={["Correlation, not cause", "Agency averages; agencies above 2x of 2019 left out", "Does not account for fare changes"]}
+      />
+      <ConclCard
+        wide
+        title={`GoRaleigh "${abPct(g.recovery_vs_2019)} of 2019" is a counting change`}
+        stat={g.old_counting_vs_2019 != null ? `Old counting (Jul 2023 to Jun 2024): ${abPct(g.old_counting_vs_2019)} of 2019 fixed-route riders` : null}
+        spec={gSpec} data={gRows}
+        chips={["Fixed route only", "Cause inferred, not confirmed by the city", "Fares resumed 1 Sep 2024: fare effect not visible"]}
+      />
+    </Conclusions>
+  );
+}
+
 export default function Dashboard({ dashboard, givens }) {
   const t0 = useTheme();
   const t = React.useMemo(() => ({ ...t0, pal: { ...t0.pal, alt: t0.dark ? "#f0a030" : "#c46a00" } }), [t0]);
   const narrow = useNarrow();
   const kpiQ = useQuery({ query: "ridership", givens });
+  const aboutQ = useQuery({ query: "ridership_about", givens });
+  const findQ = useQuery({ query: "ridership_findings", givens });
+  const findSvcQ = useQuery({ query: "ridership_findings_service", givens });
+  const grQ = useQuery({ query: "ridership_goraleigh_monthly", givens });
   const statesQ = useQuery({ query: "ridership_states", givens });
   const trendQ = useQuery({ query: "ridership_trend", givens });
   const modesQ = useQuery({ query: "ridership_modes", givens });
@@ -516,10 +876,12 @@ export default function Dashboard({ dashboard, givens }) {
 
   return (
     <div className="od">
-      <style>{CSS}</style>
+      <style>{CSS + CSS_ABOUT}</style>
       <h1>{title}</h1>
+      <HeadCaveat items={["Latest 12 months = Sep 2025 to Aug 2026", "Late filers understated", "A transfer counts as two trips", k.recovery_without_goraleigh != null && k.recovery_vs_2019 != null && Math.abs(k.recovery_vs_2019 - k.recovery_without_goraleigh) >= 0.01 ? `Counting method changed July 2024 (GoRaleigh): ${abPct(k.recovery_without_goraleigh)} without it` : null]} />
       <Controls />
       {error && <div className="err">{String(error)}</div>}
+      <RidershipConclusions t={t} narrow={narrow} f={findQ.rows[0]} bands={findSvcQ.rows} gr={grQ.rows} />
       <div className={busy ? "loading" : ""}>
         <div className="od-kpis">
           <div className="od-kpi hot">
@@ -588,6 +950,7 @@ export default function Dashboard({ dashboard, givens }) {
           </div>
         </Card>
       </div>
+      <AboutData about={ABOUT} live={aboutQ.rows[0]} />
       <p className="foot">
         Source: FTA National Transit Database, Complete Monthly Ridership (with Adjustments and Estimates), January 2002
         to August 2026, public domain. Trips are unlinked passenger trips (each boarding counts once). Latest 12 months =

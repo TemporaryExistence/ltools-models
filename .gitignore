@@ -5,3 +5,5 @@ malloy-config-local.json
 /data/
 # Data now served from https://tabblabs.net/datasets/ (source: units/ltools/public-data); local copies kept, not published
 datasets/*/data/
+# Never let publish --repo archive local secrets (it runs git add -A; review finding H1)
+.env*

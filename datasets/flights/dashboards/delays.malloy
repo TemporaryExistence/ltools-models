@@ -4,7 +4,7 @@ import "../summaries.malloy"
 
 #" Who runs late, when, and why: every US domestic flight, May-July 2026 (BTS on-time data). Reads the small
 #" summary files (summaries.malloy); the numbers match the `flights` source, which stays for exploration.
-# artifact { title="One flight in four arrives late, and the odds climb all day" } dashboard { columns=6 }
+# artifact { title="Late arrivals, cancellations and delay causes" } dashboard { columns=6 }
 query: delays is delays_summary -> {
   where:
     airline ~ $AIRLINE,

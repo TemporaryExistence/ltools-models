@@ -218,3 +218,15 @@ query: econtent_left_out is econtent_candidates -> {
   group_by: benchmark_status
   aggregate: candidate_systems
 }
+
+// ---- "About this data" panel (added 2026-10-07): rows and fiscal years in the multi-year table, filters ignored. ----
+
+#" About this data: rows and fiscal years in library_systems_by_year (whole table, filters ignored).
+query: econtent_about is library_years -> {
+  aggregate:
+    table_rows is count()
+    first_fy is fiscal_year.min()
+    last_fy is fiscal_year.max()
+    systems_fy2024 is systems { where: fiscal_year = 2024 }
+    borrowing_unreported_fy2024 is systems { where: fiscal_year = 2024 and circulation is null }
+}

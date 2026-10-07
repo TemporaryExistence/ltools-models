@@ -68,6 +68,10 @@ source: delays_summary is motherduck.sql("""
     #" on-time rate = 1 - late_rate.
     # percent
     late_rate is n_late.sum() / n_operated.sum()
+    #" Share of operated flights arriving less than 15 minutes after schedule (1 - late_rate; the BTS on-time rate).
+    #" Cancelled and diverted flights are not in it: read it next to cancel_rate.
+    # percent
+    on_time_rate is 1 - late_rate
     #" Average arrival delay in minutes (operated flights; early arrivals count as negative, so it can look small).
     avg_arrival_delay is arr_delay_min_sum.sum() / n_arr_delay.sum()
     #" Delay hours BTS attributes to the airline itself (crew, maintenance, cleaning, fuelling, baggage).
@@ -130,6 +134,46 @@ source: delays_summary is motherduck.sql("""
     order_by: size_band
   }
 
+  #" PLAYBOOK "Which airlines have the fewest delays?" Airlines with 100+ scheduled flights ranked by on-time arrival
+  #" (fewest arrivals 15+ minutes late first), ranking first, with cancel_rate alongside because a cancelled flight is
+  #" not counted as late (Republic ranks near the top on lateness but cancelled 4.8%). Nationally May-July 2026:
+  #" Envoy 81.0% on time, Republic 80.6%, Alaska 80.1%, Delta 79.5%; Southwest last of the big airlines at 69.2%.
+  #" Regional airlines (Envoy, Republic, SkyWest, PSA, Endeavor) rank under their own names, not the American Eagle /
+  #" United Express / Delta Connection brand on the ticket. Spirit reported only 354 flights. For one airport filter the
+  #" SOURCE first (a + { where } on this multi-stage view would filter the last stage):
+  #" run: delays_summary extend { where: origin = 'RDU' } -> airlines_ranked_by_on_time. To shorten it, keep the order:
+  #" + { order_by: ranking limit: 5 }. Who acts: travellers and corporate travel managers choosing an airline.
+  #" Caveats: one summer season, not adjusted for weather, airlines fly different routes and hours (correlation, not cause).
+  view: airlines_ranked_by_on_time is {
+    group_by: airline
+    aggregate: flight_count, on_time_rate, late_rate, cancel_rate
+    having: flight_count >= 100
+  } -> {
+    group_by: airline, flight_count, on_time_rate, late_rate, cancel_rate
+    calculate: ranking is rank()
+    order_by: late_rate
+  } -> {
+    select: ranking, airline, flight_count, on_time_rate, late_rate, cancel_rate
+    order_by: ranking
+  }
+
+  #" PLAYBOOK "When should I fly from <airport> (on <airline>) to avoid a delay?" Late rate by scheduled departure hour
+  #" (local), hours with 100+ operated flights. Filter first, e.g.
+  #" run: delays_summary -> best_time_to_fly_by_hour + { where: origin = 'RDU', airline = 'Delta' }. Nationally May-July
+  #" 2026: 5am 7.6% late, 6am 8.9%, rising to about 38% for departures 6-9pm. At RDU: 5am 7.0%, 6am 9.9% vs 5pm 40.2%, 8pm 45.1%. This
+  #" is the best time to FLY: BTS records no booking dates, so it says nothing about when to buy a ticket. Caveats: one
+  #" summer, not adjusted for weather, correlation not cause (evening flights inherit the day's delays).
+  view: best_time_to_fly_by_hour is {
+    group_by: dep_hour
+    aggregate:
+      flight_count
+      operated_flights is n_operated.sum()
+      late_rate
+      cancel_rate
+    having: n_operated.sum() >= 100
+    order_by: dep_hour
+  }
+
   #" PLAYBOOK "What causes delays, and how much is a late-arriving aircraft?" Delay hours by cause and the
   #" late-aircraft share, nationally and by airport size band. Who acts: airline operations (late aircraft and
   #" airline causes are theirs to cut; air-traffic and weather mostly are not). A large late-aircraft share means
@@ -175,6 +219,8 @@ source: daily_summary is motherduck.sql("""
 
   #" PLAYBOOK "Which day of the week is most reliable to fly?" Late and cancel rates by weekday. Filter to an airport
   #" with + { where: origin = 'RDU' }. Who acts: travellers and corporate travel managers choosing a travel day.
+  #" Nationally May-July 2026: Tuesday and Saturday 22.2% late, Sunday 27.4% and Monday 27.2% worst. Caveat: each
+  #" weekday occurs only 13 times (Friday 14), so a few stormy days move a day's rate; the gaps are smaller than by hour.
   view: best_day_of_week is {
     group_by: weekday, weekday_number
     aggregate:

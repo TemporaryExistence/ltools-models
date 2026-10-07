@@ -401,10 +401,232 @@ function momentumSpec(t, narrow, n) {
 const yearLabel = (r) => `${r.report_year} · ${share(r.general_public / (r.general_public + r.paratransit_and_sponsored))}`;
 const shortName = (s) => String(s || "").replace(/ \([^)]*\)$/, "");
 
+// ---- Conclusion charts, caveat chips and "About this data" (added 2026-10-07). The same block sits in every
+// libraries and transit dashboard: a component can import only React and @malloyyo/dashboard, so it is repeated. ----
+
+const CSS_ABOUT = `
+.od-concl { margin: 16px 0 26px; }
+.od-concl > h2 { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--dash-accent); margin: 0 0 10px; }
+.od-concl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.od-concl-card { border: 1px solid var(--dash-border); border-radius: 12px; padding: 14px 16px 12px; min-width: 0; }
+.od-concl-card.wide { grid-column: 1 / -1; }
+.od-concl-card h3 { font-size: 15px; margin: 0 0 2px; line-height: 1.3; }
+.od-concl-card .stat { font-size: 13px; color: var(--dash-muted); margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.od-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; }
+.od-chips li { font-size: 12px; line-height: 1.3; color: var(--dash-muted); border: 1px solid var(--dash-border); border-radius: 999px; padding: 3px 9px; }
+.od-chips li::before { content: "⚠ "; color: var(--dash-muted); }
+.od-headchips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: -6px 0 16px; }
+.od-headchips .od-chips { margin: 0; }
+.od-headchips .od-jump { font-size: 12px; }
+.od-findnote { font-size: 12px; color: var(--dash-muted); margin: 8px 0 0; }
+.od a.od-jump { color: var(--dash-accent); cursor: pointer; text-decoration: underline; white-space: nowrap; }
+.od-about h3 { font-size: 14px; margin: 18px 0 6px; }
+.od-about .od-src { border-top: 1px solid var(--dash-border); padding-top: 10px; margin-top: 12px; }
+.od-about .od-src h3 { margin-top: 0; }
+.od-about dl { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 5px 16px; font-size: 13px; margin: 0; line-height: 1.45; }
+.od-about dt { color: var(--dash-muted); font-weight: 600; }
+.od-about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.od-about a { color: var(--dash-accent); }
+.od-about p.txt { font-size: 13px; line-height: 1.5; margin: 0; max-width: 95ch; }
+.od-about ul { font-size: 13px; line-height: 1.5; margin: 0; padding-left: 18px; max-width: 95ch; }
+.od-about li + li { margin-top: 4px; }
+@media (max-width: 560px) {
+  .od-concl-grid { grid-template-columns: minmax(0, 1fr); }
+  .od-about dl { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .od-about dd { margin-bottom: 6px; }
+}
+`;
+
+const abPct = (p) => (p == null || isNaN(p) ? "–" : Math.round(p * 100) + "%");
+const abPct1 = (p) => (p == null || isNaN(p) ? "–" : (Math.round(p * 1000) / 10).toFixed(1) + "%");
+const abInt = (n) => (n == null || isNaN(n) ? "–" : Math.round(Number(n)).toLocaleString("en-US"));
+const abBig = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(1) + " billion";
+  if (a >= 1e6) return (n / 1e6).toFixed(1) + " million";
+  return abInt(n);
+};
+const abMoney = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e8) return "$" + Math.round(n / 1e6) + "M";
+  if (a >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+  if (a >= 1000) return "$" + Math.round(n).toLocaleString("en-US");
+  return "$" + Number(n).toFixed(2);
+};
+const abMonth = (v) => {
+  if (v == null) return "–";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+};
+const abOne = (x) => (Array.isArray(x) ? x[0] : x) || null;
+const abOrdinal = (n) => {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
+// Scrolls to the About panel (an in-page link; the dashboard frame may not follow #anchors).
+function AboutLink({ children }) {
+  const go = (e) => {
+    e.preventDefault();
+    const el = document.getElementById("about-this-data");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  return <a className="od-jump" href="#about-this-data" onClick={go}>{children || "About this data"}</a>;
+}
+
+// Short caveat labels shown as chips.
+function Chips({ items }) {
+  const shown = (items || []).filter(Boolean);
+  if (!shown.length) return null;
+  return (
+    <ul className="od-chips" aria-label="Caveats">
+      {shown.map((c) => <li key={c}>{c}</li>)}
+    </ul>
+  );
+}
+
+// The caveats that apply to a dashboard's headline, as chips right under it.
+function HeadCaveat({ items }) {
+  return (
+    <div className="od-headchips"><Chips items={items} /><AboutLink>Sources and definitions</AboutLink></div>
+  );
+}
+
+// One conclusion as a chart: a short label, an optional one-line figure, the chart, and its caveat chips.
+function ConclCard({ title, stat, spec, data, chips, wide }) {
+  return (
+    <section className={"od-concl-card" + (wide ? " wide" : "")}>
+      <h3>{title}</h3>
+      {stat && <p className="stat">{stat}</p>}
+      {spec && data && data.length > 0 ? <div className="od-vega"><VegaChart spec={spec} data={data} /></div> : <p className="stat">Loading…</p>}
+      <Chips items={chips} />
+    </section>
+  );
+}
+
+// The conclusion charts at the top of a dataset's main dashboard.
+function Conclusions({ children }) {
+  return (
+    <section className="od-concl" aria-label="What the data shows">
+      <h2>What the data shows</h2>
+      <div className="od-concl-grid">{children}</div>
+      <p className="od-findnote">Computed live from the data behind this page. Sources and checks: <AboutLink />.</p>
+    </section>
+  );
+}
+
+// A neutral bar colour for the marks that are context, not the point.
+const abNeutral = (t) => (t.dark ? "#5b616b" : "#b4b8bf");
+
+// Source, coverage, rows, refresh date, licence, definitions and caveats. `live` is the page's *_about query row.
+function AboutData({ about, live }) {
+  return (
+    <section className="od-card od-about" id="about-this-data">
+      <h2>About this data</h2>
+      <p className="sub">{about.summary}{live && about.liveLine ? " " + about.liveLine(live) : ""}</p>
+      {about.sources.map((s) => (
+        <div className="od-src" key={s.name}>
+          <h3>{s.name}</h3>
+          <dl>
+            <dt>Publisher</dt><dd>{s.publisher}</dd>
+            <dt>Link</dt><dd><a href={s.url} target="_blank" rel="noopener noreferrer">{s.url}</a></dd>
+            <dt>Coverage</dt><dd>{s.coverage}</dd>
+            <dt>Rows</dt><dd>{s.rows}</dd>
+            <dt>Last refreshed</dt><dd>{s.refreshed}</dd>
+            <dt>Licence</dt><dd>{s.licence}</dd>
+          </dl>
+        </div>
+      ))}
+      <h3>How the numbers were checked</h3>
+      <p className="txt">{about.checks}</p>
+      <h3>Definitions</h3>
+      <dl>
+        {about.definitions.map(([term, text]) => (
+          <React.Fragment key={term}><dt>{term}</dt><dd>{text}</dd></React.Fragment>
+        ))}
+      </dl>
+      <h3>Caveats</h3>
+      <ul>
+        {about.caveats.map((c, i) => <li key={i}>{c}</li>)}
+      </ul>
+    </section>
+  );
+}
+
+// Source facts for this page, checked against the publisher on 7 October 2026
+// (/home/andrew/Project/work/units/ltools/outputs/2026-10-07_libraries-transit-source-check.md).
+const ABOUT = {
+  summary:
+    "On-demand (demand-response) service by agency, type of service and report year, 2022 to 2024, from the National " +
+    "Transit Database annual tables, split into ADA paratransit and general-public on-demand service.",
+  liveLine: (r) =>
+    `The table behind this page has ${abInt(r.table_rows)} rows, report years ${r.first_year} to ${r.last_year}, ` +
+    `${abInt(r.agency_ids)} agencies (counted live).`,
+  sources: [
+    {
+      name: "2022 - 2024 NTD Annual Data: Service (by Mode and Time Period)",
+      publisher: "Federal Transit Administration, National Transit Database (data.transportation.gov, dataset wwdp-t4re)",
+      url: "https://data.transportation.gov/d/wwdp-t4re",
+      coverage: "Demand-response rows, annual totals, report years 2022 to 2024: trips, ADA-related trips, sponsored trips, revenue hours and miles.",
+      rows: "6,108 (2,010 in 2022, 2,022 in 2023, 2,076 in 2024; the same counts the publisher's API returns)",
+      refreshed: "Downloaded 6 October 2026 (publisher last updated 7 July 2026).",
+      licence: "Public domain, U.S. Government work (stated on the dataset page).",
+    },
+    {
+      name: "2022 - 2024 NTD Annual Data: Metrics",
+      publisher: "Federal Transit Administration, National Transit Database (dataset ekg5-frzt)",
+      url: "https://data.transportation.gov/d/ekg5-frzt",
+      coverage: "Total operating expenses for each agency's demand-response service, 2022 to 2024.",
+      rows: "Joined onto the service rows.",
+      refreshed: "Downloaded 6 October 2026 (publisher last updated 7 July 2026).",
+      licence: "Public domain, U.S. Government work (stated on the dataset page).",
+    },
+    {
+      name: "2024 NTD Demand Response Geographic Area Coverage (Service Schedules; Passenger Eligibility and Fares)",
+      publisher: "Federal Transit Administration, National Transit Database (datasets uk25-sge7 and i3pw-uwab)",
+      url: "https://data.transportation.gov/d/uk25-sge7",
+      coverage: "2024 only: whether each service is ADA-only or open to the general public, and whether riders must be eligible (i3pw-uwab: https://data.transportation.gov/d/i3pw-uwab).",
+      rows: "Joined onto the service rows.",
+      refreshed: "Downloaded 6 October 2026 (publisher last updated 3 November 2025 and 30 September 2025).",
+      licence: "Public domain, U.S. Government work (stated on each dataset page).",
+    },
+    {
+      name: "Complete Monthly Ridership (with Adjustments and Estimates)",
+      publisher: "Federal Transit Administration, National Transit Database (dataset 8bui-9xvu)",
+      url: "https://data.transportation.gov/d/8bui-9xvu",
+      coverage: "Used only for each agency's on-demand hours in the latest 12 months (September 2025 to August 2026).",
+      rows: "372,801 monthly rows (matches the publisher's API).",
+      refreshed: "Downloaded 6 October 2026 (publisher last updated 1 October 2026).",
+      licence: "Public domain, U.S. Government work.",
+    },
+  ],
+  checks:
+    "On 7 October 2026 the copy behind this page was compared with the publisher's live API: rows per report year " +
+    "(2,010, 2,022, 2,076) and demand-response trips per year (113,022,304; 130,039,169; 139,745,774) match exactly.",
+  definitions: [
+    ["On-demand", "The NTD mode 'demand response': dial-a-ride, ADA paratransit and microtransit."],
+    ["General public", "Trips that are neither ADA-related nor paid for by a third party (sponsored)."],
+    ["ADA trips", "Trips the agency reports as ADA complementary paratransit."],
+    ["Spend", "Total operating expenses for the service, contractor fees included. Not software revenue."],
+    ["Hours", "Vehicle revenue hours. General-public hours and spend are each agency's totals split by its general-public trip share."],
+  ],
+  caveats: [
+    "The NTD does not separate app-based microtransit from older general-public dial-a-ride, so 'general public' includes both.",
+    "General-public hours and spend are estimates (split by trip share), not reported figures.",
+    "Some agencies mark every on-demand trip as ADA-related while running microtransit (Trinity Metro, Fort Worth), so they are missing.",
+    "Some agencies re-flag trips between ADA and general public from year to year (Stark Area RTA: 93% ADA in 2022, 11% in 2024); growth is capped at each agency's total on-demand growth, so it is a conservative figure.",
+    "The 'since 2024' check uses the monthly file, which includes ADA paratransit; VIA (San Antonio) is missing most of July and August 2026.",
+  ],
+};
+
 export default function Dashboard({ dashboard, givens }) {
   const t = useTheme();
   const narrow = useNarrow();
   const main = useQuery({ query: "ondemand_prospects", givens });
+  const aboutQ = useQuery({ query: "ondemand_about", givens });
   const moneyQ = useQuery({ query: "ondemand_money", givens });
   const mix = useQuery({ query: "ondemand_mix_by_year", givens });
   const points = useQuery({ query: "ondemand_agency_points", givens });
@@ -450,8 +672,9 @@ export default function Dashboard({ dashboard, givens }) {
 
   return (
     <div className="od">
-      <style>{CSS}</style>
+      <style>{CSS + CSS_ABOUT}</style>
       <h1>{title}</h1>
+      <HeadCaveat items={["Estimates: hours and spend split by trip share", "Microtransit and dial-a-ride not separable in NTD", "Spend = operating cost, not software revenue", "Report years 2022 to 2024"]} />
       <Controls />
       {error && <div className="err">{String(error)}</div>}
       <div className={busy ? "loading" : ""}>
@@ -561,6 +784,7 @@ export default function Dashboard({ dashboard, givens }) {
           </div>
         </Card>
       </div>
+      <AboutData about={ABOUT} live={aboutQ.rows[0]} />
       <p className="foot">
         Source: FTA National Transit Database annual data, report years 2022 to 2024 (Service and Metrics tables,
         demand-response mode), public domain. General public = trips that are neither ADA-related nor sponsored by a

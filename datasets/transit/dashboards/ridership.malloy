@@ -14,6 +14,9 @@ query: ridership is transit -> {
   aggregate:
     trips_latest_12m, trips_2019, yoy_change, recovery_vs_2019, service_vs_2019, trips_per_hour_12m,
     trips_per_hour_2019, agencies_12m
+    // Same recovery with GoRaleigh (NTD 40007) left out, for the caveat under the headline (its July 2024 counting change).
+    # percent
+    recovery_without_goraleigh is trips_latest_12m { where: ntd_id != '40007' } / nullif(trips_2019 { where: ntd_id != '40007' }, 0)
 }
 
 #" Map: every state's recovery (latest 12 months of trips as a share of 2019). Ignores the State and Agency
@@ -51,4 +54,60 @@ query: ridership_agencies is transit -> top_agencies + {
     agency_name ~ $AGENCY,
     mode_group ~ $MODE_GROUP
   aggregate: trips_2019, service_vs_2019
+}
+
+// ---- Conclusion charts and "About this data" (added 2026-10-07). Fixed scope: these ignore the filters so the
+// conclusion charts always show the same thing, computed live from the table. ----
+
+#" Conclusion chart: the US total, North Carolina by region, the Triangle without GoRaleigh, and GoRaleigh's July 2024 counting
+#" break (fixed-route boardings June vs July 2024, and the last year of the old counting against 2019).
+query: ridership_findings is transit -> {
+  aggregate:
+    us_trips_12m is trips_latest_12m
+    us_recovery is recovery_vs_2019
+    us_service is service_vs_2019
+  nest:
+    nc is {
+      where: state = 'NC'
+      group_by: nc_region
+      aggregate: recovery_vs_2019, service_vs_2019
+      order_by: nc_region
+    }
+    triangle is {
+      where: peer_metro = 'Triangle (Raleigh + Durham)'
+      aggregate:
+        recovery_vs_2019
+        recovery_without_goraleigh is trips_latest_12m { where: ntd_id != '40007' } / nullif(trips_2019 { where: ntd_id != '40007' }, 0)
+    }
+    goraleigh is {
+      where: ntd_id = '40007'
+      aggregate:
+        recovery_vs_2019
+        trips_jun_2024 is trips_total { where: is_fixed_route and report_month = @2024-06-01 }
+        trips_jul_2024 is trips_total { where: is_fixed_route and report_month = @2024-07-01 }
+        hours_jun_2024 is revenue_hours { where: is_fixed_route and report_month = @2024-06-01 }
+        hours_jul_2024 is revenue_hours { where: is_fixed_route and report_month = @2024-07-01 }
+        old_counting_vs_2019 is trips_total { where: is_fixed_route and report_month >= @2023-07-01 and report_month < @2024-07-01 } / nullif(trips_total { where: is_fixed_route and report_month ? @2019 }, 0)
+    }
+}
+
+#" Conclusion chart: average recovery of agencies that restored 2019 service vs those that did not, by size band (all US).
+query: ridership_findings_service is transit -> does_restoring_service_bring_riders_back
+
+#" Conclusion chart: GoRaleigh fixed-route boardings and service hours by month since January 2018 (the July 2024
+#" counting break shows as boardings per hour doubling in one month).
+query: ridership_goraleigh_monthly is transit -> {
+  where: ntd_id = '40007' and is_fixed_route and report_month >= @2018-01-01
+  group_by: report_month
+  aggregate: trips_total, revenue_hours
+  order_by: report_month
+}
+
+#" About this data: rows and months in the table the dashboard reads (whole table, filters ignored).
+query: ridership_about is transit -> {
+  aggregate:
+    table_rows is count()
+    first_month is report_month.min()
+    last_month is report_month.max()
+    agency_ids is count(ntd_id)
 }

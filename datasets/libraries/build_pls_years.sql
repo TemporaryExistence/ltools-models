@@ -2,7 +2,7 @@
 --
 -- Sources (all US Government public data; IMLS and Census data are public domain, https://www.usa.gov/government-works):
 --   IMLS Public Libraries Survey, administrative-entity (AE) and outlet files, FY2018 - FY2024
---     https://www.imls.gov/research-evaluation/data-collection/public-libraries-survey
+--     https://www.imls.gov/research-evaluation/surveys/public-libraries-survey-pls
 --     FY2018 https://www.imls.gov/sites/default/files/pls_fy2018_data_files_csv.zip
 --     FY2019 https://www.imls.gov/sites/default/files/2021-05/pls_fy2019_csv.zip
 --     FY2020 https://www.imls.gov/sites/default/files/2022-07/pls_fy2020_csv.zip

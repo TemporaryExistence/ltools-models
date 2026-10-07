@@ -72,3 +72,15 @@ query: systems_by_size_spread is library_years -> {
     c90 is cpv.min() { where: cpos >= band_count * 0.9 }
   order_by: band
 }
+
+// ---- "About this data" panel (added 2026-10-07): rows and fiscal years in the multi-year table, filters ignored. ----
+
+#" About this data: rows and fiscal years in library_systems_by_year (whole table, filters ignored).
+query: size_about is library_years -> {
+  aggregate:
+    table_rows is count()
+    first_fy is fiscal_year.min()
+    last_fy is fiscal_year.max()
+    systems_fy2024 is systems { where: fiscal_year = 2024 }
+    borrowing_unreported_fy2024 is systems { where: fiscal_year = 2024 and circulation is null }
+}
