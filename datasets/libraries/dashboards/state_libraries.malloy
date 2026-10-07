@@ -2,7 +2,7 @@
 import "../libraries.malloy"
 
 #" How a state's public libraries are used: visits, borrowing, digital share and cost, by system and setting.
-# artifact { title="Public Libraries by State" } dashboard { columns=6 }
+# artifact { title="North Carolina libraries draw 25% fewer visits per person than the US, on 41% less spend" } dashboard { columns=6 }
 query: state_libraries is library_systems -> {
   where: state ~ $STATE
   # colspan=1
@@ -12,4 +12,28 @@ query: state_libraries is library_systems -> {
     busiest_systems
     most_used_per_person
     by_setting
+}
+
+// ---- Presentation queries for state_libraries.jsx (same measures, no model change) ----
+
+#" Which state is picked (one row when a single state is chosen).
+query: state_libraries_picked is library_systems -> {
+  where: state ~ $STATE
+  group_by: state
+}
+
+#" Chart: every state's visits, borrowing, digital share and spend per person, FY2023 (library_systems -> by_state), for
+#" the maps and the state's rank.
+query: state_libraries_map is library_systems -> by_state
+
+#" Chart: visits and spend per person each fiscal year FY2018 to FY2024, the picked state against the whole US
+#" (library_years, every system, dollars as reported).
+query: state_libraries_trend is library_years -> {
+  group_by: fiscal_year
+  aggregate:
+    state_visits_per_capita is visits_per_capita { where: state ~ $STATE }
+    us_visits_per_capita is visits_per_capita
+    state_spend_per_capita is spend_per_capita { where: state ~ $STATE }
+    us_spend_per_capita is spend_per_capita
+  order_by: fiscal_year
 }

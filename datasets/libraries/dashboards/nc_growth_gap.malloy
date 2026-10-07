@@ -2,7 +2,7 @@
 import "../libraries.malloy"
 
 #" Is a state's population growth showing up in how people use its public libraries? County population growth 2020 - 2024 next to library visits and spend per resident, FY2019 - FY2024. Regional systems are shared across their counties by population.
-# artifact { title="Library Growth Gap" givens { STATE="NC" } } dashboard { columns=6 }
+# artifact { title="North Carolina grew 5.8% since 2020; library visits per resident are still 33% below FY2019" givens { STATE="NC" } } dashboard { columns=6 }
 query: nc_growth_gap is county_libraries -> {
   where: state ~ $STATE
   # colspan=1
@@ -18,4 +18,27 @@ query: nc_growth_gap is county_libraries -> {
     growth_gap
     visits_per_resident_by_county
     regional_systems
+}
+
+// ---- Presentation queries for nc_growth_gap.jsx (same measures, no model change) ----
+
+#" Chart: one row per county with a Census FIPS code (for the map): population growth 2020 - 2024, residents, visits
+#" per resident FY2019 and FY2024 and spend per resident FY2024 (county_libraries measures).
+query: nc_growth_gap_counties is county_libraries -> {
+  where: state ~ $STATE and county_fips is not null
+  group_by: state, county_fips, county_name
+  aggregate:
+    population_growth_2020_2024
+    residents_2024
+    visits_per_resident_fy2019
+    visits_per_resident_fy2024
+    visits_per_resident_change
+    spend_per_resident_fy2024
+}
+
+#" The median county's FY2024 library spend per resident in each picked state (county_spend_gap), for the reference line.
+query: nc_growth_gap_median is county_spend_gap -> {
+  where: state ~ $STATE
+  group_by: state
+  aggregate: median_spend_per_resident is state_median_spend_per_resident.max()
 }
