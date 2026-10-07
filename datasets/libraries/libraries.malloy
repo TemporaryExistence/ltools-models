@@ -18,12 +18,12 @@ given:
   # label="State" control=select suggest { source=library_systems dimension=state }
   STATE :: filter<string> is f'NC'
 
-source: branches_table is duckdb.table('https://tabblabs.net/datasets/libraries/library_branches.parquet')
+source: branches_table is motherduck.table('libraries.library_branches')
 
 #" FY2023 snapshot: one row per US public library system (fiscal year ending mid-2023 for most states), from the
 #" IMLS Public Libraries Survey. For trends, FY2024 figures and money questions use library_years instead.
 #" Dollars are US dollars as reported. population_served is the library's legal service area, not county residents.
-source: library_systems is duckdb.table('https://tabblabs.net/datasets/libraries/library_systems.parquet') extend {
+source: library_systems is motherduck.table('libraries.library_systems') extend {
   primary_key: library_id
   dimension:
     #" Urban/suburban/town/rural, from the NCES locale code.
@@ -138,7 +138,7 @@ source: library_branches is branches_table extend {
 // ---------------------------------------------------------------------------------------------
 
 // Undocumented base (so sources built on it don't inherit library_years' description; see friction log).
-source: library_years_base is duckdb.table('https://tabblabs.net/datasets/libraries/library_systems_by_year.parquet') extend {
+source: library_years_base is motherduck.table('libraries.library_systems_by_year') extend {
   primary_key: system_year_id
   dimension:
     #" Size band by population served that year. Cut points from the FY2024 distribution of 9,209 systems:
@@ -728,7 +728,7 @@ source: econtent_prospects is econtent_systems extend {
 
 #" US Census county population estimates (1 July), 2010 – 2025. 2010–2019 from Vintage 2020, 2020–2025 from Vintage 2025.
 #" Connecticut is planning regions from 2020 on (a Census change), counties before.
-source: county_population is duckdb.table('https://tabblabs.net/datasets/libraries/county_population.parquet') extend {
+source: county_population is motherduck.table('libraries.county_population') extend {
   primary_key: county_year_id
   measure:
     #" County residents (Census estimate, 1 July of pop_year).
@@ -766,7 +766,7 @@ source: county_population is duckdb.table('https://tabblabs.net/datasets/librari
 #" County NC = Orange County Public Library + Chapel Hill Public Library). Dollars as reported, not inflation-adjusted.
 #" CAVEATS: Durham FY2019 visits look inflated (see library_years); FY2024 borrowing is unreported for many systems.
 #" For "what would it cost to close the gap" questions use county_spend_gap.
-source: county_libraries is duckdb.table('https://tabblabs.net/datasets/libraries/library_counties.parquet') extend {
+source: county_libraries is motherduck.table('libraries.library_counties') extend {
   join_one: sys is library_years on system_year_id = sys.system_year_id
   join_one: cp is county_population on county_year_id = cp.county_year_id
   dimension:

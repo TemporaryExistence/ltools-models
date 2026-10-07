@@ -24,7 +24,7 @@
 #" not be the metro a person names ("Access Services in LA" is "Access Services (El Monte, CA)"); search with
 #" agency_label ~ '%Access%' or urban_area ~ '%Los Angeles%'. To narrow any saved view, refine it:
 #" run: ondemand_annual -> agency_detail + { where: agency_label ~ '%Access Services%' }
-source: ondemand_annual is duckdb.table('https://tabblabs.net/datasets/transit/ondemand_annual.parquet') extend {
+source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
   dimension:
     #" Agency name with city and state, e.g. "METRO (Houston, TX)". Use this to name an agency in an answer.
     agency_label is concat(agency_name, ' (', city, ', ', state, ')')

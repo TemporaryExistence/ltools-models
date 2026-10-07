@@ -2,6 +2,13 @@
   "connections": {
     "duckdb": {
       "is": "duckdb"
+    },
+    "motherduck": {
+      "is": "duckdb",
+      "databasePath": "md:ltools",
+      "motherDuckToken": {
+        "env": "MOTHERDUCK_TOKEN"
+      }
     }
   },
   "malloyyo": {

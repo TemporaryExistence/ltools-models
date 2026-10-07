@@ -4,7 +4,7 @@
 // January 2002 – August 2026, snapshot downloaded 2026-10-06 from data.transportation.gov (dataset 8bui-9xvu,
 // "Complete Monthly Ridership (with Adjustments and Estimates)"). Built by build_ntd.sql; agency city and brand
 // name ("GoRaleigh", "GoTriangle") joined from the 2024 NTD Reporter Agency Information file.
-// The published model reads the Parquet served at https://tabblabs.net/datasets/transit/ — a hosted instance can't
+// The published model reads MotherDuck (ltools.transit.*; Parquet backup at https://tabblabs.net/datasets/transit/). A hosted instance can't
 // read files shipped inside the repo (friction log F13/F16).
 
 given:
@@ -18,7 +18,7 @@ given:
   SIZE_BAND :: filter<string> is f''
 
 // The raw rows. Kept separate so the urbanized-area table below can be derived from them.
-source: ntd_rows is duckdb.table('https://tabblabs.net/datasets/transit/ntd_monthly.parquet')
+source: ntd_rows is motherduck.table('transit.ntd_monthly')
 
 #" One row per urbanized area (Census 2020 UZA), with its population. Derived from the rows; joined back so a
 #" metro's residents are counted once however many agency rows it has.

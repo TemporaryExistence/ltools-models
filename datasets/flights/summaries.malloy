@@ -17,8 +17,8 @@
 #" mainline brand they fly for), with total scheduled flights May-July 2026 (n_flights). Use for filter values.
 #" Spirit reported only 354 flights in these three months, so its totals are tiny by construction, not a sign of
 #" reliability.
-source: airline_list is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_airlines.parquet')
+source: airline_list is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_airlines
 """) extend {
   primary_key: airline
 }
@@ -27,8 +27,8 @@ source: airline_list is duckdb.sql("""
 #" departures_per_day (May-July 2026, 92 days), delay-chain minutes started there (chain_minutes = upper bound,
 #" chain_minutes_next_leg = conservative), and latitude/longitude from OurAirports (public domain). Fast. Use it to
 #" look up an airport's code, size band or city, or to rank airports by the delay-chain cost they start.
-source: airport_list is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_airports.parquet')
+source: airport_list is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_airports
 """) extend {
   primary_key: origin
   dimension:
@@ -51,8 +51,8 @@ source: airport_list is duckdb.sql("""
 #" Gives the same numbers as the slow `flights` source. "Late" = arrived 15+ minutes after schedule (the BTS and DOT
 #" definition). Delay causes are the airline-reported BTS categories, in hours. No destination here: for routes use
 #" routes_summary or route_hours_summary.
-source: delays_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_cube.parquet')
+source: delays_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_cube
 """) extend {
   join_one: airport is airport_list on origin = airport.origin
 
@@ -149,8 +149,8 @@ source: delays_summary is duckdb.sql("""
 
 #" Flights per calendar day, airline and departure airport (122,552 rows; fast), for day-by-day trends, day-of-week
 #" questions (weekday) and finding bad days (storms, outages). Columns: flight_date, month_label, carrier, airline, origin, size_band.
-source: daily_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_daily.parquet')
+source: daily_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_daily
 """) extend {
   dimension:
     #" Day of the week of the flight date ("Mon" ... "Sun").
@@ -204,8 +204,8 @@ source: month_list is daily_summary -> {
 #" measures: each flight is placed in its aircraft's day (tail number), so it knows whether it is the aircraft's first
 #" flight of the day and whether the previous flight was late. late_rate here counts flights that operated and have a
 #" tail number (within 0.1 point of delays_summary). Same numbers as the slow `aircraft_legs` source.
-source: legs_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_cube.parquet')
+source: legs_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_cube
 """) extend {
   join_one: airport is airport_list on origin = airport.origin
 
@@ -300,8 +300,8 @@ source: legs_summary is duckdb.sql("""
 #" flight, 7 = seventh or later) and, for later flights, whether the aircraft's first flight (day_start) and previous
 #" flight (inbound) that day were late. Answers "how much more likely is a later flight to be late when the morning
 #" flight was late?" Columns also include month_label, airline, origin, size_band.
-source: legs_detail is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_legs.parquet')
+source: legs_detail is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_legs
 """) extend {
   dimension:
     #" Leg of the aircraft's day: 1 = first flight, 7 = seventh or later.
@@ -350,8 +350,8 @@ source: legs_detail is duckdb.sql("""
 #" START HERE for route questions (fast, 28,966 rows): flights per route ("RDU → ATL"; origin, dest), airline and
 #" month. late_rate = share of operated flights arriving 15+ minutes late. For the best hour to fly a route, use
 #" route_hours_summary.
-source: routes_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_routes.parquet')
+source: routes_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_routes
 """) extend {
   measure:
     #" Scheduled flights.
@@ -400,8 +400,8 @@ source: routes_summary is duckdb.sql("""
 #" Later flights of the day by the airport the aircraft flew in from (prev_origin), at each departure airport
 #" (origin) (fast, 32,548 rows): how often the inbound aircraft was late (inbound_late_rate) and how often the flight
 #" then left late. Answers "which inbound airports bring us late aircraft?"
-source: inbound_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_inbound.parquet')
+source: inbound_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_inbound
 """) extend {
   measure:
     #" Later flights (aircraft already flew today).
@@ -430,8 +430,8 @@ source: inbound_summary is duckdb.sql("""
 #" airports_whose_late_starts_reach_here). The airline column is the airline of the late flight at the affected
 #" airport: add it to group_by to see whose network carries the chains in. Counts only; for dollar costs by starting
 #" airport use chain_slots_summary.
-source: chain_starts_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_chain_starts.parquet')
+source: chain_starts_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_chain_starts
 """) extend {
   measure:
     #" Late later flights at the affected airport whose chain started elsewhere.
@@ -473,8 +473,8 @@ source: chain_starts_summary is duckdb.sql("""
 #" Caveats: attribution, not proof; storms delay first and later flights together, so not every minute was
 #" avoidable. Airlines see their own propagation in more detail; this public view's value is that it covers every
 #" airline at every airport, so airports, smaller carriers benchmarking peers, and corporate travel buyers can use it.
-source: chain_slots_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/chain_slots.parquet')
+source: chain_slots_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.chain_slots
 """) extend {
   join_one: airport is airport_list on origin = airport.origin
 
@@ -631,8 +631,8 @@ source: chain_slots_summary is duckdb.sql("""
 #" START HERE for "what time should I fly route X?" (fast, ~115k rows): flights per route, airline, month and
 #" scheduled departure hour (dep_hour, local). Columns: month_label, carrier, airline, origin, dest, route
 #" ("RDU → ATL"), size_band, dep_hour. late_rate = share of operated flights arriving 15+ minutes late.
-source: route_hours_summary is duckdb.sql("""
-  SELECT * FROM read_parquet('https://tabblabs.net/datasets/flights/flights_route_hours.parquet')
+source: route_hours_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights_route_hours
 """) extend {
   measure:
     #" Scheduled flights.

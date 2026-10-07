@@ -1,7 +1,7 @@
 ##! experimental { givens }
 
 // US domestic flights, BTS Reporting Carrier On-Time Performance (US public data), May–July 2026 (92 days).
-// Working copy lives in MotherDuck (`ltools.flights`, loaded by load_flights.sql); the published model reads monthly
+// The published model reads MotherDuck (`ltools.flights.*`, read-only token on the instance). Backup: monthly
 // Parquet exports served at https://tabblabs.net/datasets/flights/ — a hosted instance can't read files shipped
 // inside the repo (friction log F13/F16). The exports carry tail_number (aircraft registration) so each aircraft
 // can be followed through its day (see aircraft_legs below).
@@ -20,12 +20,8 @@ given:
 
 // One row per scheduled US domestic flight, before the airport-size join. Use `flights`. (A // comment, not #",
 // so its text is not inherited into the description of `flights`.)
-source: flights_base is duckdb.sql("""
-  SELECT * FROM read_parquet([
-    'https://tabblabs.net/datasets/flights/flights_2026_05.parquet',
-    'https://tabblabs.net/datasets/flights/flights_2026_06.parquet',
-    'https://tabblabs.net/datasets/flights/flights_2026_07.parquet'
-  ])
+source: flights_base is motherduck.sql("""
+  SELECT * FROM ltools.flights.flights
 """) extend {
   dimension:
     #" Airline name from the BTS reporting-carrier code: the airline that OPERATED the flight. Regional carriers
