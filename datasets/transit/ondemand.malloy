@@ -16,7 +16,9 @@
 #" dial-a-ride; both count as general public here. (3) Rural and reduced reporters do not report ADA trips; for them
 #" the split uses the 2024 service-schedule flags (open to the general public vs ADA only), a yes/no, not a share.
 #" (4) Operating expense is what the agency spends to run the service (contractor fees included for purchased
-#" transportation); the NTD does not show software spend.
+#" transportation); the NTD does not show software spend. (5) Some agencies re-flag trips between ADA and general
+#" public from year to year (Stark Area RTA, Canton: ADA share 93% in 2022, 11% in 2024); growth measures use
+#" new_service_hours_added, which caps an agency's general-public growth at its total on-demand growth.
 #" Raw columns: trips (all on-demand boardings), ada_trips (ADA-related boardings), sponsored_trips (boardings paid
 #" for by a third party), vehicle_revenue_hours, vehicle_revenue_miles, operating_expenses (US dollars a year), one
 #" row per agency x type_of_service x report_year. Sum across type_of_service for an agency total.
@@ -68,8 +70,25 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     general_public_hours_2022 is general_public_hours { where: report_year = 2022 }
     #" Estimated general-public on-demand hours in 2024.
     general_public_hours_2024 is general_public_hours { where: report_year = 2024 }
-    #" Estimated general-public on-demand hours added from 2022 to 2024 (negative = cut).
+    #" Estimated general-public on-demand hours added from 2022 to 2024 AS REPORTED (negative = cut). Includes trips
+    #" re-flagged between ADA and general public, so it can exceed the agency's whole on-demand growth (Stark Area RTA,
+    #" Canton: +66k here against +13k total, its ADA share went 93% to 11%). For growth, use new_service_hours_added.
     general_public_hours_added is general_public_hours_2024 - general_public_hours_2022
+    #" All on-demand vehicle revenue hours in 2022 (ADA and general public).
+    ondemand_hours_2022 is vehicle_revenue_hours.sum() { where: report_year = 2022 }
+    #" All on-demand hours added from 2022 to 2024, ADA paratransit and general public together.
+    ondemand_hours_added is ondemand_hours_2024 - ondemand_hours_2022
+    #" General-public on-demand hours added from 2022 to 2024, CAPPED at the agency's total on-demand hours added (and
+    #" at 0 if its total fell). Hours beyond the cap were already running and were re-flagged from ADA or sponsored to
+    #" general public; they are not new service. Use this, not general_public_hours_added, to rank who is growing.
+    #" Per agency: group by ntd_id or agency_label (the cap is applied to whatever group is in view). Cuts are not
+    #" capped, so summed growth is a conservative figure.
+    new_service_hours_added is
+      pick general_public_hours_added when general_public_hours_added <= 0 or general_public_hours_added <= ondemand_hours_added
+      pick 0.0 when ondemand_hours_added < 0
+      else ondemand_hours_added
+    #" General-public hours added that exceed the agency's total on-demand growth: re-flagged trips, not new service.
+    reflagged_hours is general_public_hours_added - new_service_hours_added
     #" Percent change in estimated general-public on-demand hours, 2022 to 2024. Null when 2022 was zero, which means
     #" the agency STARTED general-public on-demand after 2022 (e.g. King County Metro), not missing data.
     # percent
@@ -88,6 +107,12 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     #" cost inflation as well as added service.
     # currency
     general_public_spend_added is general_public_spend_2024 - general_public_spend_2022
+    #" Yearly general-public on-demand spend added 2022 to 2024 for NEW service: general_public_spend_added scaled
+    #" down by the share of added hours that were re-flagged (see new_service_hours_added). Per agency. US dollars.
+    # currency
+    new_service_spend_added is
+      pick general_public_spend_added when reflagged_hours <= 0
+      else general_public_spend_added * new_service_hours_added / nullif(general_public_hours_added, 0)
     #" Operating cost per vehicle revenue hour of on-demand service in 2024, US dollars (all on-demand kinds).
     # currency
     cost_per_hour_2024 is operating_expenses.sum() { where: report_year = 2024 } / nullif(vehicle_revenue_hours.sum() { where: report_year = 2024 and operating_expenses > 0 }, 0)
@@ -95,8 +120,9 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     #" only. Several agencies file late: VIA (San Antonio) reports about a quarter of its usual hours for July and
     #" August 2026, so its latest-12-month figure is understated.
     ondemand_hours_latest_12m is hours_latest_12m.sum()
-    #" Momentum since the annual data: latest-12-month on-demand hours against calendar 2024 in the same monthly file
-    #" (all on-demand kinds; -0.3 = running 30% less service than in 2024).
+    #" Momentum since the annual data: latest-12-month on-demand hours against calendar 2024 in the same monthly file.
+    #" ALL on-demand service, ADA paratransit INCLUDED (the monthly file does not split them); for a mostly-ADA agency
+    #" it mostly measures paratransit. -0.3 = running 30% less on-demand service than in 2024.
     # percent
     momentum_since_2024 is hours_latest_12m.sum() / nullif(hours_2024_monthly_file.sum(), 0) - 1
     #" True when the agency reported on-demand trips with an ADA breakdown in both 2022 and 2024, so a 2022-to-2024
@@ -105,68 +131,78 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     #" Fewest months (of the latest 12) any of the agency's on-demand rows reported hours; under 12 means late filing.
     months_reported_latest_12m_min is months_reported_latest_12m.min()
 
-  #" WHO TO CALL FIRST (for a microtransit software or turnkey-service company): urban agencies ranked by estimated
-  #" general-public on-demand hours added from 2022 to 2024, ADA paratransit and sponsored trips taken out. These
-  #" agencies have budget and proven appetite; a vendor sales team should open with the top of this list, and an
-  #" agency board can read it as "who is already doing what we are debating". Check momentum_since_2024 before
-  #" calling: it compares the agency's latest 12 monthly reports (September 2025 to August 2026) with calendar 2024
-  #" (all on-demand service); a negative value means it has since cut (Kansas City about -26%, Stark/Canton -44%).
-  #" Ranked by hours ADDED, not by size; general_public_hours_2024 is the current size.
+  #" WHO TO CALL FIRST (for a microtransit software or turnkey-service company): urban agencies ranked by NEW
+  #" general-public on-demand hours added from 2022 to 2024 (new_service_hours_added: ADA paratransit and sponsored
+  #" trips taken out, and capped at the agency's total on-demand growth so trips re-flagged from ADA to general public
+  #" do not count as growth). reflagged_hours shows how much of the reported increase was re-flagging; ondemand_hours_added
+  #" is the agency's whole on-demand growth. These agencies have budget and proven appetite; a vendor sales team
+  #" should open with the top of this list. Check momentum_since_2024 before calling: latest 12 monthly reports
+  #" (September 2025 to August 2026) against calendar 2024, ALL on-demand service including ADA paratransit; negative
+  #" means the agency has since cut (Kansas City about -26%). general_public_hours_2024 is the current size.
   view: agencies_scaling_microtransit is {
     where: is_urban and reports_ada_trips
     group_by: agency_label, ntd_id
     aggregate:
-      general_public_hours_2022, general_public_hours_2024, general_public_hours_added, general_public_growth,
-      general_public_spend_2024, general_public_spend_added, ada_trip_share_2024, momentum_since_2024
+      general_public_hours_2022, general_public_hours_2024, new_service_hours_added, ondemand_hours_added,
+      reflagged_hours, general_public_spend_2024, new_service_spend_added, ada_trip_share_2024, momentum_since_2024
     // Only agencies that reported on-demand trips in BOTH years: a first report (a merger, a new reporter ID, a move
     // from rural to urban reporting) is not growth.
     having: reported_both_years
-    order_by: general_public_hours_added desc
+    order_by: new_service_hours_added desc
     limit: 25
   }
 
   #" THE MONEY (the Play 3 dollar figure): estimated general-public on-demand service at urban agencies that
-#" reported on-demand trips with an ADA breakdown in both 2022 and 2024 (same agencies both years, so new reporters
-#" don't inflate growth), ADA paratransit and sponsored trips taken out. Spend is agency operating expense, the pool
-#" microtransit operators and software vendors compete for; it is not software revenue. spend_added includes cost
-#" inflation; spend_added_at_2024_cost prices only the added hours, at each agency's own 2024 cost per hour.
-#" top_15_share_of_added_spend = how concentrated the growth is in the 15 agencies that added the most hours.
+  #" reported on-demand trips with an ADA breakdown in both 2022 and 2024 (same agencies both years, so new reporters
+  #" don't inflate growth), ADA paratransit and sponsored trips taken out. Growth counts NEW service only: each
+  #" agency's general-public hours added are capped at its total on-demand hours added (new_service_hours_added), and
+  #" the re-flagged excess is treated as already running in 2022, so hours_2022 and spend_2022 here are the 2024
+  #" figures minus new service (2024 stays as reported). The as-reported figures are kept for comparison. Spend is
+  #" agency operating expense, the pool microtransit operators and software vendors compete for; it is not software
+  #" revenue. spend_added includes cost inflation; spend_added_at_2024_cost prices only the new hours, at each
+  #" agency's own 2024 general-public cost per hour. top_15_share_of_added_spend = how concentrated the growth is in
+  #" the 15 agencies that added the most new hours.
   view: microtransit_market_size is {
     where: is_urban and reports_ada_trips
     group_by: ntd_id
     aggregate:
       reported_both_years
-      general_public_hours_2022, general_public_hours_2024, general_public_hours_added
-      general_public_spend_2022, general_public_spend_2024, general_public_spend_added
+      general_public_hours_2024, general_public_hours_added, new_service_hours_added, reflagged_hours
+      general_public_spend_2024, general_public_spend_added, new_service_spend_added
       gp_cost_per_hour_2024 is general_public_spend_2024 / nullif(general_public_hours_2024, 0)
     having: reported_both_years
-    calculate: added_rank is row_number() { order_by: general_public_hours_added desc }
+    calculate: added_rank is row_number() { order_by: new_service_hours_added desc }
   } -> {
     aggregate:
       agencies is count()
-      agencies_growing is count() { where: general_public_hours_added > 0 }
-      agencies_cutting is count() { where: general_public_hours_added < 0 }
-      // The rest (agencies minus growing minus cutting) had no general-public service either year: paratransit only.
-      agencies_paratransit_only is count() { where: general_public_hours_added = 0 }
-      hours_2022 is general_public_hours_2022.sum()
+      agencies_growing is count() { where: new_service_hours_added > 0 }
+      agencies_cutting is count() { where: new_service_hours_added < 0 }
+      // The rest had no general-public growth: paratransit only both years, or reported growth that was all re-flagging.
+      agencies_no_new_service is count() { where: new_service_hours_added = 0 }
+      agencies_with_reflagged_hours is count() { where: reflagged_hours > 0 }
+      hours_2022 is sum(general_public_hours_2024 - new_service_hours_added)
       hours_2024 is general_public_hours_2024.sum()
-      hours_added is general_public_hours_added.sum()
+      hours_added is new_service_hours_added.sum()
+      hours_reflagged is reflagged_hours.sum()
+      hours_added_as_reported is general_public_hours_added.sum()
       # currency
-      spend_2022 is general_public_spend_2022.sum()
+      spend_2022 is sum(general_public_spend_2024 - new_service_spend_added)
       # currency
       spend_2024 is general_public_spend_2024.sum()
       # currency
-      spend_added is general_public_spend_added.sum()
+      spend_added is new_service_spend_added.sum()
       # currency
-      spend_added_at_2024_cost is sum(general_public_hours_added * coalesce(gp_cost_per_hour_2024, 0))
+      spend_added_as_reported is general_public_spend_added.sum()
       # currency
-      top_15_spend_added is general_public_spend_added.sum() { where: added_rank <= 15 }
+      spend_added_at_2024_cost is sum(new_service_hours_added * coalesce(gp_cost_per_hour_2024, 0))
+      # currency
+      top_15_spend_added is new_service_spend_added.sum() { where: added_rank <= 15 }
       # percent
-      spend_growth_2022_to_2024 is general_public_spend_2024.sum() / nullif(general_public_spend_2022.sum(), 0) - 1
+      spend_growth_2022_to_2024 is general_public_spend_2024.sum() / nullif(sum(general_public_spend_2024 - new_service_spend_added), 0) - 1
       # percent
-      hours_growth_2022_to_2024 is general_public_hours_2024.sum() / nullif(general_public_hours_2022.sum(), 0) - 1
+      hours_growth_2022_to_2024 is general_public_hours_2024.sum() / nullif(sum(general_public_hours_2024 - new_service_hours_added), 0) - 1
       # percent
-      top_15_share_of_added_spend is general_public_spend_added.sum() { where: added_rank <= 15 } / nullif(general_public_spend_added.sum(), 0)
+      top_15_share_of_added_spend is new_service_spend_added.sum() { where: added_rank <= 15 } / nullif(new_service_spend_added.sum(), 0)
   }
 
   #" General-public and all on-demand service by year, every urban agency that reports ADA trips that year (the set of

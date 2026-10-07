@@ -43,10 +43,11 @@ const CSS = `
 .od-tablewrap { overflow-x: auto; }
 .od table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .od th { text-align: right; font-size: 12px; font-weight: 600; color: var(--dash-muted); padding: 8px 10px;
-  border-bottom: 1px solid var(--dash-border); white-space: nowrap; }
+  border-bottom: 1px solid var(--dash-border); white-space: normal; vertical-align: bottom; line-height: 1.3; }
 .od td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--dash-border); white-space: nowrap; }
 .od th:first-child, .od td:first-child { padding-left: 0; }
 .od th.agency, .od td.agency { text-align: left; white-space: normal; min-width: 0; }
+@media (min-width: 700px) { .od td.agency { min-width: 12em; } .od th.wrap { max-width: 9em; } }
 .od td.rank { color: var(--dash-muted); width: 1%; padding-right: 4px; }
 .od th.rank { width: 1%; }
 .od td.up { color: var(--dash-accent); font-weight: 600; }
@@ -310,7 +311,7 @@ function prospectSpec(t, narrow) {
   };
   const y = {
     field: "hours_added", type: "quantitative", scale: { type: "symlog", constant: 1000, domain: [-150000, 250000], clamp: true },
-    axis: { title: "General-public hours added, 2022 to 2024", format: "~s", values: [-100000, -25000, 0, 25000, 100000, 200000] },
+    axis: { title: "New general-public hours added, 2022 to 2024", format: "~s", values: [-100000, -25000, 0, 25000, 100000, 200000] },
   };
   const size = { field: "ondemand_hours_2024", type: "quantitative", scale: { range: [10, narrow ? 360 : 640] }, legend: null };
   return {
@@ -324,13 +325,13 @@ function prospectSpec(t, narrow) {
           x, y, size,
           color: {
             field: "kind", type: "nominal",
-            scale: { domain: ["Adding", "Cutting", "No general-public service"], range: [t.pal.up, t.pal.down, t.muted] },
+            scale: { domain: ["Adding", "Cutting", "No new service"], range: [t.pal.up, t.pal.down, t.muted] },
             legend: { orient: "top", title: null, direction: narrow ? "vertical" : "horizontal", symbolSize: 110 },
           },
           tooltip: [
             { field: "agency", title: "Agency" },
             { field: "ada_share", type: "quantitative", title: "ADA share of trips", format: ".0%" },
-            { field: "hours_added", type: "quantitative", title: "General-public hours added", format: "+,.0f" },
+            { field: "hours_added", type: "quantitative", title: "New general-public hours added", format: "+,.0f" },
             { field: "ondemand_hours_2024", type: "quantitative", title: "All on-demand hours, 2024", format: ",.0f" },
           ],
         },
@@ -368,7 +369,7 @@ function momentumSpec(t, narrow, n) {
     height: Math.max(180, n * (narrow ? 30 : 32)),
     encoding: {
       y: { field: "agency", type: "nominal", sort: null, axis: { title: null, labelLimit: narrow ? 150 : 230, labelFontSize: 12 } },
-      x: { field: "momentum", type: "quantitative", scale: { domain: [-0.65, 0.4], clamp: true }, axis: { title: "Since 2024", format: "+.0%", tickCount: 5 } },
+      x: { field: "momentum", type: "quantitative", scale: { domain: [-0.65, 0.4], clamp: true }, axis: { title: "vs 2024, all on-demand", format: "+.0%", tickCount: 5 } },
     },
     layer: [
       {
@@ -431,7 +432,7 @@ export default function Dashboard({ dashboard, givens }) {
       .sort((a, b) => b.ondemand_hours_2024 - a.ondemand_hours_2024).slice(0, 2).map((r) => r.agency);
     return points.rows.map((r) => ({
       ...r,
-      kind: r.hours_added > 500 ? "Adding" : r.hours_added < -500 ? "Cutting" : "No general-public service",
+      kind: r.hours_added > 500 ? "Adding" : r.hours_added < -500 ? "Cutting" : "No new service",
       labelled: r.added_rank <= 8,
       // One combined note on the largest paratransit agency (the two sit on the same spot).
       big_para: r.agency === bigPara[0],
@@ -476,14 +477,14 @@ export default function Dashboard({ dashboard, givens }) {
               {m.agencies_cutting ?? "–"}
             </div>
             <div className="l">Agencies growing / cutting it</div>
-            <div className="s">of {m.agencies ?? "–"} urban agencies reporting both years</div>
+            <div className="s">of {m.agencies ?? "–"} urban agencies reporting both years; re-flagged ADA trips not counted</div>
           </div>
         </div>
 
         <div className="od-grid wide-left">
           <Card
             title="The buyers are the agencies adding general-public service, not the biggest on-demand operators"
-            sub="Each dot is an urban agency with 20k+ on-demand hours in 2024; size = its on-demand hours. Numbered: the eight that added the most general-public hours."
+            sub="Each dot is an urban agency with 20k+ on-demand hours in 2024; size = its on-demand hours. Numbered: the eight that added the most new general-public hours."
           >
             <div className="od-vega"><VegaChart spec={prospectChart} data={pointRows} /></div>
           </Card>
@@ -496,7 +497,7 @@ export default function Dashboard({ dashboard, givens }) {
         </div>
 
         <div className="od-grid">
-          <Card title="Most general-public on-demand hours added, 2022 to 2024" sub="Estimated; ADA paratransit and sponsored trips taken out">
+          <Card title="Most new general-public on-demand hours, 2022 to 2024" sub="Estimated; ADA paratransit and sponsored trips taken out; capped at each agency's total on-demand growth">
             <Bars
               rows={top10}
               value="hours_added"
@@ -505,7 +506,7 @@ export default function Dashboard({ dashboard, givens }) {
               note={(r) => plusMoney(r.spend_added) + " a year"}
             />
           </Card>
-          <Card title="Check before calling: on-demand service since 2024" sub="Latest 12 monthly reports (Sep 2025 to Aug 2026) vs calendar 2024, all on-demand service">
+          <Card title="Check before calling: all on-demand hours since 2024 (incl. paratransit)" sub="Latest 12 monthly reports (Sep 2025 to Aug 2026) vs calendar 2024; the monthly file does not split out ADA paratransit">
             <div className="od-vega"><VegaChart spec={momentumChart} data={momentumRows} /></div>
           </Card>
         </div>
@@ -523,7 +524,7 @@ export default function Dashboard({ dashboard, givens }) {
           />
         </Card>
 
-        <Card title="Prospect list: who a microtransit vendor should call first" sub={`Top ${ranked.length} urban agencies by general-public on-demand hours added, 2022 to 2024`}>
+        <Card title="Prospect list: who a microtransit vendor should call first" sub={`Top ${ranked.length} urban agencies by new general-public on-demand hours, 2022 to 2024. Hours re-flagged from ADA to general public are not counted as new${m.hours_reflagged > 0 ? ` (${compact(m.hours_reflagged)} hours at ${m.agencies_reflagged} agencies in this selection)` : ""}.`}>
           <div className="od-tablewrap">
             <table>
               <thead>
@@ -532,10 +533,12 @@ export default function Dashboard({ dashboard, givens }) {
                   <th className="agency">Agency</th>
                   <th className="hide-sm">Hours 2022</th>
                   <th className="hide-sm">Hours 2024</th>
-                  <th>Added</th>
+                  <th>New hours</th>
+                  <th className="hide-sm wrap">All on-demand added</th>
+                  <th className="hide-sm">Re-flagged</th>
                   <th className="hide-sm">Spend added</th>
                   <th className="hide-sm">ADA share</th>
-                  <th>Since 2024</th>
+                  <th className="wrap">All on-demand since 2024 (incl. paratransit)</th>
                 </tr>
               </thead>
               <tbody>
@@ -546,6 +549,8 @@ export default function Dashboard({ dashboard, givens }) {
                     <td className="hide-sm">{compact(r.hours_2022)}</td>
                     <td className="hide-sm">{compact(r.hours_2024)}</td>
                     <td className={r.hours_added > 0 ? "up" : ""}>{plusCompact(r.hours_added)}</td>
+                    <td className="hide-sm">{plusCompact(r.total_added)}</td>
+                    <td className="hide-sm">{r.reflagged > 500 ? compact(r.reflagged) : "–"}</td>
                     <td className="hide-sm">{plusMoney(r.spend_added)}</td>
                     <td className="hide-sm">{share(r.ada_share)}</td>
                     <td style={r.momentum < -0.1 ? { color: "var(--dash-danger)", fontWeight: 600 } : undefined}>{pct(r.momentum)}</td>
@@ -563,8 +568,12 @@ export default function Dashboard({ dashboard, givens }) {
         estimates. Spend is what agencies pay to run the service (contractor fees included), not software revenue.
         Urban agencies that reported on-demand trips with an ADA breakdown in both 2022 and 2024. The NTD does not
         separate app-based microtransit from older general-public dial-a-ride. Some agencies mark every on-demand trip
-        as ADA-related while running microtransit (Trinity Metro, Fort Worth), so they are missing here. "Since 2024"
-        uses the monthly file; VIA (San Antonio) is missing most of July and August 2026.
+        as ADA-related while running microtransit (Trinity Metro, Fort Worth), so they are missing here. Some re-flag
+        trips between ADA and general public from year to year (Stark Area RTA, Canton: 93% ADA in 2022, 11% in 2024),
+        so an agency's general-public hours added are capped at its total on-demand hours added and the excess is
+        counted as already running in 2022. Cuts are not capped, so growth is a conservative figure. "All on-demand
+        hours since 2024" uses the monthly file, which includes ADA paratransit; VIA (San Antonio) is missing most of
+        July and August 2026.
       </p>
     </div>
   );

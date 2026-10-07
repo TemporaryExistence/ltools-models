@@ -3,19 +3,20 @@ import "../transit.malloy"
 import "../ondemand.malloy"
 
 #" Microtransit prospects for on-demand transit vendors (software, turnkey operators): urban agencies ranked by the
-#" general-public on-demand service they added from 2022 to 2024, with ADA paratransit and sponsored trips taken out
-#" (FTA National Transit Database annual data). Hours and spend for general-public service are estimates (each
+#" NEW general-public on-demand service they added from 2022 to 2024, with ADA paratransit and sponsored trips taken out
+#" and each agency's general-public growth capped at its total on-demand growth, so trips re-flagged from ADA to
+#" general public do not count as growth (FTA National Transit Database annual data). Hours and spend for general-public service are estimates (each
 #" row's hours and operating expense split by its share of trips that are neither ADA nor sponsored). Spend is agency
-#" operating expense, not software revenue. "Since 2024" compares the latest 12 monthly reports (September 2025 to
-#" August 2026) with calendar 2024.
-# artifact { title="Agencies spend an estimated $950M a year on general-public on-demand transit, up $292M in two years" givens { STATE="" } } dashboard { columns=6 }
+#" operating expense, not software revenue. "All on-demand hours since 2024 (incl. paratransit)" compares the latest
+#" 12 monthly reports (September 2025 to August 2026) with calendar 2024; the monthly file does not split out ADA.
+# artifact { title="Agencies spend an estimated $950M a year on general-public on-demand transit, up $246M of new service in two years" givens { STATE="" } } dashboard { columns=6 }
 query: ondemand_prospects is ondemand_annual -> {
   where:
     is_urban and reports_ada_trips,
     state ~ $STATE
   # colspan=6
   nest:
-    # label="Agencies ranked by general-public on-demand hours added, 2022 to 2024"
+    # label="Agencies ranked by new general-public on-demand hours added, 2022 to 2024"
     ranked is {
       group_by:
         # label="Agency"
@@ -25,15 +26,19 @@ query: ondemand_prospects is ondemand_annual -> {
         hours_2022 is general_public_hours_2022
         # label="General-public hours, 2024" number="0.0a"
         hours_2024 is general_public_hours_2024
-        # label="Hours added" number="0.0a"
-        hours_added is general_public_hours_added
-        # label="Spend added a year" currency
-        spend_added is general_public_spend_added
+        # label="New hours added (capped at all on-demand hours added)" number="0.0a"
+        hours_added is new_service_hours_added
+        # label="All on-demand hours added" number="0.0a"
+        total_added is ondemand_hours_added
+        # label="Re-flagged from ADA, not new" number="0.0a"
+        reflagged is reflagged_hours
+        # label="Spend added a year (new service)" currency
+        spend_added is new_service_spend_added
         # label="Spend, 2024" currency
         spend_2024 is general_public_spend_2024
         # label="ADA share of on-demand trips" percent
         ada_share is ada_trip_share_2024
-        # label="Service since 2024" percent
+        # label="All on-demand hours since 2024 (incl. paratransit)" percent
         momentum is momentum_since_2024
         both_years is reported_both_years
       having: reported_both_years
@@ -42,7 +47,9 @@ query: ondemand_prospects is ondemand_annual -> {
     }
 }
 
-#" The money: same agencies in 2022 and 2024 (reported on-demand trips with an ADA breakdown both years).
+#" The money: same agencies in 2022 and 2024 (reported on-demand trips with an ADA breakdown both years). Growth is
+#" new service only (new_service_hours_added; the re-flagged excess counts as already running in 2022), matching the
+#" microtransit_market_size view.
 query: ondemand_money is ondemand_annual -> {
   where:
     is_urban and reports_ada_trips,
@@ -50,22 +57,24 @@ query: ondemand_money is ondemand_annual -> {
   group_by: ntd_id
   aggregate:
     reported_both_years
-    general_public_hours_2022, general_public_hours_2024, general_public_hours_added
-    general_public_spend_2022, general_public_spend_2024, general_public_spend_added
+    general_public_hours_2024, new_service_hours_added, reflagged_hours
+    general_public_spend_2024, new_service_spend_added
   having: reported_both_years
-  calculate: added_rank is row_number() { order_by: general_public_hours_added desc }
+  calculate: added_rank is row_number() { order_by: new_service_hours_added desc }
 } -> {
   aggregate:
     agencies is count()
-    agencies_growing is count() { where: general_public_hours_added > 0 }
-    agencies_cutting is count() { where: general_public_hours_added < 0 }
-    hours_2022 is general_public_hours_2022.sum()
+    agencies_growing is count() { where: new_service_hours_added > 0 }
+    agencies_cutting is count() { where: new_service_hours_added < 0 }
+    agencies_reflagged is count() { where: reflagged_hours > 0 }
+    hours_2022 is sum(general_public_hours_2024 - new_service_hours_added)
     hours_2024 is general_public_hours_2024.sum()
-    hours_added is general_public_hours_added.sum()
-    spend_2022 is general_public_spend_2022.sum()
+    hours_added is new_service_hours_added.sum()
+    hours_reflagged is reflagged_hours.sum()
+    spend_2022 is sum(general_public_spend_2024 - new_service_spend_added)
     spend_2024 is general_public_spend_2024.sum()
-    spend_added is general_public_spend_added.sum()
-    top15_spend_added is general_public_spend_added.sum() { where: added_rank <= 15 }
+    spend_added is new_service_spend_added.sum()
+    top15_spend_added is new_service_spend_added.sum() { where: added_rank <= 15 }
 }
 
 #" Chart: on-demand hours by year at urban agencies, ADA paratransit and sponsored vs general public (estimated).
@@ -81,7 +90,7 @@ query: ondemand_mix_by_year is ondemand_annual -> {
 }
 
 #" Chart: one point per urban agency with 20,000+ on-demand hours in 2024: its ADA share of on-demand trips against
-#" the general-public hours it added since 2022. Microtransit buyers sit at the top left; paratransit agencies at the
+#" the NEW general-public hours it added since 2022 (capped at its total on-demand growth). Microtransit buyers sit at the top left; paratransit agencies at the
 #" right edge.
 query: ondemand_agency_points is ondemand_annual -> {
   where:
@@ -92,10 +101,10 @@ query: ondemand_agency_points is ondemand_annual -> {
   aggregate:
     ondemand_hours_2024
     ada_share is ada_trip_share_2024
-    hours_added is general_public_hours_added
+    hours_added is new_service_hours_added
     reported_both_years
   having: reported_both_years and ondemand_hours_2024 >= 20000
-  calculate: added_rank is row_number() { order_by: general_public_hours_added desc }
+  calculate: added_rank is row_number() { order_by: new_service_hours_added desc }
 }
 
 #" The largest on-demand operators of 2024 and their ADA share: the agencies a naive "on-demand growth" list puts on
