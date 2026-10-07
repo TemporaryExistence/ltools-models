@@ -472,7 +472,9 @@ source: econtent_candidates_base is library_years_base extend {
 #" FY2024 library systems that could in principle be benchmarked on digital content (meet the public-library
 #" definition, comparable size band, report borrowing and digital borrowing, spend on their collection), with
 #" benchmark_status saying whether each one was used. One row per system (its FY2024 record). Use who_was_left_out to
-#" see how many were dropped and why. Systems that did not report FY2024 borrowing are not here at all.
+#" see how many were dropped and why. Systems that did not report FY2024 borrowing (2,234, holding $132.6M of FY2024
+#" e-content spend) are filtered out before this source, so who_was_left_out does not list them; they are most of the
+#" difference between the $724M market and the $585.7M benchmarked spend.
 source: econtent_candidates is econtent_candidates_base extend {}
 
 // Systems benchmarked on digital content (5,084): FY2024 candidates with more than 0 digital loans, their own
@@ -543,7 +545,8 @@ source: econtent_band_typical is econtent_band_ranks -> {
 #" FY2024 record (its key system_year_id is that FY2024 id), carrying ratios pooled over FY2022 – FY2024; count
 #" systems with benchmarked_systems. MARKET SIZE is not on this source: the US library e-content market is
 #" library_years -> econtent_market_by_year ($724M in FY2024, +73% since FY2018). econtent_spend_fy2024 here is only
-#" the benchmarked systems' FY2024 spend ($585.7M); the rest is mostly systems that did not report FY2024 borrowing.
+#" the benchmarked systems' FY2024 spend ($585.7M). Of the $138M difference, $132.6M is 2,234 systems that did not
+#" report FY2024 borrowing (they are not in econtent_candidates either); the rest is the groups in who_was_left_out.
 #" Every ratio is averaged over FY2022 – FY2024 (pooled), against the median for its size band. prospect_type: 'Pitch the library' = below typical on BOTH digital borrowing and e-content
 #" share, paying for its own loans; 'High demand, low spend' = below typical on e-content share but at or above
 #" typical on digital borrowing (patrons already borrow digitally; under-spending likely means holds queues - the
@@ -639,8 +642,9 @@ source: econtent_prospects is econtent_systems extend {
 
   #" PLAYBOOK, START HERE. How big is the e-book vendor opportunity, in one row? The headline is the pitch list: the
   #" number of libraries to pitch, their e-content gap a year at the typical share ($17.2M across 1,064), and how much
-  #" the top 25 and top 10 hold ($10.1M and $7.5M). The 'High demand, low spend' list ($10.6M) and the shared-collection
-  #" screen ($17.0M) are separate segments shown for context only: never add them to the headline or to each other.
+  #" the top 25 and top 10 hold ($10.1M and $7.5M). It covers the pitch list only. The 'High demand, low spend' list
+  #" ($10.6M) and the shared-collection screen ($17.0M) are separate segments (see econtent_opportunity_by_segment):
+  #" never add them to the headline or to each other.
   #" US market size for context: library_years -> econtent_market_by_year ($724M in FY2024). Filter by state for a
   #" territory headline.
   view: econtent_opportunity_headline is {
