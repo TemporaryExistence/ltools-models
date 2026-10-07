@@ -60,8 +60,10 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     ondemand_hours is vehicle_revenue_hours.sum()
     #" All on-demand vehicle revenue hours in 2024.
     ondemand_hours_2024 is vehicle_revenue_hours.sum() { where: report_year = 2024 }
-    #" Share of on-demand trips that are ADA paratransit, 2024, among rows that report ADA trips. Above about 0.8
-    #" means the agency's on-demand service is essentially paratransit, not a microtransit buyer.
+    #" Share of on-demand trips that are ADA paratransit, 2024, among rows that report ADA trips. Above about 0.8 AND
+    #" little general-public service means the agency's on-demand is essentially paratransit, not a microtransit buyer.
+    #" A big agency can be mostly ADA and still a large general-public buyer (METRO Houston: 89% ADA, 156k
+    #" general-public hours in 2024): judge buyers by general_public_hours_2024 / new_service_hours_added, not this alone.
     # percent
     ada_trip_share_2024 is ada_trips.sum() { where: report_year = 2024 and reports_ada_trips } / nullif(trips.sum() { where: report_year = 2024 and reports_ada_trips }, 0)
     #" Estimated general-public on-demand vehicle revenue hours (microtransit and general-public dial-a-ride).
@@ -124,7 +126,8 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     #" ALL on-demand service, ADA paratransit INCLUDED (the monthly file does not split them); for a mostly-ADA agency
     #" it mostly measures paratransit. -0.3 = running 30% less on-demand service than in 2024.
     # percent
-    momentum_since_2024 is hours_latest_12m.sum() / nullif(hours_2024_monthly_file.sum(), 0) - 1
+    #" Null when the agency filed no on-demand months in the latest 12 (LA Metro), not a 100% cut.
+    momentum_since_2024 is hours_latest_12m.sum() { where: months_reported_latest_12m > 0 } / nullif(hours_2024_monthly_file.sum() { where: months_reported_latest_12m > 0 }, 0) - 1
     #" True when the agency reported on-demand trips with an ADA breakdown in both 2022 and 2024, so a 2022-to-2024
     #" change is real growth and not a first report (merger, new reporter ID, move from rural to urban reporting).
     reported_both_years is ondemand_hours { where: report_year = 2022 and reports_ada_trips } > 0 and ondemand_hours { where: report_year = 2024 and reports_ada_trips } > 0
@@ -139,6 +142,9 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
   #" should open with the top of this list. Check momentum_since_2024 before calling: latest 12 monthly reports
   #" (September 2025 to August 2026) against calendar 2024, ALL on-demand service including ADA paratransit; negative
   #" means the agency has since cut (Kansas City about -26%). general_public_hours_2024 is the current size.
+  #" To change the row count, repeat the ordering: `agencies_scaling_microtransit + { order_by:
+  #" new_service_hours_added desc limit: 15 }`. A refinement with only `limit` loses this view's order (rows come back
+  #" in another order with no warning).
   view: agencies_scaling_microtransit is {
     where: is_urban and reports_ada_trips
     group_by: agency_label, ntd_id
