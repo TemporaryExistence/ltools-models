@@ -1,23 +1,36 @@
 ##! experimental.givens
 import "../transit.malloy"
 
-#" Big transit systems against small ones, by agency size band (total trips in 2019): how far each band has come
-#" back since 2019, how much service it restored, how many riders it carries per service hour, and its mix of bus,
-#" rail and ferry. Latest 12 months = September 2025 to August 2026. Pick a state and a size band to narrow it.
-# artifact { title="Transit Agencies by Size" givens { STATE="" } } dashboard { columns=6 }
-query: agencies_by_size is transit -> {
+// Drawn by agencies_by_size.jsx. Every query below is presentation only: the model's own measures and views, run on
+// the transit source narrowed by the State and Size filters.
+source: transit_selected is transit extend {
   where:
     state ~ $STATE,
     size_band ~ $SIZE_BAND
-  # colspan=1
-  aggregate: agencies, trips_latest_12m, recovery_vs_2019, service_vs_2019, yoy_change, trips_per_hour_12m
-  # colspan=3
-  nest:
-    by_size_band
-    # bar_chart { x=size_band y=trips_per_hour_12m }
-    fixed_route_productivity is by_size_band + { where: is_fixed_route }
-    size_band_mode_mix
-    largest_agencies
-    # bar_chart { x=report_year y=trips_total }
-    by_year is service_and_trips_by_year + { where: report_year >= 2015 and report_year <= 2025 }
 }
+
+#" Big transit systems against small ones, by agency size band (total trips in 2019): whether restoring service
+#" brought riders back, how far each band has come since 2019, riders per service hour, and each band's mix of bus,
+#" rail and ferry. Latest 12 months = September 2025 to August 2026. Pick a state and a size band to narrow it.
+# artifact { title="Agencies that restored 2019 service got more riders back, in every size band" givens { STATE="" } } dashboard { columns=6 }
+query: agencies_by_size is transit_selected -> {
+  aggregate: agencies, trips_latest_12m, trips_2019, recovery_vs_2019, service_vs_2019, yoy_change, trips_per_hour_12m
+}
+
+#" Chart: average agency recovery with and without 2019 service restored, by size band.
+query: size_restore is transit_selected -> does_restoring_service_bring_riders_back
+
+#" Chart and table: recovery, service and productivity by size band.
+query: size_bands is transit_selected -> by_size_band
+
+#" Chart: fixed-route trips per service hour by size band, 2019 and now.
+query: size_fixed_route is transit_selected -> by_size_band + { where: is_fixed_route }
+
+#" Chart: each band's latest-12-month trips by bus, rail and ferry.
+query: size_mode_mix is transit_selected -> size_band_mode_mix
+
+#" Chart: trips and service hours by year, 2003 to 2025 (2002 hours incomplete; 2026 partial).
+query: size_trend is transit_selected -> service_and_trips_by_year + { where: report_year >= 2003 and report_year <= 2025 }
+
+#" Table: the largest agencies by 2019 trips.
+query: size_largest is transit_selected -> largest_agencies

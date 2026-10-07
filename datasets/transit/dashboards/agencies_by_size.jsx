@@ -1,0 +1,646 @@
+import React from "react";
+import { Controls, VegaChart, useQuery } from "@malloyyo/dashboard";
+
+// Self-contained on purpose: a dashboard component can import only React and @malloyyo/dashboard.
+
+// ---- Shared chart helpers (the same block sits in each profit dashboard; a component can import only React and
+// @malloyyo/dashboard, so it is repeated rather than shared). ----
+
+const CSS = `
+.od { box-sizing: border-box; max-width: 1120px; margin: 0 auto; padding: 28px 24px 40px;
+  font-family: var(--dash-font); color: var(--dash-fg); }
+.od *, .od *::before, .od *::after { box-sizing: border-box; }
+.od h1 { font-size: 28px; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 18px; max-width: 40ch; }
+.od-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0 28px; }
+.od-kpi { border: 1px solid var(--dash-border); border-radius: 12px; padding: 16px 18px; }
+.od-kpi .v { font-size: 34px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.od-kpi .l { font-size: 14px; font-weight: 600; margin-top: 8px; }
+.od-kpi .s { font-size: 13px; color: var(--dash-muted); margin-top: 4px; line-height: 1.35; }
+.od-kpi.hot { border-color: var(--dash-accent); }
+.od-kpi.hot .v { color: var(--dash-accent); }
+.od-kpi.cold .v { color: var(--dash-muted); }
+.od-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; margin-top: 16px; }
+.od-grid.wide-left { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+.od-card { border: 1px solid var(--dash-border); border-radius: 12px; padding: 18px 20px 20px; min-width: 0; }
+.od-card + .od-card, .od-grid + .od-card, .od-card + .od-grid { margin-top: 16px; }
+.od-card h2 { font-size: 17px; margin: 0 0 4px; line-height: 1.3; }
+.od-card .sub { font-size: 13px; color: var(--dash-muted); margin: 0 0 14px; line-height: 1.4; }
+.od-multi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 22px; }
+.od-panel { min-width: 0; }
+.od-panel .pt { font-size: 14px; font-weight: 600; line-height: 1.3; margin: 0; overflow-wrap: anywhere; }
+.od-panel .pn { font-size: 13px; color: var(--dash-muted); margin: 2px 0 2px; }
+.od-panel .pn b { color: var(--dash-accent); font-weight: 700; }
+.od-key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--dash-muted); margin: -4px 0 14px; }
+.od-key i { display: inline-block; width: 18px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.od-row { margin: 0 0 14px; }
+.od-row .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 14px; }
+.od-row .name { min-width: 0; overflow-wrap: anywhere; }
+.od-row .val { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.od-row .val small { font-weight: 400; color: var(--dash-muted); font-size: 12px; margin-left: 6px; }
+.od-track { height: 16px; margin-top: 5px; border-radius: 4px; background: color-mix(in srgb, var(--dash-border) 55%, transparent); }
+.od-bar { height: 100%; border-radius: 4px; background: var(--dash-accent); min-width: 2px; }
+.od-bar.neg { background: var(--dash-danger); opacity: .75; }
+.od-tablewrap { overflow-x: auto; }
+.od table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.od th { text-align: right; font-size: 12px; font-weight: 600; color: var(--dash-muted); padding: 8px 10px;
+  border-bottom: 1px solid var(--dash-border); white-space: normal; vertical-align: bottom; line-height: 1.3; }
+.od td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--dash-border); white-space: nowrap; }
+.od th:first-child, .od td:first-child { padding-left: 0; }
+.od th.agency, .od td.agency { text-align: left; white-space: normal; min-width: 0; }
+@media (min-width: 700px) { .od td.agency { min-width: 12em; } .od th.wrap { max-width: 9em; } }
+.od td.rank { color: var(--dash-muted); width: 1%; padding-right: 4px; }
+.od th.rank { width: 1%; }
+.od td.up { color: var(--dash-accent); font-weight: 600; }
+.od .foot { font-size: 12px; color: var(--dash-muted); line-height: 1.5; margin-top: 22px; max-width: 80ch; }
+.od .err { color: var(--dash-danger); font-size: 13px; white-space: pre-wrap; }
+.od .loading { opacity: .45; transition: opacity .15s; }
+.od-vega svg { display: block; max-width: 100%; }
+.od-mapcard .od-vega { max-width: 860px; margin: 0 auto; }
+.od-names { list-style: none; padding: 0; margin: 10px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 20px; font-size: 13px; }
+.od-names li { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
+.od-names b { display: inline-block; min-width: 1.2em; }
+.od-names span { color: var(--dash-muted); white-space: nowrap; }
+@media (max-width: 900px) {
+  .od-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .od-grid, .od-grid.wide-left { grid-template-columns: minmax(0, 1fr); }
+  .od-multi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .od-names { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .od { padding: 18px 16px 32px; }
+  .od h1 { font-size: 22px; }
+  .od-kpi { padding: 12px 14px; }
+  .od-kpi .v { font-size: 26px; }
+  .od-kpi .l { font-size: 13px; }
+  .od-card { padding: 14px 14px 16px; }
+  .od-multi { gap: 14px 14px; }
+  .od-names { grid-template-columns: minmax(0, 1fr); }
+  .od .hide-sm { display: none; }
+  .od-row .val { text-align: right; }
+  .od-row .val small { display: block; margin-left: 0; }
+  .od td, .od th { padding-left: 6px; padding-right: 6px; }
+}
+`;
+
+const compact = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (a >= 1e4) return Math.round(n / 1e3) + "k";
+  if (a >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(Math.round(n));
+};
+const signed = (s, n) => (n > 0 ? "+" : n < 0 ? "−" : "") + s.replace("-", "");
+const pct = (p) => {
+  if (p == null || isNaN(p)) return "–";
+  const v = p * 100;
+  return signed(Math.abs(v) < 10 ? v.toFixed(1) + "%" : Math.round(v).toLocaleString() + "%", v);
+};
+const plusCompact = (n) => signed(compact(n), n);
+
+function Bars({ rows, value, label, right, note }) {
+  const shown = rows.filter((r) => r[value] != null);
+  const max = Math.max(...shown.map((r) => Math.abs(r[value])), 1e-9);
+  return shown.map((r) => (
+    <div className="od-row" key={r[label]}>
+      <div className="top">
+        <span className="name">{r[label]}</span>
+        <span className="val">
+          {right(r)}
+          {note && <small>{note(r)}</small>}
+        </span>
+      </div>
+      <div className="od-track">
+        <div className={r[value] < 0 ? "od-bar neg" : "od-bar"} style={{ width: `${(Math.abs(r[value]) / max) * 100}%` }} />
+      </div>
+    </div>
+  ));
+}
+
+// Chart colours. Hues and steps from a CVD-checked palette (blue for growth, red for decline, one blue ramp for
+// ordered size bands), each mode stepped for its own surface. Text and axes take the runtime's --dash-* colours.
+const PALETTE = {
+  light: {
+    up: "#2a78d6", down: "#e34948", divDown: "#c23b3a", divMid: "#e9e8e4", divUp: "#1c5cab",
+    bands: ["#104281", "#1c5cab", "#2a78d6", "#5598e7", "#86b6ef"],
+    seq: ["#dbe9fb", "#0d366b"], empty: "#f1f2f4",
+  },
+  dark: {
+    up: "#3987e5", down: "#e66767", divDown: "#e66767", divMid: "#3a3a37", divUp: "#6da7ec",
+    bands: ["#cde2fb", "#86b6ef", "#5598e7", "#2a78d6", "#1c5cab"],
+    seq: ["#1a2b42", "#9ec5f4"], empty: "#1b1b1b",
+  },
+};
+
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name, fallback) => (cs.getPropertyValue(name) || "").trim() || fallback;
+  const dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  return {
+    dark,
+    fg: v("--dash-fg", dark ? "#ededed" : "#171717"),
+    muted: v("--dash-muted", dark ? "#9ca3af" : "#6b7280"),
+    border: v("--dash-border", dark ? "#2a2a2a" : "#e5e7eb"),
+    bg: v("--dash-bg", dark ? "#0a0a0a" : "#ffffff"),
+    font: v("--dash-font", "system-ui, sans-serif"),
+    pal: PALETTE[dark ? "dark" : "light"],
+  };
+}
+
+// The theme follows the viewer's OS; re-read the CSS variables when it flips.
+function useTheme() {
+  const [theme, setTheme] = React.useState(readTheme);
+  React.useEffect(() => {
+    const update = () => setTheme((old) => {
+      const next = readTheme();
+      return JSON.stringify(next) === JSON.stringify(old) ? old : next;
+    });
+    update();
+    const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    if (!mq) return undefined;
+    if (mq.addEventListener) mq.addEventListener("change", update);
+    else mq.addListener(update);
+    return () => (mq.removeEventListener ? mq.removeEventListener("change", update) : mq.removeListener(update));
+  }, []);
+  return theme;
+}
+
+// Width of an element, for charts whose height must follow their width (the maps).
+function useWidth() {
+  const ref = React.useRef(null);
+  const [width, setWidth] = React.useState(0);
+  React.useEffect(() => {
+    if (!ref.current) return undefined;
+    const el = ref.current;
+    const measure = () => setWidth(Math.floor(el.getBoundingClientRect().width));
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+// Vega-Lite config: transparent background, the dashboard's font, quiet axes in the theme's colours.
+const vegaConfig = (t) => ({
+  background: "transparent",
+  font: t.font,
+  padding: { left: 2, right: 8, top: 6, bottom: 2 },
+  view: { stroke: null },
+  axis: {
+    labelColor: t.muted, titleColor: t.muted, labelFontSize: 12, titleFontSize: 12, titleFontWeight: 600,
+    gridColor: t.border, domainColor: t.border, tickColor: t.border, labelPadding: 4, titlePadding: 10,
+  },
+  legend: { labelColor: t.fg, titleColor: t.muted, labelFontSize: 12, titleFontSize: 12, symbolStrokeWidth: 0 },
+  text: { color: t.fg, fontSize: 12 },
+});
+
+// A US state choropleth over inlined geometry. `values` maps a 2-letter state code to a number (null = no data);
+// `extra` maps it to fields for the tooltip.
+function StateMap({ t, values, extra, scale, legendTitle, legendFormat, tooltip }) {
+  const [ref, width] = useWidth();
+  const features = React.useMemo(() => {
+    const byFips = {};
+    for (const [abbr, v] of Object.entries(values || {})) {
+      const f = ABBR_TO_FIPS[abbr];
+      if (f) byFips[f] = { value: v, ...((extra && extra[abbr]) || {}) };
+    }
+    return US_FEATURES.map((ft) => ({ ...ft, properties: { name: ft.properties.name, value: null, ...(byFips[ft.id] || {}) } }));
+  }, [values, extra]);
+  const spec = React.useMemo(() => {
+    if (!width) return null;
+    const w = Math.max(240, width);
+    return {
+      config: vegaConfig(t),
+      width: w,
+      height: Math.round(w * 0.6),
+      projection: { type: "identity" },
+      mark: { type: "geoshape", stroke: t.bg, strokeWidth: 0.8 },
+      encoding: {
+        color: {
+          condition: { test: "datum.properties.value == null", value: t.pal.empty },
+          field: "properties.value",
+          type: "quantitative",
+          scale,
+          legend: {
+            title: legendTitle, format: legendFormat, orient: "bottom", direction: "horizontal",
+            gradientLength: Math.min(300, w - 60), gradientThickness: 12, titleOrient: "top", labelOverlap: true,
+            // SI formats give every tick the same prefix ("$0M"); show zero plainly.
+            labelExpr: `datum.value === 0 ? '${String(legendFormat || "").startsWith("$") ? "$0" : "0%"}' : datum.label`,
+          },
+        },
+        tooltip,
+      },
+    };
+  }, [t, width, scale, legendTitle, legendFormat, tooltip]);
+  return (
+    <div ref={ref} className="od-vega">
+      {spec && <VegaChart spec={spec} data={features} />}
+    </div>
+  );
+}
+
+function Card({ title, sub, children, className }) {
+  return (
+    <section className={"od-card" + (className ? " " + className : "")}>
+      <h2>{title}</h2>
+      {sub && <p className="sub">{sub}</p>}
+      {children}
+    </section>
+  );
+}
+
+// True when the frame is phone-width (drives chart heights and label density).
+function useNarrow() {
+  const get = () => typeof window !== "undefined" && window.innerWidth < 560;
+  const [narrow, setNarrow] = React.useState(get);
+  React.useEffect(() => {
+    const on = () => setNarrow(get());
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  return narrow;
+}
+
+// ---- Transit agencies by size ----
+
+const share = (p) => (p == null || isNaN(p) ? "–" : Math.round(p * 100) + "%");
+const count = (n) => (n == null || isNaN(n) ? "–" : Math.round(n).toLocaleString());
+const big = (n) => {
+  if (n == null || isNaN(n)) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e8 ? 0 : 1) + "M";
+  if (a >= 1e3) return Math.round(n / 1e3) + "k";
+  return String(Math.round(n));
+};
+const one = (n) => (n == null || isNaN(n) ? "–" : n.toFixed(1));
+const yearOf = (v) => (v instanceof Date ? v.getUTCFullYear() : Number(String(v).slice(0, 4)));
+const clean = (s) => String(s || "").replace(/'/g, "").trim();
+const NO_BASE = "6 No 2019 data";
+// "1 Very large" -> "Very large (100M+)": the band with its 2019-trip range.
+const RANGES = { "1": "100M+", "2": "20M–100M", "3": "5M–20M", "4": "1M–5M", "5": "under 1M" };
+const bandName = (b) => String(b || "").replace(/^\d+ /, "");
+const bandFull = (b) => `${bandName(b)} (${RANGES[String(b).slice(0, 1)] || ""})`;
+const lower = (s) => s.charAt(0).toLowerCase() + s.slice(1);
+// Trips and service hours, each as a share of its own 2019 level, by year.
+function trendSpec(t, narrow) {
+  const x = { field: "year", type: "quantitative", axis: { title: null, format: "d", values: narrow ? [2005, 2010, 2015, 2020, 2025] : [2005, 2007, 2009, 2011, 2013, 2015, 2017, 2019, 2021, 2023, 2025], labelAngle: 0 }, scale: { domain: [2003, narrow ? 2027.5 : 2026.5], nice: false } };
+  const y = { field: "index", type: "quantitative", axis: { title: "Share of the 2019 level", format: ".0%", tickCount: 5 }, scale: { zero: false } };
+  const color = {
+    field: "series", type: "nominal",
+    scale: { domain: ["Service hours", "Trips"], range: [t.pal.alt, t.pal.up] },
+    legend: { orient: "top", title: null, direction: "horizontal", symbolType: "stroke", symbolStrokeWidth: 3 },
+  };
+  return {
+    config: vegaConfig(t),
+    height: narrow ? 240 : 300,
+    layer: [
+      { mark: { type: "rule", color: t.muted, strokeDash: [3, 3] }, encoding: { y: { datum: 1 } } },
+      {
+        mark: { type: "line", strokeWidth: 2.5, interpolate: "monotone", point: { size: 22, filled: true } },
+        encoding: {
+          x, y, color,
+          tooltip: [
+            { field: "year", title: "Year" },
+            { field: "series", title: "Series" },
+            { field: "raw", type: "quantitative", title: "Total", format: ",.0f" },
+            { field: "index", type: "quantitative", title: "vs 2019", format: ".0%" },
+          ],
+        },
+      },
+      {
+        transform: [{ filter: "datum.year == 2025" }],
+        mark: { type: "text", align: "left", dx: 6, fontSize: 12, fontWeight: 700 },
+        encoding: {
+          x, color,
+          y: { field: "index", type: "quantitative" },
+                    text: { field: "index", type: "quantitative", format: ".0%" },
+        },
+      },
+    ],
+  };
+}
+
+
+const BAND_ORDER = (narrow) => ["1 Very large", "2 Large", "3 Medium", "4 Small", "5 Very small"].map((b) => (narrow ? bandName(b) : bandFull(b)));
+
+// Dumbbell per band: average agency recovery, service restored vs not.
+function restoreSpec(t, narrow) {
+  const y = { field: "band", type: "nominal", sort: BAND_ORDER(narrow), axis: { title: null, labelLimit: narrow ? 130 : 220, labelFontSize: 12 } };
+  const x = (field) => ({ field, type: "quantitative", scale: { domain: [narrow ? 0.5 : 0.6, narrow ? 1.25 : 1.15] }, axis: { title: "Average agency recovery (riders vs 2019)", format: ".0%", values: narrow ? [0.6, 0.8, 1, 1.2] : [0.6, 0.7, 0.8, 0.9, 1, 1.1] } });
+  const tip = [
+    { field: "band", title: "Size band" },
+    { field: "restored", type: "quantitative", title: "Restored 2019 service", format: ".0%" },
+    { field: "n_restored", type: "quantitative", title: "Agencies (restored)" },
+    { field: "not_restored", type: "quantitative", title: "Did not restore", format: ".0%" },
+    { field: "n_not", type: "quantitative", title: "Agencies (not restored)" },
+  ];
+  return {
+    config: vegaConfig(t),
+    height: narrow ? 230 : 250,
+    layer: [
+      { mark: { type: "rule", color: t.muted, strokeDash: [3, 3] }, encoding: { x: { datum: 1 } } },
+      { transform: [{ filter: "datum.restored != null && datum.not_restored != null" }], mark: { type: "rule", color: t.border, strokeWidth: 4 }, encoding: { y, x: x("not_restored"), x2: { field: "restored" } } },
+      { transform: [{ filter: "datum.not_restored != null" }], mark: { type: "circle", size: 140, color: t.pal.down }, encoding: { y, x: x("not_restored"), tooltip: tip } },
+      { transform: [{ filter: "datum.restored != null" }], mark: { type: "circle", size: 140, color: t.pal.up }, encoding: { y, x: x("restored"), tooltip: tip } },
+      {
+        transform: [{ filter: "datum.not_restored != null" }],
+        mark: { type: "text", align: "right", dx: -10, fontSize: 12, fontWeight: 700, color: t.pal.down },
+        encoding: { y, x: x("not_restored"), text: { field: "not_restored", type: "quantitative", format: ".0%" } },
+      },
+      {
+        transform: [{ filter: "datum.restored != null" }],
+        mark: { type: "text", align: "left", dx: 10, fontSize: 12, fontWeight: 700, color: t.pal.up },
+        encoding: { y, x: x("restored"), text: { field: "restored", type: "quantitative", format: ".0%" } },
+      },
+    ],
+  };
+}
+
+// Riders vs service by band, grouped horizontal bars with labels.
+function bandSpec(t, narrow) {
+  const by = { field: "band", type: "nominal", sort: BAND_ORDER(narrow), axis: { title: null, labelLimit: narrow ? 110 : 200, labelFontSize: 12 } };
+  const yo = { field: "measure", sort: ["Riders", "Service"] };
+  return {
+    config: vegaConfig(t),
+    height: narrow ? 280 : 260,
+    encoding: {
+      color: {
+        field: "measure", type: "nominal", sort: ["Riders", "Service"],
+        scale: { domain: ["Riders", "Service"], range: [t.pal.up, t.pal.alt] },
+        legend: { orient: "top", title: null, symbolType: "square", labelExpr: "datum.label == 'Riders' ? 'Riders vs 2019' : 'Service hours vs 2019'" },
+      },
+    },
+    layer: [
+      {
+        mark: { type: "bar", cornerRadiusEnd: 3, height: { band: 0.85 } },
+        encoding: {
+          y: by, yOffset: yo,
+          x: { field: "value", type: "quantitative", scale: { domain: [0, 1.2] }, axis: { title: "Latest 12 months as a share of 2019", format: ".0%", values: [0, 0.25, 0.5, 0.75, 1] } },
+          tooltip: [
+            { field: "band", title: "Size band" },
+            { field: "measure", title: "Measure" },
+            { field: "value", type: "quantitative", title: "vs 2019", format: ".0%" },
+          ],
+        },
+      },
+      { mark: { type: "rule", color: t.muted, strokeDash: [3, 3] }, encoding: { x: { datum: 1 }, color: null } },
+      {
+        mark: { type: "text", align: "left", dx: 4, fontSize: 11, fontWeight: 600, color: t.fg },
+        encoding: { y: by, yOffset: yo, x: { field: "value", type: "quantitative" }, text: { field: "value", type: "quantitative", format: ".0%" }, color: null },
+      },
+    ],
+  };
+}
+
+// Mode mix: 100% stacked bars per band, percent labels inside segments wide enough to hold them.
+function mixSpec(t, narrow) {
+  const domain = ["Bus", "Rail", "Ferry"];
+  return {
+    config: vegaConfig(t),
+    height: narrow ? 230 : 240,
+    transform: [
+      { calculate: "indexof(['Bus','Rail','Ferry'], datum.mode)", as: "mo" },
+      { stack: "share", groupby: ["band"], sort: [{ field: "mo" }], as: ["s0", "s1"] },
+      { calculate: "(datum.s0 + datum.s1) / 2", as: "mid" },
+    ],
+    encoding: { y: { field: "band", type: "nominal", sort: BAND_ORDER(narrow), axis: { title: null, labelLimit: narrow ? 110 : 200, labelFontSize: 12 } } },
+    layer: [
+      {
+        mark: { type: "bar", height: { band: 0.66 }, stroke: t.bg, strokeWidth: 1 },
+        encoding: {
+          x: { field: "s0", type: "quantitative", scale: { domain: [0, 1] }, axis: { title: "Share of the band's trips, latest 12 months", format: ".0%", values: [0, 0.25, 0.5, 0.75, 1] } },
+          x2: { field: "s1" },
+          color: { field: "mode", type: "nominal", scale: { domain, range: [t.pal.up, t.pal.violet, t.pal.teal] }, legend: { orient: "top", title: null, symbolType: "square" } },
+          tooltip: [
+            { field: "band", title: "Size band" },
+            { field: "mode", title: "Mode" },
+            { field: "share", type: "quantitative", title: "Share of trips", format: ".1%" },
+            { field: "trips", type: "quantitative", title: "Trips", format: ",.0f" },
+          ],
+        },
+      },
+      {
+        transform: [{ filter: "datum.share >= 0.07" }],
+        mark: { type: "text", fontSize: 12, fontWeight: 700, color: "#ffffff" },
+        encoding: { x: { field: "mid", type: "quantitative" }, text: { field: "share", type: "quantitative", format: ".0%" } },
+      },
+    ],
+  };
+}
+
+export default function Dashboard({ dashboard, givens }) {
+  const t0 = useTheme();
+  const t = React.useMemo(() => ({
+    ...t0,
+    pal: {
+      ...t0.pal,
+      alt: t0.dark ? "#f0a030" : "#c46a00",
+      violet: t0.dark ? "#9b78e0" : "#7446c4",
+      teal: t0.dark ? "#1f9e8a" : "#0f8a78",
+    },
+  }), [t0]);
+  const narrow = useNarrow();
+  const kQ = useQuery({ query: "agencies_by_size", givens });
+  const restoreQ = useQuery({ query: "size_restore", givens });
+  const bandsQ = useQuery({ query: "size_bands", givens });
+  const fixedQ = useQuery({ query: "size_fixed_route", givens });
+  const mixQ = useQuery({ query: "size_mode_mix", givens });
+  const trendQ = useQuery({ query: "size_trend", givens });
+  const bigQ = useQuery({ query: "size_largest", givens });
+  const all = [kQ, restoreQ, bandsQ, fixedQ, mixQ, trendQ, bigQ];
+  const error = all.map((q) => q.error).find(Boolean);
+  const busy = all.some((q) => q.loading);
+  const k = kQ.rows[0] || {};
+  const st = clean(givens && givens.STATE);
+  const place = st || "US";
+
+  // Restoring service
+  const restore = React.useMemo(() => restoreQ.rows.filter((r) => r.size_band !== NO_BASE).map((r) => ({
+    band: narrow ? bandName(r.size_band) : bandFull(r.size_band),
+    order: r.size_band,
+    restored: r.agencies_restored > 0 ? r.recovery_if_restored : null,
+    not_restored: r.agencies_not_restored > 0 ? r.recovery_if_not_restored : null,
+    n_restored: r.agencies_restored,
+    n_not: r.agencies_not_restored,
+  })), [restoreQ.rows, narrow]);
+  const both = restore.filter((r) => r.restored != null && r.not_restored != null);
+  const nR = restore.reduce((s, r) => s + (r.n_restored || 0), 0);
+  const nN = restore.reduce((s, r) => s + (r.n_not || 0), 0);
+  const avgR = nR ? restore.reduce((s, r) => s + (r.restored || 0) * r.n_restored, 0) / nR : null;
+  const avgN = nN ? restore.reduce((s, r) => s + (r.not_restored || 0) * r.n_not, 0) / nN : null;
+  const everyBand = both.length > 0 && both.length === restore.length && both.every((r) => r.restored > r.not_restored);
+  const widest = both.slice().sort((a, b) => (b.restored - b.not_restored) - (a.restored - a.not_restored))[0];
+  const title = avgR != null && avgN != null
+    ? `${place === "US" ? "Agencies" : place + ": agencies"} that restored their 2019 service are back to ${share(avgR)} of 2019 riders; those that did not, ${share(avgN)}`
+    : dashboard.title;
+  const restoreTitle = widest
+    ? `${everyBand ? "True in every size band. " : ""}The gap is widest at ${lower(bandName(widest.order))} agencies: ${share(widest.restored)} against ${share(widest.not_restored)}`
+    : "Recovery with and without 2019 service restored";
+
+  // Bands
+  const bands = bandsQ.rows.filter((r) => r.size_band !== NO_BASE);
+  const noBase = bandsQ.rows.find((r) => r.size_band === NO_BASE);
+  const bandRows = React.useMemo(() => bands.flatMap((r) => [
+    { band: narrow ? bandName(r.size_band) : bandFull(r.size_band), order: r.size_band, measure: "Riders", value: r.recovery_vs_2019 },
+    { band: narrow ? bandName(r.size_band) : bandFull(r.size_band), order: r.size_band, measure: "Service", value: r.service_vs_2019 },
+  ]).filter((r) => r.value != null), [bandsQ.rows, narrow]);
+  const bestBand = bands.slice().sort((a, b) => b.recovery_vs_2019 - a.recovery_vs_2019)[0];
+  const leastService = bands.slice().sort((a, b) => a.service_vs_2019 - b.service_vs_2019)[0];
+  const bandTitle = bestBand && leastService
+    ? `${bandName(bestBand.size_band)} agencies have recovered most (${share(bestBand.recovery_vs_2019)}); ${lower(bandName(leastService.size_band))} agencies run the least of their 2019 service (${share(leastService.service_vs_2019)})`
+    : "Riders and service by size band";
+  const fixedBy = Object.fromEntries(fixedQ.rows.map((r) => [r.size_band, r]));
+
+  // Mode mix
+  const mix = React.useMemo(() => mixQ.rows.filter((r) => r.size_band !== NO_BASE).map((r) => ({
+    band: narrow ? bandName(r.size_band) : bandFull(r.size_band),
+    order: r.size_band,
+    mode: r.mode_group,
+    share: r.share_of_band,
+    trips: r.trips_latest_12m,
+  })), [mixQ.rows, narrow]);
+  const mixTop = mix.filter((r) => r.mode === "Rail").sort((x, y) => y.share - x.share)[0];
+  const busTop = mix.filter((r) => r.mode === "Bus" && (!mixTop || r.order !== mixTop.order)).sort((x, y) => y.share - x.share)[0];
+  const mixTitle = mixTop && busTop
+    ? `Rail carries ${share(mixTop.share)} of ${lower(bandName(mixTop.order))} agencies' trips; buses carry ${share(busTop.share)} at ${lower(bandName(busTop.order))} ones`
+    : busTop ? `Buses carry ${share(busTop.share)} of ${lower(bandName(busTop.order))} agencies' trips` : "Mode mix by size band";
+
+  // Trend, indexed to 2019
+  const trend = React.useMemo(() => {
+    const rows = trendQ.rows.map((r) => ({ ...r, year: yearOf(r.report_year) }));
+    const base = rows.find((r) => r.year === 2019);
+    if (!base) return [];
+    return rows.flatMap((r) => [
+      { year: r.year, series: "Trips", raw: r.trips_total, index: base.trips_total ? r.trips_total / base.trips_total : null },
+      { year: r.year, series: "Service hours", raw: r.revenue_hours, index: base.revenue_hours ? r.revenue_hours / base.revenue_hours : null },
+    ]).filter((r) => r.index != null);
+  }, [trendQ.rows]);
+  const t25 = trend.find((r) => r.year === 2025 && r.series === "Trips");
+  const s25 = trend.find((r) => r.year === 2025 && r.series === "Service hours");
+  const trendTitle = t25 && s25
+    ? `In 2025 agencies ran ${share(s25.index)} of their 2019 service and carried ${share(t25.index)} of their 2019 riders`
+    : "Trips and service hours by year";
+
+  const tphRows = bands.filter((r) => fixedBy[r.size_band] && fixedBy[r.size_band].trips_per_hour_12m != null);
+  const tphHi = tphRows[0], tphLo = tphRows[tphRows.length - 1];
+  const tphTitle = tphHi && tphLo && tphHi !== tphLo
+    ? `A service hour carries ${one(fixedBy[tphHi.size_band].trips_per_hour_12m)} riders at ${lower(bandName(tphHi.size_band))} agencies, ${one(fixedBy[tphLo.size_band].trips_per_hour_12m)} at ${lower(bandName(tphLo.size_band))} ones`
+    : "Riders per service hour by size band";
+  const restoreChart = React.useMemo(() => restoreSpec(t, narrow), [t, narrow]);
+  const bandChart = React.useMemo(() => bandSpec(t, narrow), [t, narrow]);
+  const mixChart = React.useMemo(() => mixSpec(t, narrow), [t, narrow]);
+  const trendChart = React.useMemo(() => trendSpec(t, narrow), [t, narrow]);
+
+  return (
+    <div className="od">
+      <style>{CSS}</style>
+      <h1>{title}</h1>
+      <Controls />
+      {error && <div className="err">{String(error)}</div>}
+      <div className={busy ? "loading" : ""}>
+        <div className="od-kpis">
+          <div className="od-kpi hot">
+            <div className="v">{share(k.recovery_vs_2019)}</div>
+            <div className="l">Of 2019 riders</div>
+            <div className="s">{big(k.trips_latest_12m)} trips in the latest 12 months vs {big(k.trips_2019)} in 2019</div>
+          </div>
+          <div className="od-kpi">
+            <div className="v">{share(k.service_vs_2019)}</div>
+            <div className="l">Of 2019 service running</div>
+            <div className="s">Vehicle revenue hours, latest 12 months vs 2019</div>
+          </div>
+          <div className="od-kpi">
+            <div className="v">{pct(k.yoy_change)}</div>
+            <div className="l">Trips vs the year before</div>
+            <div className="s">Sep 2025 to Aug 2026 vs the 12 months before</div>
+          </div>
+          <div className="od-kpi">
+            <div className="v">{count(k.agencies)}</div>
+            <div className="l">Agencies</div>
+            <div className="s">{one(k.trips_per_hour_12m)} riders per service hour across them</div>
+          </div>
+        </div>
+
+        <Card
+          title={restoreTitle}
+          sub={`Average recovery of agencies running at least their 2019 service hours (blue, ${count(nR)} agencies) and of those running less (red, ${count(nN)}). Agencies above 2x of 2019 left out as reporting outliers. Correlation, not proof: agencies that restored service may also have had stronger demand.`}
+        >
+          <div className="od-key">
+            <span><i style={{ borderColor: t.pal.up }} />Restored 2019 service</span>
+            <span><i style={{ borderColor: t.pal.down }} />Did not</span>
+          </div>
+          <div className="od-vega">{restore.length > 0 && <VegaChart spec={restoreChart} data={restore} />}</div>
+        </Card>
+
+        <div className="od-grid">
+          <Card title={bandTitle} sub="Each band's latest 12 months as a share of 2019: riders (trips) and service (vehicle revenue hours). Bands by agency's total trips in 2019.">
+            <div className="od-vega">{bandRows.length > 0 && <VegaChart spec={bandChart} data={bandRows} />}</div>
+          </Card>
+          <Card title={mixTitle} sub="Each band's trips in the latest 12 months by bus, rail and ferry. Segments under 7% are unlabelled; hover for the figure.">
+            <div className="od-vega">{mix.length > 0 && <VegaChart spec={mixChart} data={mix} />}</div>
+          </Card>
+        </div>
+
+        <div className="od-grid wide-left">
+          <Card title={trendTitle} sub={`${place === "US" ? "All US agencies" : place}${clean(givens && givens.SIZE_BAND) ? ", " + lower(bandName(clean(givens.SIZE_BAND))) + " agencies" : ""}, 2003 to 2025, each line as a share of its own 2019 level.`}>
+            <div className="od-vega">{trend.length > 0 && <VegaChart spec={trendChart} data={trend} />}</div>
+          </Card>
+          <Card title={tphTitle} sub="Fixed-route trips per vehicle revenue hour (no dial-a-ride or vanpool), latest 12 months, with 2019 for comparison.">
+            <Bars
+              rows={bands.map((r) => ({ ...r, name: bandFull(r.size_band), tph: fixedBy[r.size_band] ? fixedBy[r.size_band].trips_per_hour_12m : null, tph19: fixedBy[r.size_band] ? fixedBy[r.size_band].trips_per_hour_2019 : null }))}
+              value="tph"
+              label="name"
+              right={(r) => one(r.tph) + " an hour"}
+              note={(r) => one(r.tph19) + " in 2019"}
+            />
+          </Card>
+        </div>
+
+        <Card title={bigQ.rows[0] ? `${bigQ.rows[0].agency_name.trim()} alone carried ${big(bigQ.rows[0].trips_latest_12m)} trips in the latest 12 months` : "Largest agencies"} sub="The largest agencies in the selection by trips in 2019.">
+          <div className="od-tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th className="rank">#</th>
+                  <th className="agency">Agency</th>
+                  <th className="hide-sm">Trips, 2019</th>
+                  <th>Trips, latest 12 months</th>
+                  <th>Riders vs 2019</th>
+                  <th className="hide-sm">Service vs 2019</th>
+                  <th className="hide-sm">vs year before</th>
+                  <th className="hide-sm">Riders per hour</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bigQ.rows.map((r, i) => (
+                  <tr key={r.agency_name + r.city + r.state}>
+                    <td className="rank">{i + 1}</td>
+                    <td className="agency">{r.agency_name.trim()}<span style={{ color: "var(--dash-muted)" }}>, {r.city} {r.state}</span></td>
+                    <td className="hide-sm">{big(r.trips_2019)}</td>
+                    <td>{big(r.trips_latest_12m)}</td>
+                    <td className={r.recovery_vs_2019 >= 1 ? "up" : ""}>{share(r.recovery_vs_2019)}</td>
+                    <td className="hide-sm">{share(r.service_vs_2019)}</td>
+                    <td className="hide-sm">{pct(r.yoy_change)}</td>
+                    <td className="hide-sm">{one(r.trips_per_hour_12m)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+      <p className="foot">
+        Source: FTA National Transit Database, Complete Monthly Ridership (with Adjustments and Estimates), public domain.
+        Latest 12 months = September 2025 to August 2026. Size bands by each agency's total trips in 2019: very large
+        100M+, large 20M to 100M, medium 5M to 20M, small 1M to 5M, very small under 1M.
+        {noBase ? ` ${count(noBase.agencies)} agencies with no 2019 trips (${big(noBase.trips_latest_12m)} trips in the latest 12 months) have no baseline and are left out of the band charts; they are in the totals above.` : ""}
+        {" "}The trend starts in 2003 (2002 service hours are incomplete) and stops at 2025 (2026 is a partial year).
+      </p>
+    </div>
+  );
+}
+const US_FEATURES = [];
+const ABBR_TO_FIPS = {};

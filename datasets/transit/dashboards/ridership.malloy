@@ -1,19 +1,54 @@
 ##! experimental.givens
 import "../transit.malloy"
 
-#" How a state's public transit is used and how far it has come back since 2019, by agency, mode and month.
-# artifact { title="Transit Ridership by State" } dashboard { columns=6 }
+// Drawn by ridership.jsx. Every query below is presentation only: the model's own measures and views, filtered.
+
+#" How a state's public transit is used and how far it has come back since 2019: riders against service, by mode
+#" and by agency, with every state on a map. Latest 12 months = September 2025 to August 2026.
+# artifact { title="Transit ridership by state: how far each has come back since 2019" } dashboard { columns=6 }
 query: ridership is transit -> {
   where:
     state ~ $STATE,
     agency_name ~ $AGENCY,
     mode_group ~ $MODE_GROUP
-  # colspan=1
-  aggregate: trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m, agencies
-  # colspan=3
-  nest:
-    monthly_trips
-    top_agencies
-    by_mode
-    beyond_2019
+  aggregate:
+    trips_latest_12m, trips_2019, yoy_change, recovery_vs_2019, service_vs_2019, trips_per_hour_12m,
+    trips_per_hour_2019, agencies_12m
+}
+
+#" Map: every state's recovery (latest 12 months of trips as a share of 2019). Ignores the State and Agency
+#" filters so the selected state can be seen against the rest; follows Bus / Rail / Ferry.
+query: ridership_states is transit -> {
+  where: mode_group ~ $MODE_GROUP
+  group_by: state
+  aggregate: recovery_vs_2019, service_vs_2019, trips_latest_12m, trips_2019
+  having: trips_2019 > 0 and trips_latest_12m > 0
+}
+
+#" Chart: trips and vehicle revenue hours by year, 2003 to 2025 (2002 service hours are incomplete; 2026 is a
+#" partial year).
+query: ridership_trend is transit -> service_and_trips_by_year + {
+  where:
+    state ~ $STATE,
+    agency_name ~ $AGENCY,
+    mode_group ~ $MODE_GROUP,
+    report_year >= 2003 and report_year <= 2025
+}
+
+#" Chart: each mode's latest 12 months and recovery since 2019.
+query: ridership_modes is transit -> by_mode + {
+  where:
+    state ~ $STATE,
+    agency_name ~ $AGENCY,
+    mode_group ~ $MODE_GROUP
+  aggregate: trips_2019, service_vs_2019
+}
+
+#" Table: the largest agencies in the selection by latest-12-month trips.
+query: ridership_agencies is transit -> top_agencies + {
+  where:
+    state ~ $STATE,
+    agency_name ~ $AGENCY,
+    mode_group ~ $MODE_GROUP
+  aggregate: trips_2019, service_vs_2019
 }
