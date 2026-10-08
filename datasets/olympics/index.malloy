@@ -1,0 +1,83 @@
+##" Every athlete entry at the Summer and Winter Olympics, Athens 1896 to Rio 2016: sport, event, country (NOC and modern region), sex, age, height, weight and medal, for medal tables and participation trends. Athlete names are not loaded; use aggregates. Data: Olympic history 1896-2016 compiled by OlyMADMen / sports-reference, CC0 via TidyTuesday (2021-07-27), loaded 2026-10-08.
+## dataset { title="Olympic History (1896 - 2016)" }
+
+// Loaded by load_olympics.sql into MotherDuck ltools.olympics (271,116 entries, 231 NOC codes).
+
+#" National Olympic Committee codes mapped to a modern region (e.g. URS and RUS both map to Russia).
+source: regions is motherduck.table('olympics.regions') extend {
+  primary_key: noc
+  measure:
+    #" Number of NOC codes.
+    noc_count is count()
+}
+
+#" One row per athlete per event per Games, 1896-2016: medal tables, participation by country, sport, sex and era.
+#(agent) Grain: one athlete in one event at one Games. A relay or team sport gives one row per team member.
+#(agent) For medal tables use `medals`, `golds`, `silvers`, `bronzes`: they count a team medal ONCE (deduplicated by Games, event, team and medal). `athlete_medals` counts every medalled athlete row and over-counts team events. Known limit of the dedup: two athletes from the same team winning the same medal in one individual event (e.g. two shared bronzes in boxing or judo) count once.
+#(agent) The data stops at Rio 2016 (Summer) and Sochi 2014 (Winter); there is nothing on Tokyo 2020 or later. 1906 Athens is included although the IOC no longer counts it. Art Competitions (1912-1948) appear as a sport; exclude `sport = 'Art Competitions'` for athletic medals only.
+#(agent) `noc` is the committee code at the time (URS, GDR, FRG all exist); group by `region.region` for a modern-country view. `team` can be a club or boat name (e.g. "United States-1") in early Games.
+#(agent) Height and weight are missing for much of the early era; check `with_height` before comparing averages across eras. Do not rank or single out individual athletes' bodies.
+source: athlete_events is motherduck.table('olympics.athlete_events') extend {
+  join_one: region is regions on noc = region.noc
+
+  dimension:
+    #" Decade of the Games, e.g. 1960.
+    decade is floor(`year` / 10) * 10
+    #" Medal key for team dedup: Games + event + team + medal (null when no medal).
+    medal_key is concat(games, '|', event, '|', team, '|', medal)
+
+  measure:
+    #" Athlete entries (rows): one per athlete per event per Games.
+    entries is count()
+    #" Distinct athletes.
+    athletes is count(athlete_id)
+    #" Distinct Games editions.
+    games_count is count(games)
+    #" Distinct events contested.
+    events is count(concat(games, '|', event))
+    #" Distinct NOCs (countries/teams) taking part.
+    nocs is count(noc)
+    #" Medals won, team medals counted once.
+    medals is count(medal_key) { where: medal is not null }
+    #" Gold medals, team medals counted once.
+    golds is count(medal_key) { where: medal = 'Gold' }
+    #" Silver medals, team medals counted once.
+    silvers is count(medal_key) { where: medal = 'Silver' }
+    #" Bronze medals, team medals counted once.
+    bronzes is count(medal_key) { where: medal = 'Bronze' }
+    #" Medalled athlete rows: every member of a medal team counts (over-counts team medals).
+    athlete_medals is count() { where: medal is not null }
+    #" Share of distinct athletes who are women.
+    # percent
+    female_share is count(athlete_id) { where: sex = 'F' } / nullif(count(athlete_id), 0)
+    #" Average age at competition, years.
+    avg_age is age.avg()
+    #" Average height, cm (where recorded).
+    avg_height_cm is height_cm.avg()
+    #" Average weight, kg (where recorded).
+    avg_weight_kg is weight_kg.avg()
+    #" Entries that have a recorded height.
+    with_height is count() { where: height_cm is not null }
+
+  #" All-time medal table by modern region, team medals counted once.
+  view: medal_table is {
+    group_by: region.region
+    aggregate: golds, silvers, bronzes, medals
+    order_by: golds desc
+    limit: 30
+  }
+
+  #" Athletes, events and share of women at each Games.
+  view: games_over_time is {
+    group_by: `year`, season
+    aggregate: athletes, events, nocs, female_share
+    order_by: `year`, season
+  }
+
+  #" Sports by number of athletes and medals awarded.
+  view: sports is {
+    group_by: sport
+    aggregate: athletes, events, medals
+    order_by: athletes desc
+  }
+}

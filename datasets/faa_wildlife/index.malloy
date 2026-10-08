@@ -1,0 +1,125 @@
+##" Every wildlife strike reported to the US FAA since 1990: where (airport, state), when, which aircraft and operator, which species, flight phase, damage, effect on flight, injuries and repair costs. For questions about which airports, species, seasons and flight phases cause strikes and damage. Free-text remarks are not loaded. Data: FAA Wildlife Strike Database, public domain (export built 2026-10-06, loaded 2026-10-08).
+## dataset { title="FAA Wildlife Strikes (1990 - 2026)" }
+
+// Loaded by load_faa_wildlife.sql into MotherDuck ltools.faa_wildlife.strikes (357,114 reports, 1990-01-02 to 2026-10-01).
+
+#" One row per reported wildlife strike, 1990-2026: strikes, damage and repair cost by airport, state, species, aircraft, phase of flight and month.
+#(agent) Reporting is voluntary and rose sharply after about 2009, so a rising count partly measures reporting effort, not only strikes. Say so before presenting a trend; `damaging_strikes` is less sensitive to reporting effort than `strikes`.
+#(agent) Any cost is reported on only 9,202 strikes (2.6%; repair cost on 5,452). `repair_cost` and `total_cost` are sums of what was reported, not the true cost of strikes; use the `_infl_adj` versions to compare years. Never divide a cost sum by all strikes as an average.
+#(agent) The latest year is partial (data runs to 2026-10-01). Many strikes have no airport (`airport_id` 'ZZZZ' = unknown/en route). `species` includes "Unknown bird - small/medium/large".
+#(agent) `damage_level`: None, Minor, Uncertain, Substantial, Destroyed. `operator` names real airlines; per-airline comparisons mostly reflect fleet size and reporting practice, not safety.
+source: strikes is motherduck.table('faa_wildlife.strikes') extend {
+  primary_key: strike_id
+
+  dimension:
+    #" Damage level in words (FAA codes N, M, M?, S, D).
+    damage_level is damage_level_code ?
+      pick 'None' when 'N'
+      pick 'Minor' when 'M'
+      pick 'Uncertain' when 'M?'
+      pick 'Substantial' when 'S'
+      pick 'Destroyed' when 'D'
+      else null
+    #" True when the report records any damage (Minor or worse, including Uncertain).
+    is_damaging is damage_level_code = ('M' | 'M?' | 'S' | 'D') or indicated_damage
+    #" Aircraft class in words.
+    aircraft_class is aircraft_class_code ?
+      pick 'Airplane' when 'A'
+      pick 'Helicopter' when 'B'
+      pick 'Glider' when 'C'
+      pick 'Ultralight' when 'J'
+      else null
+    #" Maximum take-off mass band.
+    aircraft_mass is aircraft_mass_code ?
+      pick '1: 2,250 kg or less' when 1
+      pick '2: 2,251-5,700 kg' when 2
+      pick '3: 5,701-27,000 kg' when 3
+      pick '4: 27,001-272,000 kg' when 4
+      pick '5: above 272,000 kg' when 5
+      else null
+    #" Engine type in words.
+    engine_type is engine_type_code ?
+      pick 'Piston' when 'A'
+      pick 'Turbojet' when 'B'
+      pick 'Turboprop' when 'C'
+      pick 'Turbofan' when 'D'
+      pick 'None (glider)' when 'E'
+      pick 'Turboshaft (helicopter)' when 'F'
+      else null
+    #" True when any engine ingested the animal.
+    engine_ingestion is ingested_engine1 or ingested_engine2 or ingested_engine3 or ingested_engine4
+
+  measure:
+    #" Reported strikes.
+    strikes is count()
+    #" Strikes that damaged the aircraft.
+    damaging_strikes is count() { where: is_damaging }
+    #" Share of strikes that damaged the aircraft.
+    # percent
+    damage_rate is damaging_strikes / nullif(strikes, 0)
+    #" Strikes with substantial damage or a destroyed aircraft.
+    serious_damage_strikes is count() { where: damage_level_code = ('S' | 'D') }
+    #" Strikes where an engine ingested wildlife.
+    ingestion_strikes is count() { where: engine_ingestion }
+    #" Strikes that changed the flight (precautionary landing, aborted take-off, engine shutdown, other).
+    flight_effect_strikes is count() { where: effect is not null and effect != 'None' }
+    #" Reported repair cost, US dollars as reported (nominal).
+    # currency
+    repair_cost is cost_repairs.sum()
+    #" Reported repair plus other cost, nominal US dollars.
+    # currency
+    total_cost is cost_repairs.sum() + cost_other.sum()
+    #" Reported repair plus other cost, inflation-adjusted US dollars.
+    # currency
+    total_cost_infl_adj is cost_repairs_infl_adj.sum() + cost_other_infl_adj.sum()
+    #" Strikes with any cost reported.
+    strikes_with_cost is count() { where: cost_repairs is not null or cost_other is not null }
+    #" Hours aircraft were out of service (where reported).
+    out_of_service_hours is hours_out_of_service.sum()
+    #" People injured.
+    total_injuries is injuries.sum()
+    #" People killed.
+    total_fatalities is fatalities.sum()
+    #" Distinct airports with a strike.
+    airports is count(airport_id)
+    #" Distinct species recorded.
+    species_count is count(species_id)
+
+  #" Strikes and damaging strikes by year (read with the voluntary-reporting caveat).
+  view: by_year is {
+    group_by: incident_year
+    aggregate: strikes, damaging_strikes, damage_rate, total_cost_infl_adj
+    order_by: incident_year
+  }
+
+  #" Airports with the most strikes and damaging strikes.
+  view: top_airports is {
+    where: airport_id != 'ZZZZ'
+    group_by: airport_id, airport, state
+    aggregate: strikes, damaging_strikes, damage_rate
+    order_by: strikes desc
+    limit: 25
+  }
+
+  #" Species by strikes, damage and reported cost.
+  view: top_species is {
+    group_by: species
+    aggregate: strikes, damaging_strikes, damage_rate, total_cost_infl_adj
+    order_by: damaging_strikes desc
+    limit: 25
+  }
+
+  #" Strikes and damage by phase of flight.
+  view: by_phase is {
+    group_by: phase_of_flight
+    aggregate: strikes, damaging_strikes, damage_rate
+    order_by: strikes desc
+  }
+
+  #" Seasonality: strikes by calendar month.
+  view: by_month is {
+    group_by: incident_month
+    aggregate: strikes, damaging_strikes
+    order_by: incident_month
+  }
+}

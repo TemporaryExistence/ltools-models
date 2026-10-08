@@ -1,0 +1,162 @@
+##" The LEGO catalog from Rebrickable: every official set since 1949 with its theme, year and part count, the full parts inventory of each set (part, colour, quantity, spares), minifigures, and part/colour metadata. For questions about themes, set sizes, colours and parts over time. No prices. Data: Rebrickable (rebrickable.com), used with credit; downloaded 2026-10-08. LEGO is a trademark of the LEGO Group, which does not endorse this.
+## dataset { title="LEGO Catalog (Rebrickable)" }
+
+// Loaded by load_lego.sql into MotherDuck ltools.lego (all 12 Rebrickable CSV tables).
+
+#" Theme lookup without the parent join; use `themes` instead.
+source: themes_base is motherduck.table('lego.themes') extend {
+  primary_key: id
+}
+
+#" LEGO themes and sub-themes (Star Wars, Technic, City...), each with its parent theme.
+source: themes is themes_base extend {
+  join_one: parent is themes_base on parent_id = parent.id
+  dimension:
+    #" Top-level theme name (the parent's name when this is a sub-theme).
+    top_theme is coalesce(parent.name, name)
+  measure:
+    #" Number of themes.
+    theme_count is count()
+}
+
+#" Brick colours with RGB, transparency, and first/last year seen.
+source: colors is motherduck.table('lego.colors') extend {
+  primary_key: id
+  measure:
+    #" Number of colours.
+    color_count is count()
+}
+
+#" Part category names (Bricks, Plates, Minifig Heads...).
+source: part_categories is motherduck.table('lego.part_categories') extend {
+  primary_key: id
+}
+
+#" Every LEGO part number with its name, category and material.
+source: parts is motherduck.table('lego.parts') extend {
+  primary_key: part_num
+  join_one: category is part_categories on part_cat_id = category.id
+  measure:
+    #" Number of distinct part numbers.
+    part_count is count()
+}
+
+#" One row per set: name, release year, theme and part count, for set sizes and theme trends since 1949.
+#(agent) `sets` includes books, gear, keychains and other products with 0-1 parts; filter `num_parts > 0` (or higher) when asking about building sets.
+#(agent) `theme.name` is the immediate theme; `theme.top_theme` rolls sub-themes up (e.g. "Star Wars Episode 4/5/6" to "Star Wars"). Themes nest at most two levels in this rollup.
+#(agent) Release years run to 2027 because Rebrickable lists announced sets. There are no prices anywhere in this data.
+source: sets is motherduck.table('lego.sets') extend {
+  primary_key: set_num
+  join_one: theme is themes on theme_id = theme.id
+  measure:
+    #" Number of sets.
+    set_count is count()
+    #" Total parts across sets (Rebrickable's num_parts, spares excluded).
+    total_parts is num_parts.sum()
+    #" Average parts per set.
+    avg_parts_per_set is num_parts.avg()
+
+  #" Sets released and average size by year.
+  view: by_year is {
+    group_by: `year`
+    aggregate: set_count, avg_parts_per_set
+    order_by: `year`
+  }
+
+  #" Top-level themes by number of sets.
+  view: top_themes is {
+    group_by: theme.top_theme
+    aggregate: set_count, total_parts, avg_parts_per_set
+    order_by: set_count desc
+    limit: 25
+  }
+}
+
+#" Inventory versions: links each inventory id to a set (or minifigure) and version number.
+source: inventories is motherduck.table('lego.inventories') extend {
+  primary_key: id
+  join_one: lego_set is sets on set_num = lego_set.set_num
+}
+
+#" Every part line in every set inventory: part, colour, quantity and spare flag, for colour and part usage across sets and years.
+#(agent) Grain: one inventory line (inventory, part, colour, spare flag). Pieces = `pieces` (sum of quantity), not row count.
+#(agent) A set can have several inventory versions; filter `inventory.version = 1` to count each set once. Minifigure inventories (set numbers starting `fig-`) have no matching set, so `inventory.lego_set.*` is null for them.
+#(agent) Spare pieces are included; filter `is_spare = false` to match the box part count.
+source: set_parts is motherduck.table('lego.inventory_parts') extend {
+  join_one: inventory is inventories on inventory_id = inventory.id
+  join_one: part is parts on part_num = part.part_num
+  join_one: color is colors on color_id = color.id
+  measure:
+    #" Pieces (sum of quantity).
+    pieces is quantity.sum()
+    #" Distinct part numbers used.
+    distinct_parts is count(part_num)
+    #" Distinct colours used.
+    distinct_colors is count(color_id)
+    #" Distinct sets these lines belong to.
+    sets_using is count(inventory.lego_set.set_num)
+
+  #" Most-used colours by pieces in version-1 set inventories, spares excluded.
+  view: top_colors is {
+    where: inventory.version = 1 and is_spare = false and inventory.lego_set.set_num is not null
+    group_by: color.name, color.rgb
+    aggregate: pieces, sets_using
+    order_by: pieces desc
+    limit: 25
+  }
+
+  #" Most-used part categories by pieces in version-1 set inventories, spares excluded.
+  view: top_part_categories is {
+    where: inventory.version = 1 and is_spare = false and inventory.lego_set.set_num is not null
+    group_by: part.category.name
+    aggregate: pieces, distinct_parts
+    order_by: pieces desc
+    limit: 25
+  }
+}
+
+#" Every minifigure design with its name and part count.
+source: minifigs is motherduck.table('lego.minifigs') extend {
+  primary_key: fig_num
+}
+
+#" Minifigures included in each set inventory, with the figure's name and part count.
+#(agent) Grain: one minifigure in one set inventory version; filter `inventory.version = 1` to count each set once. `figures` sums quantity.
+source: set_minifigs is motherduck.table('lego.inventory_minifigs') extend {
+  join_one: inventory is inventories on inventory_id = inventory.id
+  join_one: minifig is minifigs on fig_num = minifig.fig_num
+  measure:
+    #" Minifigures (sum of quantity).
+    figures is quantity.sum()
+    #" Distinct minifigure designs.
+    distinct_minifigs is count(fig_num)
+}
+
+#" Smaller sets packed inside bigger sets (bundles and collections).
+source: set_in_set is motherduck.table('lego.inventory_sets') extend {
+  join_one: inventory is inventories on inventory_id = inventory.id
+  join_one: child_set is sets on set_num = child_set.set_num
+  measure:
+    #" Sub-sets included (sum of quantity).
+    sub_sets is quantity.sum()
+}
+
+#" LEGO element IDs: one part in one colour, as printed on LEGO's own part lists.
+source: elements is motherduck.table('lego.elements') extend {
+  primary_key: element_id
+  join_one: part is parts on part_num = part.part_num
+  join_one: color is colors on color_id = color.id
+  measure:
+    #" Number of element IDs.
+    element_count is count()
+}
+
+#" Relationships between parts: prints, moulds, alternates, sub-parts and pairs.
+#(agent) rel_type codes: P print, R pair, B sub-part, M mould, T pattern, A alternate.
+source: part_relationships is motherduck.table('lego.part_relationships') extend {
+  join_one: child is parts on child_part_num = child.part_num
+  join_one: parent_part is parts on parent_part_num = parent_part.part_num
+  measure:
+    #" Number of relationships.
+    relationship_count is count()
+}
