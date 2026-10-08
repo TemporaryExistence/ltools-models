@@ -32,6 +32,7 @@ const CSS = `
 .ans .nm em { font-style: normal; color: var(--dash-muted); font-size: 12px; }
 .ans .bar { position: relative; height: 7px; margin-top: 4px; border-radius: 4px; background: color-mix(in srgb, var(--dash-border) 70%, transparent); }
 .ans .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--grey); }
+.ans .bar s { position: absolute; top: 0; bottom: 0; border-radius: 0 4px 4px 0; background: var(--storm); }
 .ans .bar b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--dash-fg); opacity: .55; }
 .ans .rt { text-align: right; font-variant-numeric: tabular-nums; font-size: 13.5px; font-weight: 700; white-space: nowrap; }
 .ans .rt small { display: block; font-size: 11.5px; font-weight: 400; color: var(--dash-muted); }
@@ -101,8 +102,8 @@ const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep
 
 // ---- theme ----
 const PALETTE = {
-  light: { hot: "#d4502a", sel: "#2a78d6", wx: "#8a5cd1", grey: "#b8c2cf", good: "#1baf7a" },
-  dark: { hot: "#e0623a", sel: "#3987e5", wx: "#9a70e0", grey: "#5c6470", good: "#199e70" },
+  light: { hot: "#d4502a", sel: "#2a78d6", wx: "#8a5cd1", grey: "#b8c2cf", good: "#1baf7a", storm: "#7fb3d5" },
+  dark: { hot: "#e0623a", sel: "#3987e5", wx: "#9a70e0", grey: "#5c6470", good: "#199e70", storm: "#4f7f9e" },
 };
 function readTheme() {
   const cs = getComputedStyle(document.documentElement);
@@ -166,7 +167,7 @@ function Ranked({ rows }) {
           <span className="rk">{r.rank}</span>
           <div style={{ minWidth: 0 }}>
             <div className="nm">{r.name}{(r.chips || []).map((c) => <span key={c.t} className={`chip ${c.k || ""}`}>{c.t}</span>)}{r.meta && <em> · {r.meta}</em>}</div>
-            <div className="bar"><i style={{ width: `${Math.max(2, Math.min(1, r.frac) * 100)}%` }} />{r.mark != null && <b style={{ left: `${r.mark * 100}%` }} />}</div>
+            <div className="bar"><i style={{ width: `${Math.max(2, Math.min(1, r.frac) * 100)}%` }} />{r.wx > 0 && <s style={{ left: `${Math.min(1, r.frac) * (1 - r.wx) * 100}%`, width: `${Math.min(1, r.frac) * r.wx * 100}%` }} />}{r.mark != null && <b style={{ left: `${r.mark * 100}%` }} />}</div>
           </div>
           <div className="rt"><div className="l1"><span>{r.value}</span>{r.tag && <span className="tag">{r.tag}</span>}</div>{r.small && <small>{r.small}</small>}</div>
         </li>
@@ -266,7 +267,7 @@ const SOURCES = [
 const METHOD = [
   "One flight = the airline's flights in an airport pair within 30 minutes of the month's most frequent departure time (399.81(c)(3)), linked month to month within 30 minutes.",
   "On the clock = 3 or 4 chronic months running in July. Breach month = the month a 5th chronic month would land (August for 4 months, September for 3). The data ends in July, so a breach is decided by data not yet published, not by a date still ahead. Rows are ordered by breach month, then by July's late share (the best guide to August).",
-  "The selected airline's list = every flight it has on the clock (each valued at DOT's Frontier precedent, ≈$217k a flight) and its five costliest clear-day slots (low end of the quarter's cost), ranked by that value; among flights, an August breach comes before a September one, then the later flight in July.",
+  "The selected airline gets two lists that are never mixed: its flights on the clock (August-decided first, then by July's late share; a 5th month risks a fine, precedent Frontier ≈$217k a flight) and its five costliest clear-day slots (by the quarter's cost).",
   "Costly on clear days = the slot's clear-day chain cost per clear-day first departure × all its first departures (what the quarter would cost if every day were clear; 30+ clear-day first departures). Rank 1 = costliest nationally.",
   "Refund exposure = (cancellations + arrivals 3h+ late) × passengers (70 seats regional / 160 mainline × load factor 0.80–0.92) × one-way fare. A ceiling.",
 ];
@@ -320,6 +321,7 @@ function CarrierPicker({ options }) {
 const FINE_PER_FLIGHT = 650000 / 3;
 // What the clock waits on: data for the breach month (data ends July 2026; July came out 21 Sep 2026).
 const breachText = (b) => (b === 8 ? "late again in Aug = DOT breach" : "late in Aug and Sep = DOT breach");
+const wxShare = (r) => (num(r.july_late_n) > 0 ? num(r.july_late_weather) / num(r.july_late_n) : 0);
 const hourText = (h) => (h === 0 ? "midnight" : h < 12 ? `${h}am` : h === 12 ? "noon" : `${h - 12}pm`);
 
 export default function Dashboard({ dashboard, givens }) {
@@ -339,7 +341,7 @@ export default function Dashboard({ dashboard, givens }) {
   const f0 = fix.rows[0] || {};
   const s0 = sl.rows[0] || {};
   const P = t.pal;
-  const style = { "--hot": P.hot, "--sel": P.sel, "--wx": P.wx, "--grey": P.grey, "--good": P.good };
+  const style = { "--hot": P.hot, "--sel": P.sel, "--wx": P.wx, "--grey": P.grey, "--good": P.good, "--storm": P.storm };
 
   // Picker: every airline with a chronic flight or a ranked slot.
   const opts = Array.from(new Set([...list(f0.airlines), ...list(s0.airlines)].map((r) => r.airline))).filter(Boolean).sort();
@@ -356,7 +358,7 @@ export default function Dashboard({ dashboard, givens }) {
       key: `${r.carrier}${r.flight_label}`, rank: i + 1, sel: r.airline === airline,
       name: `${r.airline} ${r.origin} → ${r.dest} ${r.sched_time}`,
       chips: sfo ? [{ t: "SFO" }] : [],
-      frac: num(r.july_late30), mark: 0.5,
+      frac: num(r.july_late30), wx: wxShare(r), mark: 0.5,
       value: `${pct0(r.july_late30)} late in Jul`, small: breachText(r.breach),
       tag: `${num(r.months_running)} months late`,
     };
@@ -383,27 +385,25 @@ export default function Dashboard({ dashboard, givens }) {
   const selSlots = list(s0.sel).map(slotRow).map((r) => ({ ...r, sel: true })).filter((r) => !shownKeys.has(r.key));
   const slotShown = slotRows.slice(0, narrow ? 6 : 9).concat(selSlots.length ? [{ gap: true, key: "gap" }, ...selSlots.slice(0, 2)] : []);
 
-  // The selected airline's whole list: every flight it has on DOT's clock and its costliest morning slots,
-  // ranked by money at stake (fine for a flight; low end of the quarter's cost for a slot).
-  const acts = [];
-  selClock.forEach((fl) => acts.push({
-    v: FINE_PER_FLIGHT, late: (10 - fl.breach) + num(fl.july_late30), key: `f${fl.carrier}${fl.flight_label}`,
+  // Two separate lists for the selected airline, never mixed: a possible fine is not a running cost.
+  // 1. Flights DOT may cite (every late arrival counts, storms included, as the rule counts them).
+  const citeRows = selClock.map((fl, i) => ({
+    key: `f${fl.carrier}${fl.flight_label}`, rank: i + 1, top: i === 0,
     name: `${fl.origin} → ${fl.dest} ${fl.sched_time}`,
     chips: fl.origin === "SFO" || fl.dest === "SFO" ? [{ t: "SFO" }] : [],
-    meta: `${pct0(fl.july_late30)} late in Jul`,
-    value: `≈${usd(FINE_PER_FLIGHT)}`, small: breachText(fl.breach), tag: `${num(fl.months_running)} months late`,
+    frac: num(fl.july_late30), wx: wxShare(fl), mark: 0.5,
+    value: `${pct0(fl.july_late30)} late in Jul`, small: fl.breach === 8 ? "decided by Aug data" : "decided by Aug + Sep data",
+    tag: `${num(fl.months_running)} months late`,
   }));
-  list(s0.sel).forEach((s) => acts.push({
-    v: num(s.clear_rate_cost_lo), late: 0, key: `s${s.carrier}${s.origin}${s.dep_hour}`,
-    name: `${s.origin} ${hourText(num(s.dep_hour))} first flights`,
-    chips: [], meta: `#${num(s.rank_clear_rate_hi)} nationally`,
-    value: range(s.clear_rate_cost_lo, s.clear_rate_cost_hi), small: "delay cost a quarter", tag: "add turn buffer",
+  // 2. Morning flights whose delays cost the most (storm days removed: what scheduling can fix).
+  const selSl = list(s0.sel);
+  const slMax = Math.max(1, ...selSl.map((s) => num(s.clear_rate_cost_hi)));
+  const costRows = selSl.map((s, i) => ({
+    key: `s${s.carrier}${s.origin}${s.dep_hour}`, rank: i + 1, top: i === 0,
+    name: `${s.origin} ${hourText(num(s.dep_hour))} first flights`, meta: `#${num(s.rank_clear_rate_hi)} nationally`,
+    frac: num(s.clear_rate_cost_hi) / slMax,
+    value: range(s.clear_rate_cost_lo, s.clear_rate_cost_hi), small: "a quarter", tag: "add turn buffer",
   }));
-  acts.sort((a, b) => b.v - a.v || b.late - a.late);
-  const actMax = Math.max(1, ...acts.map((a) => a.v));
-  const actRows = acts.map((a, i) => ({ ...a, rank: i + 1, top: i === 0, frac: a.v / actMax }));
-  const actHead = actRows.slice(0, narrow ? 6 : 8);
-  const actMore = actRows.slice(narrow ? 6 : 8);
 
   // Proof: clock by month.
   const clockBars = [];
@@ -443,22 +443,25 @@ export default function Dashboard({ dashboard, givens }) {
       {all.map((x, i) => x.error && <div className="err" key={i}>{String(x.error)}</div>)}
       {ready && (
         <div className={loading ? "loading" : ""}>
-          <section className="od-card od-hero">
-            <h2>{airline}: fix first</h2>
-            <div className="sub">Ranked by money at stake · data through July 2026</div>
-            {actRows.length ? <Ranked rows={actHead} /> : <div className="od-src">No {airline} flight on the clock or ranked slot.</div>}
-            {actMore.length > 0 && (
-              <details>
-                <summary>All {actRows.length}</summary>
-                <Ranked rows={actMore} />
-              </details>
-            )}
-            <Tags items={["Flight = DOT fined Frontier $650k for 3 such flights (2025)", "Slot = cost of delays it passes down the day"]} />
-          </section>
+          <div className="od-grid od-hero-grid">
+            <section className="od-card od-hero">
+              <h2>{airline}: flights DOT may cite</h2>
+              <div className="sub">Late more than half the time, month after month</div>
+              <Key items={[["Late, clear weather", P.grey], ["Late, weather day (DOT still counts it)", P.storm]]} />
+              {citeRows.length ? <Ranked rows={citeRows} /> : <div className="od-src">No {airline} flight on DOT's watch list.</div>}
+              <Tags items={["5th month = possible fine (Frontier: $650k for 3 flights, 2025)", "August data due late Oct"]} />
+            </section>
+            <section className="od-card od-hero">
+              <h2>{airline}: morning flights costing the most</h2>
+              <div className="sub">Delays they pass down the day · storm days removed</div>
+              {costRows.length ? <Ranked rows={costRows} /> : <div className="od-src">No {airline} slot ranked.</div>}
+              <Tags items={["Low = next flight only · high = every later flight"]} />
+            </section>
+          </div>
           <h2 className="od-ctx">National context</h2>
           <div className="od-grid">
             <Card title="DOT chronic-delay clock" sub={`${aug.length} could breach in Aug, ${sep.length} in Sep · ${airline}: ${selClock.length}`}>
-              <Key items={[[airline, P.sel], ["SFO = touches SFO", P.wx]]} />
+              <Key items={[[airline, P.sel], ["Weather day", P.storm], ["SFO = touches SFO", P.wx]]} />
               <Ranked rows={clockShown} />
               <Tags items={[
                 { text: `${augApril === aug.length ? "All" : augApril + " of"} ${aug.length} Aug flights started in April; ${augSfo} touch SFO · SFO runway 1R/19L closed 30 Mar, reopening ~29 Sep`, warn: true },

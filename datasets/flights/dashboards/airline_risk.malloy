@@ -24,6 +24,8 @@ query: ar_fix is chronic_flights -> {
         operations, late30_rate
         july_late30 is last_month_late30_share.max()
         july_ops is last_month_ops.max()
+        july_late_weather is wx.late30_weather.max()
+        july_late_n is wx.late30.max()
       order_by: months_running desc, july_late30 desc, flight_label
     }
     #" Every airline with a chronic flight in Feb-Jul (picker list).
