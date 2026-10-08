@@ -3,13 +3,14 @@
 
 // Loaded by load_lego.sql into MotherDuck ltools.lego (all 12 Rebrickable CSV tables).
 
-#" Theme lookup without the parent join; use `themes` instead.
+#" Parent-theme lookup used by `themes`; query `themes` instead.
 source: themes_base is motherduck.table('lego.themes') extend {
   primary_key: id
 }
 
 #" LEGO themes and sub-themes (Star Wars, Technic, City...), each with its parent theme.
-source: themes is themes_base extend {
+source: themes is motherduck.table('lego.themes') extend {
+  primary_key: id
   join_one: parent is themes_base on parent_id = parent.id
   dimension:
     #" Top-level theme name (the parent's name when this is a sub-theme).
