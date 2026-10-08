@@ -41,9 +41,9 @@ const CSS = `
   border: 1px solid var(--dash-border); color: var(--dash-fg); white-space: nowrap; }
 .ans li.sel { background: color-mix(in srgb, var(--sel) 13%, transparent); }
 .ans li.sel .nm { font-weight: 700; }
-.ans li.sel .bar i { background: var(--sel); }
+.ans li.sel .bar i { box-shadow: 0 0 0 2px var(--sel); }
 .ans li.top { border-color: var(--hot); background: color-mix(in srgb, var(--hot) 10%, transparent); }
-.ans li.top .bar i { background: var(--hot); }
+.ans li.top .bar i { box-shadow: 0 0 0 2px var(--hot); }
 .ans li.top .tag { background: var(--hot); border-color: var(--hot); color: #fff; }
 .ans li.top.sel { background: color-mix(in srgb, var(--sel) 16%, transparent); }
 .ans li.gap { display: block; text-align: center; color: var(--dash-muted); font-size: 12px; padding: 0; }
