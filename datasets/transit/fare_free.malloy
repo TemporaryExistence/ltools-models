@@ -1,0 +1,278 @@
+// Fare-free transit: did dropping fares buy riders more cheaply than adding service, and what happened when fares
+// came back? Four sources, all public:
+//   ntd_annual_financials  FTA NTD Time Series 2.1 (npsm-38gk) + operating funding sources (4tmr-gwuu), 2015-2024,
+//                          built by build_ntd_annual_financials.sql (blank fares in fare-free years stored as 0).
+//   fare_policies          hand-built list of US fare-free policies with start/end month, scope and a source URL per
+//                          row (agency notices, local news, TCRP), built 2026-10-07 (units/ltools/public-data/transit/policy).
+//   fare_free_events       one row per fare-free start or end: the matched event-study result (monthly NTD ridership,
+//                          each agency against its 10 best-matched fare-charging agencies of similar size), plus placebo
+//                          tests. Computed by units/ltools/public-data/transit/analysis/*.sql.
+//   fare_free_event_months the same comparison month by month (the event-study path, -24 to +48 months).
+
+#" FTA National Transit Database annual data by agency x mode x type of service x report year, 2015 to 2024: fares,
+#" operating expense, unlinked passenger trips, vehicle revenue hours and miles (Time Series 2.1, data.transportation.gov
+#" npsm-38gk), plus the agency's operating funding by source for 2022 to 2024 (4tmr-gwuu). Fares are fare revenue
+#" collected from riders. An agency that collected no fares reports BLANK fares; those are stored as 0 here
+#" (fares_was_blank marks them), so fare-free years stay in averages. Funding columns (fund_*) are agency-year totals
+#" repeated on every row of that agency-year: use agency_years for funding, never sum them here. Dollars are nominal.
+#" Fixed route = every mode except demand response, demand response taxi and vanpool.
+source: ntd_annual_financials is motherduck.table('transit.ntd_annual_financials') extend {
+  dimension:
+    #" Every mode except demand response (dial-a-ride, paratransit, microtransit) and vanpool.
+    is_fixed_route is mode_code != 'DR' and mode_code != 'DT' and mode_code != 'VP'
+    #" Agency name with its state.
+    agency_label is concat(agency_name, ' (', state, ')')
+
+  measure:
+    #" Fare revenue collected from riders (US dollars, nominal).
+    fares_total is fares.sum()
+    #" Operating expense (US dollars, nominal).
+    operating_expense is operating_expenses.sum()
+    #" Unlinked passenger trips (boardings).
+    trips_total is trips.sum()
+    #" Vehicle revenue hours (service supplied).
+    revenue_hours is vehicle_revenue_hours.sum()
+    #" Fare revenue per boarding.
+    fare_per_trip is fares.sum() / nullif(trips.sum(), 0)
+    #" Operating cost per boarding.
+    cost_per_trip is operating_expenses.sum() / nullif(trips.sum(), 0)
+    #" Farebox recovery: fares as a share of operating expense.
+    # percent
+    farebox_recovery is fares.sum() / nullif(operating_expenses.sum(), 0)
+    #" Operating cost per vehicle revenue hour.
+    cost_per_revenue_hour is operating_expenses.sum() / nullif(vehicle_revenue_hours.sum(), 0)
+    #" Number of agencies in view.
+    agencies is count(ntd_id)
+}
+
+#" Fare-free transit policies in the US, one row per policy episode (an agency that went free, brought fares back and
+#" went free again has two rows). Hand-built 2026-10-07 from agency notices, council records, local news and National
+#" Academies TCRP reports; every row carries its source_url and a confidence (high = a dated official or news source
+#" states the month; medium = year or season only, or a secondary source; low = unconfirmed). start_date is the first
+#" month without fares (many began as COVID fare suspensions in March 2020 and became policy later; see notes);
+#" end_date is the first month fares were charged again (null = still free in October 2026). scope: all_modes,
+#" bus_only, youth, routes_or_zones, single_months, other. ntd_id joins to every NTD table.
+source: fare_policies is motherduck.table('transit.fare_policies') extend {
+  dimension:
+    #" True while the policy is still running (no end date).
+    is_still_free is end_date is null
+    #" Whole-system policies: every rider rides free on all modes or on the bus network.
+    is_systemwide is scope = 'all_modes' or scope = 'bus_only'
+    #" Year fares stopped.
+    start_year is year(start_date)
+  measure:
+    #" Number of policy episodes.
+    policies is count()
+    #" Number of distinct agencies.
+    agencies is count(ntd_id)
+}
+
+#" One row per fare change (fare-free start, fare return, or a single free month), analysed as a matched event study
+#" on MONTHLY NTD ridership (fixed route: every mode except demand response and vanpool). Each agency is compared with
+#" the 10 fare-charging agencies of similar 2019 size (within 3x) whose ridership tracked it most closely 24 to 13
+#" months before the change; months 12 to 1 before are an out-of-sample pre-trend check (pre_gap, near 0 = good).
+#" Gaps are differences in log ridership (0.10 is about +10%), treated minus controls. Main window (window_from to
+#" window_to, months after the change): starts after mid-2021 = first year (+1..+12); starts in 2020 = years 3-4
+#" (+25..+48; fare-charging controls also paused fares for COVID in 2020); fare returns = +0..+11; single free months =
+#" the free months. Windows stop at the agency's next policy change. did = post gap minus pre gap; did_adj = the same
+#" with the change in service hours taken out at a service elasticity of 0.5 (riders rise about 0.5% per 1% more
+#" service hours among fare-charging agencies, NTD 2017-2024); riders_change_pct = exp(did_adj) - 1.
+#" placebo_p = share of placebo runs (each fare-charging agency of similar size given the same date and its own matched
+#" controls) with an effect at least as large; small = unlikely to be chance.
+#" Money, 2024 dollars (CPI-U): fare_per_trip_paid = fare revenue per boarding in the last year fares were charged
+#" (2019 for episodes that began before 2023); cost_per_extra_rider = fares given up per extra rider =
+#" fare_per_trip_paid / (exp(|did_adj|) - 1); service_cost_per_extra_rider = 2024 operating cost per trip / 0.5 (riders
+#" bought by adding service hours at the agency's own cost). riders_from_free_per_year: starts = extra riders; returns =
+#" riders lost. usable = false (exclusion_reason says why) for counting breaks, COVID-era fare returns, unconfirmed
+#" dates, fares already near zero, or no post window. analysis_group: 1 Fares dropped 2021+ (first year), 2 Fares
+#" dropped 2020 (years 3-4), 3 Fares came back, 4 Single free months.
+source: fare_free_events is motherduck.table('transit.fare_free_events') extend {
+  dimension:
+    #" Agency and month of the change, for labels.
+    event_label is concat(agency, ', ', substr(change_month::string, 1, 7))
+  measure:
+    events is count()
+    #" Mean service-adjusted effect on riders (log points; 0.21 is about +23%), simple mean over events.
+    mean_effect is did_adj.avg()
+    # percent
+    mean_riders_change is exp(did_adj.avg()) - 1
+    #" Pooled fares given up per extra rider (2024 dollars): fares at stake / riders attributable to no fares, summed
+    #" over the events in view (weights big agencies more than the per-event median in fare_free_robustness).
+    pooled_cost_per_extra_rider is fares_per_year.sum() / nullif(riders_from_free_per_year.sum(), 0)
+    #" Cost per extra rider through added service at the same agencies, weighted the same way (2024 dollars).
+    pooled_service_cost_per_extra_rider is sum(service_cost_per_extra_rider * riders_from_free_per_year) / nullif(riders_from_free_per_year.sum(), 0)
+    #" Events where fare-free bought riders more cheaply than added service would have.
+    events_cheaper_than_service is count() { where: cost_per_extra_rider < service_cost_per_extra_rider }
+    #" Mean pre-trend gap (should be near 0).
+    mean_pre_gap is pre_gap.avg()
+    #" Riders per year attributable to no fares (sum over events).
+    riders_from_free is riders_from_free_per_year.sum()
+    #" Fares per year at stake (sum over events, 2024 dollars).
+    fares_at_stake is fares_per_year.sum()
+
+  #" DOES DROPPING FARES BUY RIDERS, AND DO THEY LEAVE WHEN FARES COME BACK? Usable events by group: average effect
+  #" on riders after service changes are taken out, pre-trend, and pooled cost per extra rider vs adding service (per-event medians: fare_free_robustness).
+  #" WHO ACTS: transit boards, city councils and state DOTs deciding to start, keep or end fare-free.
+  view: effect_by_group is {
+    where: usable
+    group_by: analysis_group
+    aggregate: events, mean_effect, mean_riders_change, mean_pre_gap, riders_from_free, fares_at_stake,
+      pooled_cost_per_extra_rider, pooled_service_cost_per_extra_rider, events_cheaper_than_service
+    order_by: analysis_group
+  }
+
+  #" Every usable event, largest effect first within group.
+  view: events_ranked is {
+    where: usable
+    select: analysis_group, event_label, did_adj, riders_change_pct, placebo_p, fare_per_trip_paid, farebox_recovery_paid,
+      cost_per_extra_rider, service_cost_per_extra_rider, riders_from_free_per_year, fares_per_year
+    order_by: analysis_group, did_adj desc
+  }
+}
+
+#" The event-study path: one row per event x month relative to the change (t = 0 is the first month of the new
+#" policy) with treated-minus-controls gaps in log ridership (gap_trips), log service hours (gap_hours) and the
+#" service-adjusted gap (gap_adj), all relative to months -24 to -13. Join: ev (fare_free_events).
+source: fare_free_event_months is motherduck.table('transit.fare_free_event_months') extend {
+  join_one: ev is fare_free_events on event_id = ev.event_id
+  measure:
+    #" Mean ridership gap across the events in view (log points).
+    mean_gap_trips is gap_trips.avg()
+    #" Mean service-adjusted gap across the events in view (log points).
+    mean_gap_adj is gap_adj.avg()
+    #" Mean service-hours gap across the events in view (log points).
+    mean_gap_hours is gap_hours.avg()
+    #" Events contributing to the month.
+    events_in_month is count(event_id)
+
+  #" Average path around the change for each usable group: months -12 to +24 (the event-study chart).
+  view: path_by_group is {
+    where: ev.usable and t >= -12 and t <= 24 and ev.analysis_group != '4 Single free months'
+    group_by: analysis_group is ev.analysis_group, t
+    aggregate: mean_gap_adj, mean_gap_trips, events_in_month
+    order_by: analysis_group, t
+  }
+}
+
+#" Robustness: the group results re-run under other choices (5 or 20 controls, same Census region, service elasticity
+#" 0.35 or 0.7, largest agencies dropped, high-confidence policy dates only), with the 95% band of 2,000 pooled placebo
+#" draws (placebo_lo95 to placebo_hi95) and placebo_dates_mean (the same method run 24 months before each real change;
+#" near 0 = the method does not invent effects).
+source: fare_free_robustness is motherduck.table('transit.fare_free_robustness') extend {
+  view: by_variant is {
+    select: variant, analysis_group, n_events, mean_did_adj, placebo_lo95, placebo_hi95, placebo_p,
+      median_cost_per_extra_rider, median_service_cost_per_extra_rider is median_service_cost, placebo_dates_mean
+    order_by: analysis_group, variant
+  }
+}
+
+#" One row per agency that appears in fare_policies: whether it went fare-free system-wide (all modes or the bus
+#" network) between January 2020 and December 2023 and stayed free through all of 2024 (the agencies the 2019-to-2024
+#" comparison treats as fare-free). GoRaleigh (fares back September 2024 and a July 2024 counting change) and
+#" GoTriangle (fares back July 2024) fall out by that rule.
+source: fare_policy_agencies is fare_policies -> {
+  group_by: ntd_id
+  aggregate:
+    policy_rows is count()
+    free_through_2024 is count() {
+      where: is_systemwide and start_date >= @2020-01-01 and start_date < @2024-01-01
+        and (end_date is null or end_date >= @2025-01-01)
+    }
+}
+
+#" One row per agency: fixed-route trips, service hours, fares and cost in 2019 and 2024 (NTD Time Series 2.1), and
+#" its group. 'Fare-free 2020-23' = went fare-free system-wide 2020-2023 and still free through 2024 (fare_policies).
+#" 'Charges fares' = never in fare_policies, at least 300,000 trips and a fare of at least $0.15 a trip in 2019, and
+#" still collecting at least 40% of its 2019 fare per trip in 2018, 2022, 2023 and 2024 (2020-21 skipped: many agencies
+#" paused fares for COVID). Massachusetts regional authorities (fare-free by state law since July 2025) are 'Other'. Use it for the 2019-to-2024 comparison: view fare_free_vs_service_2019_2024.
+source: agency_change is ntd_annual_financials -> {
+  where: is_fixed_route
+  group_by: ntd_id
+  aggregate:
+    agency is agency_label.max()
+    trips_2019 is trips_total { where: report_year = 2019 }
+    trips_2024 is trips_total { where: report_year = 2024 }
+    hours_2019 is revenue_hours { where: report_year = 2019 }
+    hours_2024 is revenue_hours { where: report_year = 2024 }
+    fares_2019 is fares_total { where: report_year = 2019 }
+    fares_2024 is fares_total { where: report_year = 2024 }
+    opex_2019 is operating_expense { where: report_year = 2019 }
+    opex_2024 is operating_expense { where: report_year = 2024 }
+    fpt_2018 is fare_per_trip { where: report_year = 2018 }
+    fpt_2019 is fare_per_trip { where: report_year = 2019 }
+    fpt_2022 is fare_per_trip { where: report_year = 2022 }
+    fpt_2023 is fare_per_trip { where: report_year = 2023 }
+    fpt_2024 is fare_per_trip { where: report_year = 2024 }
+} extend {
+  join_one: pol is fare_policy_agencies on ntd_id = pol.ntd_id
+  dimension:
+    #" Change in log trips, 2019 to 2024 (0.10 is about +10%).
+    trips_change_log is ln(trips_2024 / trips_2019)
+    #" Change in log service hours, 2019 to 2024.
+    hours_change_log is ln(hours_2024 / hours_2019)
+    #" Fare-free 2020-23 / Charges fares / Other (see source description).
+    fare_group is
+      pick 'Fare-free 2020-23' when pol.free_through_2024 > 0
+      // Massachusetts made every regional transit authority fare-free from July 2025 (MBTA, 10003, excepted).
+      pick 'Other' when agency ~ '%(MA)' and ntd_id != '10003'
+      pick 'Charges fares' when pol.ntd_id is null and trips_2019 >= 300000 and fpt_2019 >= 0.15
+        and fpt_2018 >= 0.4 * fpt_2019 and fpt_2022 >= 0.4 * fpt_2019 and fpt_2023 >= 0.4 * fpt_2019
+        and fpt_2024 >= 0.4 * fpt_2019
+      else 'Other'
+    #" Fares as a share of operating cost in 2019 (fixed route).
+    # percent
+    farebox_recovery_2019 is fares_2019 / nullif(opex_2019, 0)
+    #" Usable for the 2019-to-2024 comparison: has trips and hours both years, no extreme swings.
+    is_comparable is trips_2019 >= 300000 and trips_2024 > 0 and hours_2019 > 0 and hours_2024 > 0
+      and abs(ln(hours_2024 / hours_2019)) < 1 and abs(ln(trips_2024 / trips_2019)) < 1.5
+
+  #" DID FARE-FREE AGENCIES GAIN RIDERS BEYOND THEIR SERVICE? 2019 to 2024, NTD annual data, fixed route. A line is
+  #" fitted through the fare-charging agencies (change in log trips against change in log service hours; its slope is
+  #" the service elasticity), and the fare-free agencies' average distance above that line is the extra ridership not
+  #" explained by service (0.20 is about +22%). WHO ACTS: transit boards and city councils deciding whether to start,
+  #" keep or end fare-free. Self-selection caveat: agencies chose to go free.
+  view: fare_free_vs_service_2019_2024 is {
+    where: is_comparable and fare_group != 'Other'
+    aggregate:
+      n_charging is count() { where: fare_group = 'Charges fares' }
+      n_free is count() { where: fare_group = 'Fare-free 2020-23' }
+      mx_c is hours_change_log.avg() { where: fare_group = 'Charges fares' }
+      my_c is trips_change_log.avg() { where: fare_group = 'Charges fares' }
+      mxx_c is avg(hours_change_log * hours_change_log) { where: fare_group = 'Charges fares' }
+      mxy_c is avg(hours_change_log * trips_change_log) { where: fare_group = 'Charges fares' }
+      mx_t is hours_change_log.avg() { where: fare_group = 'Fare-free 2020-23' }
+      my_t is trips_change_log.avg() { where: fare_group = 'Fare-free 2020-23' }
+  } -> {
+    select:
+      n_charging, n_free,
+      service_elasticity is (mxy_c - mx_c * my_c) / (mxx_c - mx_c * mx_c)
+      extra_riders_log is (my_t - my_c) - (mxy_c - mx_c * my_c) / (mxx_c - mx_c * mx_c) * (mx_t - mx_c)
+      # percent
+      extra_riders_pct is exp((my_t - my_c) - (mxy_c - mx_c * my_c) / (mxx_c - mx_c * mx_c) * (mx_t - mx_c)) - 1
+  }
+
+  #" WHERE WOULD FARE-FREE BUY RIDERS MORE CHEAPLY THAN SERVICE? Fare-charging agencies of the size the evidence covers
+  #" (2019 fixed-route trips 300,000 to 25 million), 2024, by farebox recovery (fares / operating cost). Fare-free cost
+  #" per extra rider = 2024 fare per trip / 0.235 (the first-year effect of dropping fares, +21 log points, so riders x
+  #" 1.235); service = 2024 cost per trip / 0.5 (service elasticity). Fare-free is cheaper whenever farebox recovery is
+  #" below about 0.235 / 0.5 = 47% (34% at elasticity 0.7). WHO ACTS: boards and councils of the agencies in the low
+  #" bands; state DOTs funding ridership. Caveat: effects measured at small and mid-size bus agencies only.
+  view: where_fare_free_is_cheaper is {
+    where: fare_group = 'Charges fares' and trips_2019 <= 25000000 and trips_2024 > 0 and opex_2024 > 0
+    group_by:
+      farebox_band is
+        pick '1 Under 10%' when fares_2024 / opex_2024 < 0.10
+        pick '2 10-20%' when fares_2024 / opex_2024 < 0.20
+        pick '3 20-30%' when fares_2024 / opex_2024 < 0.30
+        else '4 30% or more'
+    aggregate:
+      agencies_in_band is count()
+      fares_2024_total is fares_2024.sum()
+      trips_2024_total is trips_2024.sum()
+      extra_riders_if_free is trips_2024.sum() * 0.235
+      fare_free_cost_per_extra_rider is fares_2024.sum() / nullif(trips_2024.sum() * 0.235, 0)
+      service_cost_per_extra_rider is opex_2024.sum() / nullif(trips_2024.sum(), 0) / 0.5
+      agencies_where_free_is_cheaper is count() { where: fares_2024 / trips_2024 / 0.235 < opex_2024 / trips_2024 / 0.5 }
+    order_by: farebox_band
+  }
+}

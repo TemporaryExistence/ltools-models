@@ -1,0 +1,61 @@
+##! experimental { givens }
+import "../budget_cuts.malloy"
+
+// Drawn by budget_cuts.jsx. Presentation only: the model's own views, plus rows filtered by $BUDGET_AGENCY (the reader's
+// agency, highlighted inside the national ranking; default GoRaleigh, NTD name "City of Raleigh").
+
+#" Transit budget gap: agencies ranked by the 2024 federal relief money above their pre-COVID share, and what to cut first.
+# artifact { title="Transit: budget gap and what to cut first" } dashboard { columns=6 }
+query: budget_cuts is relief_by_year -> national_cliff
+
+#" The agency picker and step 1's peers: every agency by full name and state, with its size class and relief share.
+query: bc_pick is budget_agency -> {
+  where: ops_2024 > 0
+  select: ntd_id, agency_name, state, agency_label, size_class, ops_2024, relief_share, relief_gap, flagged
+  order_by: agency_label
+}
+
+#" Steps 1-4: the reader's agency (up to 3 rows: agencies sharing a name are told apart by state on the page).
+query: bc_mine is budget_agency -> {
+  where: agency_name ~ $BUDGET_AGENCY
+  select: ntd_id, agency_label, agency_name, state, size_class, ops_2024, fed_share_base, fed_share_2019, fed_share_2022,
+    fed_share_2023, fed_share_2024, relief_share, relief_gap, flagged, fare_share_2024, agency_tax_share,
+    local_general_fund_share, local_other_share, state_general_fund_share, state_other_share, bus_type, bus_riders_per_hour,
+    bus_avoidable_cost_per_hour, bus_riders_lost_per_1m, bus_riders_lost_per_1m_y1, bus_fares_lost_per_1m,
+    rail_riders_lost_per_1m, ada_share_opex, ada_opex_est, opex_all, bus_opex, bus_trips_2024, bus_vrh_2024, trips_all,
+    cut_needed, riders_lost_if_cut
+  order_by: ops_2024 desc
+  limit: 3
+}
+
+#" The ranking (first screen) and More: every bus agency and big system (size classes other than small / rural), 2024,
+#" with the 2019-only-baseline gap for the stability check and the bus hours and cost behind the coverage pool.
+query: bc_all is budget_agency -> {
+  where: size_class != 'Small / rural / specialty'
+  select: ntd_id, agency_label, agency_name, state, size_class, ops_2024, relief_share, relief_gap, relief_gap_2019base,
+    flagged, fare_share_2024, local_general_fund_share, bus_type, bus_opex, rail_opex, bus_vrh_2024,
+    bus_avoidable_cost_per_hour, cut_needed, riders_lost_if_cut
+}
+
+#" Step 2: riders lost a year per $1M of local-bus service cut, by kind of bus system.
+query: bc_menu is budget_agency -> cut_menu_by_type
+
+#" More: rail and ADA paratransit, pooled.
+query: bc_rail is budget_agency -> { aggregate: rail_riders_lost_per_1m_pooled, ada_share_pooled, ada_paratransit_cost }
+
+#" The coverage pool on each ranked row and the selected agency's hours: GTFS frequent vs coverage service, per agency.
+query: bc_gtfs is gtfs_frequency -> {
+  select: ntd_id, agency_label, state, service_date, n_bus_routes, weekday_bus_hours, share_freq15, share_16_to_30,
+    share_31_to_60, share_over60_or_peak_only, n_routes_freq15, riders_per_hour_2024, cost_per_hour_2024, uza_density,
+    hours_check_flag
+}
+
+#" Step 3: the event study (cuts vs additions); More: the month-by-month path and the flag check.
+query: bc_events is service_change_summary -> headline
+query: bc_path is service_change_path -> path
+query: bc_robust is relief_robustness -> by_check
+
+#" About this data.
+query: bc_about is budget_agency -> {
+  aggregate: agencies, agencies_flagged, operating_budget, relief_gap_total
+}

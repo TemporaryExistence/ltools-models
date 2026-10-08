@@ -1,0 +1,244 @@
+// Airline risk: the three questions an airline's operations, network-planning and legal teams pay to answer.
+// Built by airline_risk/build_airline_risk.sh (BTS on-time Feb-Jul 2026 + DOT Consumer Airfare Report Table 1a) and
+// loaded into MotherDuck ltools.flights.ar_*. Delay-chain cost comes from ledger.malloy (chain_slot_ledger).
+import { chain_slot_ledger } from 'ledger.malloy'
+
+#" START HERE for "which of our flights are CHRONICALLY DELAYED under DOT's rule?" One row per run of consecutive
+#" months in which one flight met DOT's monthly test, Feb-Jul 2026 (BTS reporting carriers). Rule, 14 CFR
+#" 399.81(c): a domestic flight operated 10+ times a month that arrives more than 30 minutes late (cancelled flights
+#" count as late) more than 50% of the time that month; holding it out for MORE THAN FOUR consecutive months is an
+#" unfair or deceptive practice. "One flight" = all of a carrier's flights in the market whose scheduled departure is
+#" within 30 minutes of the most frequent time (399.81(c)(3)); here the market is the airport pair, and diverted
+#" flights count as late. status: "1 Chronic 5+ months, still running" (in breach), "2 At risk: 3-4 months running"
+#" (ending July: a 5th month in August or September is a breach), "3 Watch: 1-2 months", "4 Chronic 5+ months,
+#" ended", "5 Ended before 5 months". started_in_first_month = the run starts in February, so it may be longer.
+source: chronic_flights is motherduck.sql("""
+  SELECT * FROM ltools.flights.ar_chronic_flights
+""") extend {
+  dimension:
+    #" Airline that operated the flight (BTS reporting carrier; regional carriers under their own names).
+    airline is carrier ?
+      pick 'American' when 'AA' pick 'Delta' when 'DL' pick 'United' when 'UA' pick 'Southwest' when 'WN'
+      pick 'JetBlue' when 'B6' pick 'Alaska' when 'AS' pick 'Spirit' when 'NK' pick 'Frontier' when 'F9'
+      pick 'Allegiant' when 'G4' pick 'Hawaiian' when 'HA' pick 'SkyWest' when 'OO' pick 'Republic' when 'YX'
+      pick 'Envoy' when 'MQ' pick 'Endeavor' when '9E' pick 'PSA' when 'OH'
+      else carrier
+    #" "DFW → SFO 20:44" (most frequent scheduled departure time, local).
+    flight_label is concat(origin, ' → ', dest, ' ', sched_time)
+    route is concat(origin, ' → ', dest)
+    #" Either end of the flight is SFO (runway 1R/19L closed 30 March-2 October 2026).
+    touches_sfo is origin = 'SFO' or dest = 'SFO'
+    #" Month the run ended, as a name.
+    end_month is end_mon ? pick 'Feb' when 2 pick 'Mar' when 3 pick 'Apr' when 4 pick 'May' when 5
+      pick 'Jun' when 6 else 'Jul'
+    start_month is start_mon ? pick 'Feb' when 2 pick 'Mar' when 3 pick 'Apr' when 4 pick 'May' when 5
+      pick 'Jun' when 6 else 'Jul'
+
+  measure:
+    flight_count is count()
+    #" Flights at risk: 3-4 consecutive chronic months running in July.
+    at_risk_count is count() { where: status = '2 At risk: 3-4 months running' }
+    #" Flights in breach: 5+ consecutive chronic months still running in July.
+    in_breach_count is count() { where: status = '1 Chronic 5+ months, still running' }
+    #" Flights meeting the monthly test in July (any run length).
+    chronic_in_july_count is count() { where: end_mon = 7 }
+    #" Scheduled operations over the run (cancelled included).
+    operations is ops.sum()
+    #" Share of the run's operations that arrived 30+ minutes late or were cancelled or diverted.
+    # percent
+    late30_rate is late30.sum() / ops.sum()
+
+  #" PLAYBOOK "Which of our flights are about to become chronically delayed?" Flights with 3-4 consecutive chronic
+  #" months running in July; a 5th month is a breach of 14 CFR 399.81. Filter by airline or origin.
+  view: flights_at_risk is {
+    where: end_mon = 7 and months_running >= 3
+    group_by: airline, flight_label, months_running, start_month
+    aggregate: operations, late30_rate
+    order_by: months_running desc, late30_rate desc
+  }
+
+  #" Chronic flights in July by airline: at risk (3-4 months) and newly chronic (1-2 months).
+  # bar_chart { x=airline y=at_risk_count }
+  view: chronic_by_airline is {
+    where: end_mon = 7
+    group_by: airline
+    aggregate: at_risk_count, chronic_in_july_count
+    order_by: at_risk_count desc, chronic_in_july_count desc
+  }
+
+  #" How many at-risk flights touch SFO (runway 1R/19L closed 30 March-2 October 2026; FAA cut arrivals by a third).
+  view: at_risk_sfo_share is {
+    where: end_mon = 7 and months_running >= 3
+    group_by: touches_sfo
+    aggregate: flight_count
+  }
+
+  #" Runs of 5+ months anywhere in Feb-Jul (breaches); 0 rows means none under the rule's grouping.
+  view: breaches is {
+    where: months_running >= 5
+    group_by: airline, flight_label, start_month, end_month, months_running
+    aggregate: operations, late30_rate
+  }
+}
+
+#" Every grouped flight-month with 10+ operations, Feb-Jul 2026 (same 399.81(c)(3) grouping as chronic_flights):
+#" month_num, ops, late30 (arrived 30+ minutes late, cancelled or diverted), late30_share, meets (passes the monthly
+#" test) and streak (consecutive chronic months up to this one). Use it for the monthly trend or one flight's history.
+source: chronic_months is motherduck.sql("""
+  SELECT * FROM ltools.flights.ar_chronic_months
+""") extend {
+  dimension:
+    airline is carrier ?
+      pick 'American' when 'AA' pick 'Delta' when 'DL' pick 'United' when 'UA' pick 'Southwest' when 'WN'
+      pick 'JetBlue' when 'B6' pick 'Alaska' when 'AS' pick 'Spirit' when 'NK' pick 'Frontier' when 'F9'
+      pick 'Allegiant' when 'G4' pick 'Hawaiian' when 'HA' pick 'SkyWest' when 'OO' pick 'Republic' when 'YX'
+      pick 'Envoy' when 'MQ' pick 'Endeavor' when '9E' pick 'PSA' when 'OH'
+      else carrier
+    month_label is month_num ? pick 'Feb' when 2 pick 'Mar' when 3 pick 'Apr' when 4 pick 'May' when 5
+      pick 'Jun' when 6 else 'Jul'
+    touches_sfo is origin = 'SFO' or dest = 'SFO'
+    flight_label is concat(origin, ' → ', dest, ' ', sched_time)
+
+  measure:
+    flight_months is count()
+    #" Flights meeting DOT's monthly chronic-delay test that month.
+    chronic_flights is count() { where: meets }
+    # percent
+    chronic_share is count() { where: meets } / count()
+
+  #" Flights meeting the monthly test, by month, with how many touch SFO.
+  # line_chart { x=month_label y=chronic_flights }
+  view: chronic_by_month is {
+    group_by: month_num, month_label
+    aggregate:
+      chronic_flights
+      sfo_chronic_flights is chronic_flights { where: touches_sfo }
+    order_by: month_num
+  }
+}
+
+#" History of every flight at risk in July (3-4 chronic months running), Feb-Jul 2026: one row per flight x month with
+#" ops, late30_share (arrived 30+ minutes late, cancelled or diverted) and meets (passed DOT's monthly test). The run's
+#" months follow the linked flight; earlier months use the same market's flight nearest in time (within 45 minutes).
+#" The line to watch: late30_share must fall to 50% or below in August to stop the clock.
+source: at_risk_history is motherduck.sql("""
+  SELECT * FROM ltools.flights.ar_watch
+""") extend {
+  dimension:
+    airline is carrier ?
+      pick 'American' when 'AA' pick 'Delta' when 'DL' pick 'United' when 'UA' pick 'Southwest' when 'WN'
+      pick 'JetBlue' when 'B6' pick 'Alaska' when 'AS' pick 'Spirit' when 'NK' pick 'Frontier' when 'F9'
+      pick 'Allegiant' when 'G4' pick 'Hawaiian' when 'HA' pick 'SkyWest' when 'OO' pick 'Republic' when 'YX'
+      pick 'Envoy' when 'MQ' pick 'Endeavor' when '9E' pick 'PSA' when 'OH'
+      else carrier
+    month_label is month_num ? pick 'Feb' when 2 pick 'Mar' when 3 pick 'Apr' when 4 pick 'May' when 5
+      pick 'Jun' when 6 else 'Jul'
+  measure:
+    # percent
+    late30_rate is late30.sum() / ops.sum()
+}
+
+#" START HERE for "what could DOT's automatic-refund rule cost us?" One row per airline x route, May-July 2026.
+#" Rule, 14 CFR 260 (DOT final rule April 2024, in force 28 October 2024): a passenger on a cancelled flight, or one
+#" whose domestic arrival is 3+ hours after the original schedule, who does not accept the alternative is owed an
+#" automatic cash refund. affected = cancellations + operated flights arriving 180+ minutes late (diversions excluded).
+#" Exposure = affected flights x passengers per flight x one-way fare. Passengers per flight = seats (70 regional,
+#" 160 mainline; an assumption) x load factor (0.80 low; 0.92 high, the value that makes June 2026 reporting-carrier
+#" flights carry all 75.5M US domestic passengers BTS counted). Fare = DOT Consumer Airfare Report Table 1a (built from
+#" the DB1B 10%/40% ticket sample), 2026 Q1 airport pair (2025 Q2 when missing): this airline's fare when it is the
+#" largest or lowest-fare carrier on the pair, else the pair average, else the national average ($258.93). A CEILING:
+#" it assumes every affected passenger takes the refund; most accept rebooking.
+source: refund_exposure is motherduck.sql("""
+  SELECT * FROM ltools.flights.ar_refund
+""") extend {
+  dimension:
+    airline is carrier ?
+      pick 'American' when 'AA' pick 'Delta' when 'DL' pick 'United' when 'UA' pick 'Southwest' when 'WN'
+      pick 'JetBlue' when 'B6' pick 'Alaska' when 'AS' pick 'Spirit' when 'NK' pick 'Frontier' when 'F9'
+      pick 'Allegiant' when 'G4' pick 'Hawaiian' when 'HA' pick 'SkyWest' when 'OO' pick 'Republic' when 'YX'
+      pick 'Envoy' when 'MQ' pick 'Endeavor' when '9E' pick 'PSA' when 'OH'
+      else carrier
+    route is concat(origin, ' → ', dest)
+
+  measure:
+    flight_count is flights.sum()
+    cancellation_count is cancellations.sum()
+    #" Operated flights arriving 3+ hours late.
+    delay_3h_count is delays_3h.sum()
+    #" Refund-triggering flights: cancellations + 3h+ arrival delays.
+    affected_count is affected.sum()
+    # percent
+    affected_rate is affected.sum() / flights.sum()
+    #" Refund exposure ceiling, low (load factor 0.80), US dollars.
+    # currency
+    refund_exposure_lo is exposure_lo.sum()
+    #" Refund exposure ceiling, high (load factor 0.92).
+    # currency
+    refund_exposure_hi is exposure_hi.sum()
+    #" Share of affected flights priced with a route fare (the rest use the national average).
+    # percent
+    route_fare_share is affected.sum() { where: fare_source != 'National average fare' } / affected.sum()
+
+  #" PLAYBOOK "Which airline carries the most refund exposure?" Ranked by the high end.
+  # bar_chart { x=airline y=refund_exposure_hi }
+  view: exposure_by_airline is {
+    group_by: airline
+    aggregate: flight_count, cancellation_count, delay_3h_count, affected_rate, refund_exposure_lo, refund_exposure_hi
+    order_by: refund_exposure_hi desc
+  }
+
+  #" PLAYBOOK "Which routes carry it?" Routes (100+ flights) ranked by exposure; filter by airline or origin.
+  view: exposure_by_route is {
+    group_by: airline, route
+    aggregate: flight_count, affected_count, affected_rate, refund_exposure_lo, refund_exposure_hi
+    having: flight_count >= 100
+    order_by: refund_exposure_hi desc
+    limit: 25
+  }
+
+  #" Exposure by departure airport.
+  view: exposure_by_origin is {
+    group_by: origin
+    aggregate: flight_count, affected_rate, refund_exposure_lo, refund_exposure_hi
+    order_by: refund_exposure_hi desc
+    limit: 20
+  }
+}
+
+#" START HERE for "where does schedule buffer or a spare aircraft save the most money?" The delay-chain slots of
+#" chain_slot_ledger (airline x first-flight airport x scheduled hour, 100 busiest airports, May-July 2026) ranked by
+#" their CONTROLLABLE chain cost: the part not explained by weather (clear days + airport-wide excess on weather
+#" days). Chain cost = late-aircraft minutes on the same aircraft's later flights that day after a late first flight:
+#" low = next flight only x $69.07, high = every later flight x $100.76. Attribution, not proof.
+source: buffer_slots is chain_slot_ledger extend {
+  #" PLAYBOOK "Which first departures should get turn buffer or a spare aircraft first?" Ranked by controllable
+  #" chain cost (high prices); filter by airline and origin.
+  view: where_buffer_pays is {
+    group_by: slot_label, airline, origin, hour_label, dep_hour
+    aggregate:
+      late_start_count, controllable_chain_cost_lo, controllable_chain_cost_hi, chain_cost_hi, clear_share
+    order_by: controllable_chain_cost_hi desc
+    limit: 15
+  }
+
+  #" Controllable chain cost by first-departure hour.
+  # bar_chart { x=hour_label y=controllable_chain_cost_hi }
+  view: controllable_by_hour is {
+    group_by: dep_hour, hour_label
+    aggregate: controllable_chain_cost_lo, controllable_chain_cost_hi, late_start_count
+    order_by: dep_hour
+  }
+
+  #" Controllable chain cost by airline.
+  view: controllable_by_airline is {
+    group_by: airline
+    aggregate: controllable_chain_cost_lo, controllable_chain_cost_hi, chain_cost_hi
+    order_by: controllable_chain_cost_hi desc
+  }
+}
+
+#" Build checks for the airline-risk tables (row counts, the rule-grouping vs flight-number comparison, fare and
+#" load-factor inputs, and the airport split reconciliation).
+source: airline_risk_checks is motherduck.sql("""
+  SELECT * FROM ltools.flights.ar_checks
+""")

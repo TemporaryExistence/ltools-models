@@ -1,0 +1,60 @@
+##! experimental.givens
+import "../flights.malloy"
+import "../summaries.malloy"
+import "../insurance.malloy"
+import "../ledger.malloy"
+
+#" Flight-delay and cancellation cover, nationally, May-July 2026: which departure airport x hour-band cells to price
+#" above base first (expected payout per policy / the national average), the storm-outlook surcharge rule, and how
+#" stable each price is (90% interval; cells under 100 flights are thin and lean on the shrinkage). The selected
+#" airport (default RDU) is highlighted. Sample product: $200 on cancellation, $100 when the flight arrives 3+ h late,
+#" another $100 at 6+ h. Proof below: the selected airport by hour, storm-day exposure by airport (disruption ledger),
+#" what a buyer can see coming, and the July backtest. Data: BTS flights, IEM ASOS weather, NWS SPC outlooks.
+# artifact { title="Insurers: cells to price" givens { ORIGIN="RDU" } } dashboard { columns=6 }
+query: ins_cells_all is insurance_pricing -> {
+  # colspan=6
+  aggregate:
+    flight_count
+    # label="National base payout"
+    expected_payout
+    #" The selected airport's payout per policy (also declares the ORIGIN given for the page).
+    sel_payout is expected_payout { where: origin ~ $ORIGIN }
+  nest:
+    #" Every airport x hour band nationally (ranked on the page).
+    cells is {
+      group_by: origin, hour_band, hour_label
+      aggregate: flight_count, expected_payout, expected_payout_lo, expected_payout_hi, thin_share
+      order_by: expected_payout desc
+    }
+}
+
+#" What a buyer could know, and when: all airports and the selected one.
+query: ins_signals is insurance_signals -> {
+  nest:
+    nat is adverse_selection_by_lead_time
+    sel is adverse_selection_by_lead_time + { where: origin ~ $ORIGIN }
+}
+
+#" Disruption ledger, insurer view: storm days (Severe/Extreme at departure) by airport, expected loss and risk
+#" factor (actual / what the same weather cost elsewhere); and the selected airport's pricing table by band.
+query: ins_ledger is weather_risk -> {
+  nest:
+    airports is storm_risk_by_airport
+    here is {
+      where: origin ~ $ORIGIN
+      nest: pricing is pricing_table
+    }
+}
+
+#" July calibration by decile of the model's price.
+query: ins_calibration_q is insurance_calibration -> {
+  group_by: decile, flights, predicted_payout_relevelled, actual_payout, naive_payout
+  order_by: decile
+}
+
+#" Airport picker: code, city, departures (busiest first).
+query: ins_airports is airport_list -> {
+  group_by: origin, origin_city
+  aggregate: deps is departures.sum()
+  order_by: deps desc
+}

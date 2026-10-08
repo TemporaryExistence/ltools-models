@@ -1,0 +1,265 @@
+// Storms at the 30 busiest US departure airports, May-July 2026, joined to their departures. Built by
+// storms/build_storms.sh (IEM ASOS/METAR observations + NOAA Storm Events + the BTS flights files) and loaded into
+// MotherDuck ltools.flights.storm_*. Answers: when storms hit, which airports and airlines cancel or delay more
+// than the storm itself justifies?
+
+#" STORM SEVERITY per airport and day (2,760 rows: 30 airports x 92 days, May-July 2026), from the airport's own
+#" weather observations (IEM ASOS/METAR archive, operating hours 6am-10pm local). severity_band: "0 None",
+#" "1 Minor" (no thunder; low cloud under 1,000 ft, visibility under 3 mi or gusts 30 kt+), "2 Moderate" (thunder
+#" 1-3 hours), "3 Severe" (heavy thunder, or thunder 4+ hours), "4 Extreme" (heavy thunder AND thunder 4+ hours).
+#" Storm day = Severe or Extreme. ts_hours = hours with a thunderstorm reported at the airport; heavy_ts_hours =
+#" hours with heavy thunder (+TS); peak_gust_kt = highest gust or peak wind; intensity_cell = thunder hours x heavy
+#" thunder hours x peak gust bin, used to match "the same storm" across airports. storm_reports = NOAA Storm Events
+#" reports (thunderstorm wind, hail, tornado, flash flood, lightning, heavy rain) within 40 km that day, May and June
+#" only (July not yet published by NOAA; null in July), with the strongest reported wind and largest hail.
+#" Sources: IEM ASOS archive (Iowa State University, redistributing National Weather Service observations, free);
+#" NOAA NCEI Storm Events Database (public domain).
+source: storm_days is motherduck.sql("""
+  SELECT * FROM ltools.flights.storm_days
+""") extend {
+  dimension:
+    #" True for Severe and Extreme days (heavy thunder, or thunder 4+ hours).
+    is_storm_day is severity_band = '3 Severe' or severity_band = '4 Extreme'
+    #" Month name, e.g. "June 2026".
+    month_label is concat(
+      pick 'May' when month(flight_date) = 5 pick 'June' when month(flight_date) = 6 else 'July', ' 2026')
+  measure:
+    #" Airport-days.
+    airport_days is count()
+    #" Severe or Extreme days.
+    storm_day_count is count() { where: is_storm_day }
+    #" Average hours with thunder at the airport.
+    avg_thunder_hours is ts_hours.avg()
+    #" Average hours with heavy thunder.
+    avg_heavy_thunder_hours is heavy_ts_hours.avg()
+    #" Average highest gust (knots).
+    avg_peak_gust_kt is peak_gust_kt.avg()
+    #" Average NOAA storm reports within 40 km per day (May-June days only).
+    reports_per_day is storm_reports.avg()
+    #" Strongest thunderstorm wind reported within 40 km (knots, May-June).
+    max_reported_wind_kt is report_max_wind_kt.max()
+
+  #" PLAYBOOK "Are storms rougher at some airports?" Storm days per airport and how rough they were: thunder hours,
+  #" heavy-thunder hours, peak gust, and NOAA severe-weather reports within 40 km (May-June). Chicago storm days
+  #" averaged about 24-27 reports nearby (winds to 74 kt); Atlanta, Tampa and Fort Lauderdale storm days had none.
+  #" Caveat: report counts also depend on how many spotters live nearby (dense metros report more).
+  view: storm_intensity_by_airport is {
+    where: is_storm_day
+    group_by: origin
+    aggregate:
+      storm_day_count
+      avg_thunder_hours
+      avg_heavy_thunder_hours
+      avg_peak_gust_kt
+      reports_per_day
+      max_reported_wind_kt
+    order_by: reports_per_day desc
+  }
+}
+
+#" Hourly weather at the 30 airports (66,059 rows), local hour 0-23: hour_level 0 none, 1 minor, 2 moderate
+#" (thunder, or gusts 45 kt+, visibility under 1 mi, cloud under 500 ft, 0.5 in rain), 3 severe (heavy thunder,
+#" hail, or thunder with 35 kt+ gusts or visibility under 1 mi). For exploring which hours a storm hit.
+source: storm_hours is motherduck.sql("""
+  SELECT * FROM ltools.flights.storm_hours
+""") extend {
+  measure:
+    hour_count is count()
+    thunder_hours is count() { where: ts }
+}
+
+#" Bootstrap 95% intervals (400 resamples of airport-days, storm days only) for the storm-day ratios: kind =
+#" "airport cancellations" (subject = airport code), "airline cancellations" / "airline late departures" (subject =
+#" BTS carrier code), "regional vs mainline, same route-day" (subject = the comparison). lo/hi bound the
+#" observed / expected ratio (or the regional / mainline cancel-rate ratio).
+source: storm_ci is motherduck.sql("""
+  SELECT * FROM ltools.flights.storm_ci
+""")
+
+#" START HERE for storm questions (fast: 167,966 pre-summed rows). Departures from the 30 busiest US airports, May-
+#" July 2026 (1.19M flights), summed by airport, date, airline, time of day (tod: "a 5-11am", "b 12-4pm",
+#" "c 5pm+") and distance band, joined to that airport-day's storm (wx.*). Measures compare what happened with what
+#" the storm justifies:
+#" - *_vs_airports: expected = what OTHER airports' flights did for the same airline, the same storm intensity cell
+#"   (thunder hours x heavy thunder hours x peak gust) and the same time of day. Ratio above 1 = this airport cancels
+#"   more than comparable storms elsewhere.
+#" - *_vs_other_airlines: expected = what OTHER airlines did at the same airport, same storm cell, same time of day.
+#"   Ratio above 1 = this airline cancels more than its neighbours in the same storm.
+#" Flights with no comparable flight elsewhere are left out of the ratios (the *_matched_* columns). Departure delay:
+#" late = left 15+ minutes after schedule. Caveats: one summer; weather at the departure airport only (storms en route
+#" and at the destination are not matched, though matching on destination storms did not change the airport ranking);
+#" association, not cause; small airports' storm days are few, so check storm_ci before quoting a ratio.
+source: storm_flights is motherduck.sql("""
+  SELECT * FROM ltools.flights.storm_cube
+""") extend {
+  join_one: wx is storm_days on origin = wx.origin and flight_date = wx.flight_date
+  join_one: airport_ci is storm_ci on origin = airport_ci.subject and airport_ci.kind = 'airport cancellations'
+  join_one: airline_ci is storm_ci on carrier = airline_ci.subject and airline_ci.kind = 'airline cancellations'
+  join_one: airline_late_ci is storm_ci on carrier = airline_late_ci.subject and airline_late_ci.kind = 'airline late departures'
+
+  dimension:
+    #" Airline that operated the flight; regional airlines under their own names.
+    airline is carrier ?
+      pick 'American' when 'AA' pick 'Delta' when 'DL' pick 'United' when 'UA' pick 'Southwest' when 'WN'
+      pick 'JetBlue' when 'B6' pick 'Alaska' when 'AS' pick 'Spirit' when 'NK' pick 'Frontier' when 'F9'
+      pick 'Allegiant' when 'G4' pick 'SkyWest' when 'OO' pick 'Republic' when 'YX' pick 'Envoy' when 'MQ'
+      pick 'PSA' when 'OH' else carrier
+    #" Severe or Extreme storm at the departure airport that day.
+    is_storm_day is wx.severity_band = '3 Severe' or wx.severity_band = '4 Extreme'
+    #" "storm" (Severe/Extreme), "moderate", or "no thunder".
+    storm_group is pick 'storm' when is_storm_day pick 'moderate' when wx.severity_band = '2 Moderate' else 'no thunder'
+    #" Month name, e.g. "June 2026".
+    month_label is wx.month_label
+    airport_day is concat(origin, ' ', flight_date::string)
+
+  measure:
+    flight_count is n_flights.sum()
+    cancellations is n_cancelled.sum()
+    # percent
+    cancel_rate is n_cancelled.sum() / n_flights.sum()
+    #" Share of operated flights that left 15+ minutes late.
+    # percent
+    late_departure_rate is n_dep_late.sum() / n_operated.sum()
+    #" Average departure delay, minutes (operated flights; early = 0).
+    avg_departure_delay is dep_delay_min_sum.sum() / n_operated.sum()
+    #" Distinct airport-days.
+    airport_day_count is count(airport_day)
+
+    #" Cancel rate of the flights that have a comparable flight at another airport.
+    # percent
+    matched_cancel_rate_vs_airports is n_ap_matched_cancelled.sum() / n_ap_matched.sum()
+    #" Cancel rate the storm justifies: other airports, same airline, same storm cell, same time of day.
+    # percent
+    expected_cancel_rate_vs_airports is exp_cancelled_ap.sum() / n_ap_matched.sum()
+    #" Observed / expected cancellations vs other airports (1 = as the storm justifies).
+    cancel_ratio_vs_airports is n_ap_matched_cancelled.sum() / exp_cancelled_ap.sum()
+    #" Cancellations above (or below, negative) what the storm justifies, vs other airports.
+    excess_cancellations_vs_airports is n_ap_matched_cancelled.sum() - exp_cancelled_ap.sum()
+    #" Observed / expected late departures vs other airports.
+    late_ratio_vs_airports is n_ap_matched_late.sum() / exp_dep_late_ap.sum()
+
+    # percent
+    matched_cancel_rate_vs_other_airlines is n_cr_matched_cancelled.sum() / n_cr_matched.sum()
+    #" Cancel rate the storm justifies: other airlines at the same airport, same storm cell, same time of day.
+    # percent
+    expected_cancel_rate_vs_other_airlines is exp_cancelled_cr.sum() / n_cr_matched.sum()
+    #" Observed / expected cancellations vs other airlines at the same airport.
+    cancel_ratio_vs_other_airlines is n_cr_matched_cancelled.sum() / exp_cancelled_cr.sum()
+    excess_cancellations_vs_other_airlines is n_cr_matched_cancelled.sum() - exp_cancelled_cr.sum()
+    #" Observed / expected late departures vs other airlines at the same airport.
+    late_ratio_vs_other_airlines is n_cr_matched_late.sum() / exp_dep_late_cr.sum()
+
+  #" PLAYBOOK "Does the severity scale mean anything?" Cancel rate, late departures and delay by storm band at the
+  #" departure airport. May-July 2026: None 1.0% cancelled, Minor 1.4%, Moderate 2.8%, Severe 6.3%, Extreme 16.9%.
+  view: cancellations_by_storm_severity is {
+    group_by: severity_band is wx.severity_band
+    aggregate: airport_day_count, flight_count, cancellations, cancel_rate, late_departure_rate, avg_departure_delay
+    order_by: severity_band
+  }
+
+  #" PLAYBOOK "Which airports cancel more than the storm justifies?" Storm days only (Severe/Extreme), airports
+  #" ranked by observed / expected cancellations, where expected = other airports' rate for the same airline, the same
+  #" storm intensity and the same time of day. ratio_lo/ratio_hi = bootstrap 95% interval; airports with under 5 storm
+  #" days are thin. May-July 2026: Newark 2.97x (23.1% cancelled vs 7.8% expected; 1.68-4.21), Washington National
+  #" 1.88x, LaGuardia 2.21x (3 storm days), Chicago O'Hare 1.70x (0.93-2.26, not conclusive); Houston IAH 0.11x,
+  #" Miami 0.13x, Denver 0.09x, Charlotte 0.31x. Who acts: travel insurers pricing cancellation cover, travel managers
+  #" choosing connection hubs, the airports themselves.
+  view: airports_cancelling_more_than_the_storm is {
+    where: is_storm_day
+    group_by: origin
+    aggregate:
+      storm_days is airport_day_count
+      flight_count
+      cancel_rate
+      expected_cancel_rate_vs_airports
+      cancel_ratio_vs_airports
+      excess_cancellations_vs_airports
+      ratio_lo is airport_ci.lo.max()
+      ratio_hi is airport_ci.hi.max()
+    order_by: cancel_ratio_vs_airports desc
+  }
+
+  #" PLAYBOOK "Which airlines cancel more than the storm justifies?" Storm days only; each airline against the other
+  #" airlines at the same airports, same storm cell, same time of day. Airlines with 500+ storm-day flights. May-July
+  #" 2026: PSA 1.63x, SkyWest 1.55x, Republic 1.53x cancelled (all intervals above 1); United mainline 0.47x
+  #" (0.37-0.55), Delta 0.81x. Southwest: cancels as expected but 1.45x the late departures (it is also late on clear
+  #" days, so not storm-specific). Regional airlines' operated flights are LESS often late (Republic 0.83x).
+  view: airlines_cancelling_more_than_the_storm is {
+    where: is_storm_day
+    group_by: airline, carrier_type
+    aggregate:
+      flight_count
+      cancel_rate
+      expected_cancel_rate_vs_other_airlines
+      cancel_ratio_vs_other_airlines
+      excess_cancellations_vs_other_airlines
+      ratio_lo is airline_ci.lo.max()
+      ratio_hi is airline_ci.hi.max()
+      late_departure_rate
+      late_ratio_vs_other_airlines
+      late_ratio_lo is airline_late_ci.lo.max()
+      late_ratio_hi is airline_late_ci.hi.max()
+    having: flight_count >= 500
+    order_by: cancel_ratio_vs_other_airlines desc
+  }
+
+  #" PLAYBOOK "Are short regional hops cut first?" Cancel rate by mainline/regional and flight distance, storm days vs
+  #" days without thunder. May-July 2026, storm days: regional under 400 mi 20.8% vs 12.3% for 1,200 mi+; mainline
+  #" 7.1% vs 5.9%. Without thunder all are about 1%.
+  view: short_regional_hops_cut_first is {
+    group_by: carrier_type, dist_band
+    aggregate:
+      storm_flights is flight_count { where: is_storm_day }
+      storm_cancel_rate is cancel_rate { where: is_storm_day }
+      no_thunder_cancel_rate is cancel_rate { where: storm_group = 'no thunder' }
+    order_by: carrier_type, dist_band
+  }
+
+  #" Airport ratio vs other airports by month (storm days), to check a pattern holds month to month.
+  view: airport_ratio_by_month is {
+    where: is_storm_day
+    group_by: origin, month_label
+    aggregate: storm_days is airport_day_count, cancel_ratio_vs_airports, cancel_rate, expected_cancel_rate_vs_airports
+    order_by: origin, month_label
+  }
+}
+
+#" Same route, same day: mainline vs regional cancel rates (7,577 rows). comparison = "UA vs SkyWest+Republic",
+#" "DL vs SkyWest+Republic", "AA vs Envoy+PSA" (American and its own regionals), "All mainline vs all regional"
+#" (also same time of day). One row per comparison x departure airport x date, joined to that day's storm (wx.*).
+#" SkyWest and Republic fly for several brands, so a UA or DL row may compare against flights sold by another brand.
+source: storm_route_pairs is motherduck.sql("""
+  SELECT * FROM ltools.flights.storm_route_pairs
+""") extend {
+  join_one: wx is storm_days on origin = wx.origin and flight_date = wx.flight_date
+  join_one: pair_ci is storm_ci on comparison = pair_ci.subject and pair_ci.kind = 'regional vs mainline, same route-day'
+  dimension:
+    is_storm_day is wx.severity_band = '3 Severe' or wx.severity_band = '4 Extreme'
+    storm_group is pick 'storm' when is_storm_day pick 'moderate' when wx.severity_band = '2 Moderate' else 'no thunder'
+  measure:
+    # percent
+    mainline_cancel_rate is mainline_cancelled.sum() / mainline_flights.sum()
+    # percent
+    regional_cancel_rate is regional_cancelled.sum() / regional_flights.sum()
+    #" Regional cancel rate / mainline cancel rate on the same routes and days.
+    regional_to_mainline_ratio is (regional_cancelled.sum() / regional_flights.sum()) / (mainline_cancelled.sum() / mainline_flights.sum())
+    #" Regional cancellations above the mainline rate on the same routes and days.
+    regional_cancellations_above_mainline is regional_cancelled.sum() - regional_flights.sum() * mainline_cancelled.sum() / mainline_flights.sum()
+
+  #" PLAYBOOK "Do airlines cancel their regional partner first?" Same route, same day. May-July 2026, storm days:
+  #" regional 17.1% vs mainline 9.9% (1.73x, 1.48-1.97; 1.36x without storms); United vs SkyWest/Republic 2.06x, Delta
+  #" 2.2x; American vs its own Envoy/PSA 1.04x (no gap). Storm-day ratio_lo/ratio_hi = bootstrap 95% interval.
+  view: regional_vs_mainline_same_route is {
+    group_by: comparison, storm_group
+    aggregate:
+      mainline_flights_n is mainline_flights.sum()
+      mainline_cancel_rate
+      regional_flights_n is regional_flights.sum()
+      regional_cancel_rate
+      regional_to_mainline_ratio
+      regional_cancellations_above_mainline
+      storm_ratio_lo is pair_ci.lo.max()
+      storm_ratio_hi is pair_ci.hi.max()
+    order_by: comparison, storm_group
+  }
+}

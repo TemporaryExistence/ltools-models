@@ -1,0 +1,55 @@
+##! experimental.givens
+import "../flights.malloy"
+import "../summaries.malloy"
+import "../airport_scorecard.malloy"
+
+#" Nearby airports' routes by airline (routes_summary, May-July 2026), with the destination's city.
+source: pitch_routes is airport_peers extend {
+  join_many: rs is routes_summary on peer = rs.origin
+  join_one: dc is airport_list on rs.dest = dc.origin
+}
+
+#" Routes to pitch for one airport (default RDU), May-July 2026 (BTS reporting carriers): destinations flown weekly or
+#" better from airports within 175 miles (5+ departures a day) but under once a week from the selected airport,
+#" with the airlines already flying each one nearby (who to pitch). The page ranks them on NON-hub nearby airports
+#" only (a carrier hub's flights carry connecting traffic), so every candidate is returned (limit 300). Proof below: the selected airport's reliability against the same nearby airports.
+# artifact { title="Airports: routes to pitch" givens { ORIGIN="RDU" } } dashboard { columns=6 }
+# colspan=6
+query: ap_pitch is pitch_routes -> {
+  where: origin ~ $ORIGIN and rs.dest != origin
+  group_by: dest is rs.dest, dest_city is dc.origin_city
+  aggregate:
+    home_per_day is rs.flight_count { where: miles = 0 } / 92
+    nearby_per_day is rs.flight_count { where: miles > 0 } / 92
+  having: coalesce(rs.flight_count { where: miles = 0 }, 0) < 13 and rs.flight_count { where: miles > 0 } >= 13
+  nest: carriers is {
+    where: miles > 0
+    group_by: airline is rs.airline, peer
+    aggregate: per_day is rs.flight_count / 92
+    having: rs.flight_count >= 13
+    order_by: per_day desc
+  }
+  order_by: nearby_per_day desc
+  limit: 300
+}
+
+#" The selected airport and every airport within 175 miles: reliability and reach.
+query: ap_peers_q is airport_peers -> {
+  where: origin ~ $ORIGIN
+  group_by: peer, miles
+  aggregate:
+    departures_per_day is peer_card.departures_per_day.max()
+    on_time_rate is 1 - peer_card.late_rate.max()
+    cancel_rate is peer_card.cancel_rate.max()
+    nonstop_destinations is peer_card.nonstop_destinations.max()
+    storm_cancel_rate is peer_card.storm_cancel_rate.max()
+    city is peer_card.airport.origin_city.max()
+  order_by: miles
+}
+
+#" Airport picker: code, city, departures (busiest first).
+query: ap_airports is airport_scorecard -> {
+  group_by: origin, origin_city is airport.origin_city
+  aggregate: deps is departures.sum()
+  order_by: deps desc
+}

@@ -19,7 +19,7 @@
 --   FY2021 is already UTF-8; every other PLS year is CP1252 -> iconv -f cp1252 -t utf-8.
 --   The Census files are Latin-1 -> iconv -f latin1 -t utf-8 (co-est2025.csv, co-est2020.csv).
 -- Run from the folder holding those files:  duckdb < build_pls_years.sql
--- Writes: library_systems_by_year.parquet, county_population.parquet, library_counties.parquet
+-- Writes: library_systems_by_year.parquet, county_population.parquet, library_counties.parquet, library_outlets_by_year.parquet
 --
 -- Column map (survey variable -> column). Same names and meaning as library_systems.parquet (FY2023),
 -- so FY2023 rows of library_systems_by_year equal library_systems row for row (plus two added columns at the end).
@@ -86,7 +86,14 @@ COPY (
     C_LEGBAS AS legal_basis,                     -- CI city, CO county, LD library district, MJ multi-jurisdictional, NP non-profit, OT other, ...
     -- Added 2026-10-06 (appended so every earlier column keeps its position and values):
     num(PRMATEXP) AS print_spend,                -- print materials spend
-    num(ELMATEXP) AS econtent_spend              -- electronic materials spend: e-books, e-audio, e-video, databases, e-serials
+    num(ELMATEXP) AS econtent_spend,             -- electronic materials spend: e-books, e-audio, e-video, databases, e-serials
+    -- Added 2026-10-07 (appended; join keys to Census data). LSAGEO* exist from FY2022 on; null before.
+    nullif(LSAGEOID, 'M') AS service_area_geoid,          -- Census GEOID of the legal service area (place, county subdivision,
+                                                          -- county or unified school district); 'N' (not one geography) kept as reported
+    LSAGEOTYPE AS service_area_geo_type,                  -- PLACE, COUNTY SUBDIVISION, COUNTY, SCHOOL DISTRICT (UNIFIED), MULTI-COUNTY, MULTI-PLACE, ...
+    num(LSAGEORATIO) AS service_area_pop_ratio,           -- POPU_LSA / that geography's Census population (about 1 = a clean match)
+    CENTRACT AS admin_tract,                              -- Census tract of the administrative entity's address
+    CBSA AS cbsa                                          -- metro / micro area code of that address ('N' = none)
   FROM ae
   ORDER BY state, library_id, fiscal_year
 ) TO 'library_systems_by_year.parquet' (FORMAT parquet, COMPRESSION zstd);
@@ -159,3 +166,21 @@ COPY (
   FROM sc
   ORDER BY state, library_id, fiscal_year, county
 ) TO 'library_counties.parquet' (FORMAT parquet, COMPRESSION zstd);
+
+-- Every outlet (central library, branch, bookmobile, books-by-mail) per fiscal year with its Census tract and location
+-- (added 2026-10-07: the earlier build dropped CENTRACT/CENBLOCK). Tract GEOID = 11 digits (state+county+tract).
+COPY (
+  SELECT
+    FSCSKEY || '-' || FSCS_SEQ || '-' || fiscal_year AS outlet_year_id,
+    fiscal_year, STABR AS state, FSCSKEY AS library_id, FSCS_SEQ AS outlet_seq, LIBNAME AS outlet_name,
+    C_OUT_TY AS outlet_type,                         -- CE central, BR branch, BS bookmobile, BM books-by-mail
+    CITY AS city, CNTY AS county,
+    num(HOURS) AS hours_per_year, num(WKS_OPEN) AS weeks_open, num(SQ_FEET) AS square_feet,
+    try_cast(LATITUDE AS DOUBLE) AS latitude, try_cast(LONGITUD AS DOUBLE) AS longitude,
+    CENTRACT AS tract_geoid, CENBLOCK AS block_geoid, CBSA AS cbsa, LOCALE AS locale_code
+  FROM (SELECT CAST(regexp_extract(filename, 'fy(\d{4})', 1) AS INTEGER) AS fiscal_year, *
+        FROM read_csv(['ol_fy2018.csv','ol_fy2019.csv','ol_fy2020.csv','ol_fy2021.csv',
+                       'ol_fy2022.csv','ol_fy2023.csv','ol_fy2024.csv'],
+                      all_varchar = true, union_by_name = true, filename = true))
+  ORDER BY state, library_id, outlet_seq, fiscal_year
+) TO 'library_outlets_by_year.parquet' (FORMAT parquet, COMPRESSION zstd);

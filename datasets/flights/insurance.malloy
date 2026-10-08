@@ -1,0 +1,345 @@
+// Flight-delay and cancellation cover: what a policy on one flight is likely to pay, and how the weather forecast
+// changes that. Built by insurance/build_insurance.sh (BTS flights May-July 2026 + IEM ASOS weather + NWS Storm
+// Prediction Center outlooks) and loaded into MotherDuck ltools.flights.ins_*.
+//
+// Claims are counted per SCHEDULED flight: cancelled; arrived 2+ / 3+ / 6+ hours late (diverted flights count as 2+
+// and 3+ h, not 6+ h: BTS gives no arrival delay for them). SAMPLE PRODUCT (parametric, pays automatically): $200 on
+// cancellation, $100 when the flight arrives 3+ h late, another $100 at 6+ h. Expected payout = 200 x P(cancel) +
+// 100 x P(3h) + 100 x P(6h).
+
+#" PRICING TABLE: one row per airline x departure airport x departure-hour band x month (May-July 2026, all US
+#" domestic flights, 16,659 cells). Rates are SHRUNK toward broader cells so thin cells borrow strength: airport
+#" toward the national rate (500 pseudo-flights), airport x hour band toward the airport rate x the national hour
+#" shape (1,500), the cell toward its airport x hour band rate x the airline's factor (500). *_lo / *_hi = 90%
+#" credible interval (Beta posterior, normal approximation). raw_* = the cell's own observed rate. thin = under 100
+#" flights in the cell that month. price_index = the cell's expected payout / the national average that month.
+source: insurance_pricing is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_cells
+""") extend {
+  dimension:
+    #" Airline that operated the flight; regional airlines under their own names (SkyWest, Republic, Envoy,
+    #" Endeavor and PSA fly as United Express / American Eagle / Delta Connection).
+    airline is carrier ?
+      pick 'American' when 'AA' pick 'Delta' when 'DL' pick 'United' when 'UA' pick 'Southwest' when 'WN'
+      pick 'JetBlue' when 'B6' pick 'Alaska' when 'AS' pick 'Spirit' when 'NK' pick 'Frontier' when 'F9'
+      pick 'Allegiant' when 'G4' pick 'Hawaiian' when 'HA' pick 'SkyWest' when 'OO' pick 'Republic' when 'YX'
+      pick 'Envoy' when 'MQ' pick 'Endeavor' when '9E' pick 'PSA' when 'OH' else carrier
+    #" Mainline or regional airline.
+    carrier_type is pick 'regional' when carrier = 'OO' or carrier = 'YX' or carrier = 'MQ' or carrier = '9E' or carrier = 'OH' else 'mainline'
+    #" Scheduled departure hour band, e.g. "6-8pm" (local time).
+    hour_label is substr(hour_band, 3)
+
+  measure:
+    flight_count is flights.sum()
+    claims_cancel is cancellations.sum()
+    claims_3h is delays_3h.sum()
+    #" Probability the flight is cancelled (shrunk; flight-weighted across the cells selected).
+    # percent
+    p_cancel is sum(cancel_p * flights) / flights.sum()
+    # percent
+    p_cancel_lo is sum(cancel_lo * flights) / flights.sum()
+    # percent
+    p_cancel_hi is sum(cancel_hi * flights) / flights.sum()
+    #" Probability of arriving 2+ h late (or diverted).
+    # percent
+    p_2h is sum(d2_p * flights) / flights.sum()
+    #" Probability of arriving 3+ h late (or diverted).
+    # percent
+    p_3h is sum(d3_p * flights) / flights.sum()
+    # percent
+    p_3h_lo is sum(d3_lo * flights) / flights.sum()
+    # percent
+    p_3h_hi is sum(d3_hi * flights) / flights.sum()
+    #" Probability of arriving 6+ h late.
+    # percent
+    p_6h is sum(d6_p * flights) / flights.sum()
+    #" Observed (unshrunk) cancel rate.
+    # percent
+    observed_cancel_rate is cancellations.sum() / flights.sum()
+    #" Observed (unshrunk) 3+ h rate.
+    # percent
+    observed_3h_rate is delays_3h.sum() / flights.sum()
+    #" Expected payout per policy, sample product ($200 cancel, $100 at 3 h, +$100 at 6 h).
+    # currency
+    expected_payout is sum(exp_payout * flights) / flights.sum()
+    # currency
+    expected_payout_lo is sum(exp_payout_lo * flights) / flights.sum()
+    # currency
+    expected_payout_hi is sum(exp_payout_hi * flights) / flights.sum()
+    #" Observed payout per policy (unshrunk).
+    # currency
+    observed_payout is sum(200 * cancellations + 100 * delays_3h + 100 * delays_6h) / flights.sum()
+    #" Expected payout / the average over everything in the query (1 = base price).
+    price_vs_base is (sum(exp_payout * flights) / flights.sum()) / all(sum(exp_payout * flights) / flights.sum())
+    #" Share of flights in thin cells (under 100 flights in the month).
+    # percent
+    thin_share is flights.sum() { where: thin } / flights.sum()
+
+  #" PLAYBOOK "What should a policy on this flight cost?" Expected payout and claim probabilities by airline and
+  #" departure-hour band (filter origin). Price index 1 = the base price for the airport. May-July 2026.
+  view: pricing_table is {
+    group_by: airline, carrier_type, hour_band, hour_label
+    aggregate:
+      flight_count, p_cancel, p_cancel_lo, p_cancel_hi, p_2h, p_3h, p_3h_lo, p_3h_hi, p_6h, expected_payout,
+      expected_payout_lo, expected_payout_hi, price_vs_base, thin_share
+    having: flight_count >= 30
+    order_by: expected_payout desc
+  }
+
+  #" Expected payout by departure-hour band.
+  view: price_by_hour is {
+    group_by: hour_band, hour_label
+    aggregate: flight_count, p_cancel, p_3h, p_6h, expected_payout, price_vs_base
+    order_by: hour_band
+  }
+
+  #" Expected payout by month (the season loading).
+  view: price_by_month is {
+    group_by: month_num, month_label
+    aggregate: flight_count, p_cancel, p_3h, p_6h, expected_payout
+    order_by: month_num
+  }
+
+  #" PLAYBOOK "Which flights should cost the most to insure?" Airline x airport x hour band with 300+ flights,
+  #" ranked by expected payout against the national base. May-July 2026: the top cells are regional and JetBlue
+  #" evening departures at the New York and Washington airports (5-10x base).
+  view: riskiest_cells is {
+    group_by: airline, origin, hour_label
+    aggregate: flight_count, p_cancel, p_3h, expected_payout, expected_payout_lo, expected_payout_hi, price_vs_base
+    having: flight_count >= 300
+    order_by: expected_payout desc
+    limit: 25
+  }
+
+  #" Airports ranked by expected payout per policy.
+  view: airports_by_price is {
+    group_by: origin
+    aggregate: flight_count, p_cancel, p_3h, expected_payout, price_vs_base
+    having: flight_count >= 3000
+    order_by: expected_payout desc
+  }
+}
+
+#" WEATHER: flights from the 99 airports with weather observations, summed by departure airport, weather group at
+#" either end that day (wx_group: "0 None", "1 Minor (no thunder)", "2 Moderate thunder", "3 Storm (severe or
+#" extreme)" = Severe or Extreme band at the departure OR arrival airport, storm-study rules), each end's band,
+#" hour band and month. paid = the sample product's payouts.
+source: insurance_weather is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_weather
+""") extend {
+  dimension:
+    is_storm is wx_group = '3 Storm (severe or extreme)'
+    wx_label is substr(wx_group, 3)
+    hour_label is substr(hour_band, 3)
+  measure:
+    flight_count is flights.sum()
+    # currency
+    paid_total is paid.sum()
+    #" Payout per policy.
+    # currency
+    payout_per_flight is paid.sum() / flights.sum()
+    # percent
+    cancel_rate is cancellations.sum() / flights.sum()
+    # percent
+    rate_3h is delays_3h.sum() / flights.sum()
+    # percent
+    rate_6h is delays_6h.sum() / flights.sum()
+    #" Share of all flights in the query.
+    # percent
+    flight_share is flights.sum() / all(flights.sum())
+    #" Share of all payouts in the query.
+    # percent
+    payout_share is paid.sum() / all(paid.sum())
+    #" Payout per policy / the payout per policy on days with no weather at either end.
+    uplift_vs_clear is (paid.sum() / flights.sum()) / all(paid.sum() { where: wx_group = '0 None' } / flights.sum() { where: wx_group = '0 None' })
+
+  #" PLAYBOOK "How much more does a storm day pay out?" By weather at either end. May-July 2026, 99 airports: storm
+  #" days were 12% of flights and 41% of payouts; $21.06 a policy vs $2.87 on clear days (7.3x).
+  view: payout_by_weather is {
+    where: wx_group != 'unknown'
+    group_by: wx_group, wx_label
+    aggregate: flight_count, flight_share, payout_share, payout_per_flight, cancel_rate, rate_3h, rate_6h, uplift_vs_clear
+    order_by: wx_group
+  }
+
+  #" Storm-day uplift by departure-hour band.
+  view: storm_uplift_by_hour is {
+    where: wx_group != 'unknown'
+    group_by: hour_band, hour_label
+    aggregate:
+      clear_payout is payout_per_flight { where: wx_group = '0 None' }
+      storm_payout is payout_per_flight { where: is_storm }
+      storm_flights is flight_count { where: is_storm }
+    order_by: hour_band
+  }
+
+  #" Airports ranked by how much of their payout falls on storm days.
+  view: storm_concentration_by_airport is {
+    where: wx_group != 'unknown'
+    group_by: origin
+    aggregate:
+      flight_count
+      storm_flight_share is flight_count { where: is_storm } / flight_count
+      storm_payout_share is paid_total { where: is_storm } / paid_total
+      clear_payout is payout_per_flight { where: wx_group = '0 None' }
+      storm_payout is payout_per_flight { where: is_storm }
+    having: flight_count >= 10000
+    order_by: storm_payout_share desc
+  }
+}
+
+#" Per departure airport: storm days (Severe/Extreme at the DEPARTURE airport) vs non-storm days. expected_paid = what
+#" the same weather (band at both ends, same hour band) paid per flight at the OTHER airports, times this airport's
+#" flights. Ratio above 1 = this airport pays out more than its weather justifies.
+source: insurance_airport_storm is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_airport_storm
+""") extend {
+  measure:
+    flight_count is flights.sum()
+    # currency
+    payout_per_flight is paid.sum() / flights.sum()
+    # currency
+    expected_per_flight is expected_paid.sum() / flights.sum()
+    #" Paid / what the same weather paid elsewhere.
+    excess_ratio is paid.sum() / expected_paid.sum()
+    #" Payouts above what the weather justified (sample product, May-July 2026).
+    # currency
+    excess_paid is paid.sum() - expected_paid.sum()
+    airport_storm_days is storm_days.max()
+
+  #" PLAYBOOK "Which airports pay out more than the storm justifies?" Storm days at the departure airport. May-July
+  #" 2026: Newark 3.15x (9 storm days, $62 a policy vs $20 expected), LaGuardia 3.4x (3 days), Washington National
+  #" 2.8x, Chicago O'Hare 1.9x, Dallas/Fort Worth 1.9x. Who acts: insurers loading storm-day prices by airport.
+  view: airports_paying_more_than_the_storm is {
+    where: storm
+    group_by: origin
+    aggregate: airport_storm_days, flight_count, payout_per_flight, expected_per_flight, excess_ratio, excess_paid
+    having: flight_count >= 500
+    order_by: excess_paid desc
+  }
+}
+
+#" ADVERSE SELECTION: what a buyer could know before buying, and how much more the flagged flights paid out.
+#" One row per signal x departure airport x flagged (true/false). Signals: the NWS Storm Prediction Center convective
+#" outlook (Day 2 = issued the day before; Day 1 = issued overnight, about 1am Central) with a marginal-or-higher
+#" severe-thunderstorm risk at the departure or arrival airport, and thunder actually reported (METAR) at either end in
+#" the 3 hours ending N hours before scheduled departure. lead_hours = how far ahead the buyer could know it.
+source: insurance_signals is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_signals
+""") extend {
+  measure:
+    flight_count is flights.sum()
+    #" Share of flights the signal flags.
+    # percent
+    flagged_share is flights.sum() { where: flag } / flights.sum()
+    # currency
+    flagged_payout is paid.sum() { where: flag } / flights.sum() { where: flag }
+    # currency
+    base_payout is paid.sum() / flights.sum()
+    #" Payout per flagged policy / payout per policy overall: the loss ratio if only flagged buyers buy at the base
+    #" price.
+    lift is (paid.sum() { where: flag } / flights.sum() { where: flag }) / (paid.sum() / flights.sum())
+    #" Share of all payouts that fall on flagged flights.
+    # percent
+    payout_share is paid.sum() { where: flag } / paid.sum()
+    # percent
+    flagged_cancel_rate is cancellations.sum() { where: flag } / flights.sum() { where: flag }
+    # percent
+    flagged_3h_rate is delays_3h.sum() { where: flag } / flights.sum() { where: flag }
+
+  #" PLAYBOOK "How close to departure can we keep selling?" Each signal, its lead time, and the loss ratio if only the
+  #" flagged buyers buy at the base price. May-July 2026: the Day-2 outlook (issued the day before) already flags 10%
+  #" of flights that pay 2.5x base (slight-or-higher risk: 4x); thunder reported at either end 3 h before departure
+  #" flags 6% that pay 3.3x, 1 h before 3.8x.
+  view: adverse_selection_by_lead_time is {
+    group_by: ord, signal, known_when, lead_hours
+    aggregate: flagged_share, flagged_payout, base_payout, lift, payout_share, flagged_cancel_rate, flagged_3h_rate
+    order_by: ord
+  }
+}
+
+#" OUT-OF-SAMPLE TEST: priced on May-June, tested on every July 2026 flight (631,970). Brier score (mean squared
+#" error of the predicted probability; lower is better) for the naive single national rate, the pricing model, the
+#" model x that day's weather uplift (weather known after the fact), and the model re-levelled to July's overall
+#" rate. skill = 1 - Brier / naive Brier.
+source: insurance_validation is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_validation
+""")
+
+#" July flights in ten equal groups by the model's predicted payout (priced on May-June): predicted vs actual payout
+#" per policy, and the naive single price. predicted_payout_relevelled = the model scaled to July's overall level.
+source: insurance_calibration is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_calibration
+""")
+
+#" July 2026 cells (airline x airport x hour band): what they paid per policy vs the naive single price (the May-June
+#" national average, $4.83) and the model's May-June price. naive_loss_ratio above 1 = the single price lost money.
+source: insurance_july_cells is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_july_cells
+""") extend {
+  dimension:
+    airline is carrier ?
+      pick 'American' when 'AA' pick 'Delta' when 'DL' pick 'United' when 'UA' pick 'Southwest' when 'WN'
+      pick 'JetBlue' when 'B6' pick 'Alaska' when 'AS' pick 'Spirit' when 'NK' pick 'Frontier' when 'F9'
+      pick 'Allegiant' when 'G4' pick 'Hawaiian' when 'HA' pick 'SkyWest' when 'OO' pick 'Republic' when 'YX'
+      pick 'Envoy' when 'MQ' pick 'Endeavor' when '9E' pick 'PSA' when 'OH' else carrier
+    hour_label is substr(hour_band, 3)
+    #" How the single national price did in this cell.
+    naive_result is
+      pick '3 Lost money (paid 1.5x+ the price)' when naive_loss_ratio >= 1.5
+      pick '1 Overcharged (paid under 0.67x)' when naive_loss_ratio < 0.67
+      else '2 About right'
+  measure:
+    flight_count is flights.sum()
+    # currency
+    paid_total is actual_paid.sum()
+    # currency
+    naive_premium_total is sum(naive_price * flights)
+    # currency
+    model_premium_total is sum(model_price * flights)
+    #" Payouts / premiums at the naive single price.
+    naive_loss_ratio_all is actual_paid.sum() / sum(naive_price * flights)
+    model_loss_ratio_all is actual_paid.sum() / sum(model_price * flights)
+    # percent
+    flight_share is flights.sum() / all(flights.sum())
+    # percent
+    payout_share is actual_paid.sum() / all(actual_paid.sum())
+
+  #" PLAYBOOK "Where does a single price lose money?" July 2026 cells with 100+ flights, by how the naive single
+  #" price did. Cells that paid 1.5x+ the price held 41% of flights and 76% of payouts.
+  view: naive_price_result is {
+    where: flights >= 100
+    group_by: naive_result
+    aggregate: flight_count, flight_share, paid_total, payout_share, naive_premium_total, naive_loss_ratio_all
+    order_by: naive_result
+  }
+
+  #" The cells where the single price lost the most money in July.
+  view: biggest_naive_shortfalls is {
+    where: flights >= 100
+    group_by: airline, origin, hour_label
+    aggregate:
+      flight_count
+      # currency
+      paid_per_policy is actual_paid.sum() / flights.sum()
+      # currency
+      naive_price_per_policy is naive_price.max()
+      # currency
+      model_price_per_policy is model_price.sum() / count()
+      # currency
+      naive_shortfall_total is naive_shortfall.sum()
+    order_by: naive_shortfall_total desc
+    limit: 15
+  }
+}
+
+#" July test with both prices scaled to July's overall level: share of July payouts in cells the price missed by
+#" 1.5x or more, and dollars misallocated across cells (sum of |paid - price| / paid). Cells with 100+ July flights.
+source: insurance_july_summary is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_july_summary
+""")
+
+#" Build checks (row counts, flights tested, SPC outlook rows).
+source: insurance_checks is motherduck.sql("""
+  SELECT * FROM ltools.flights.ins_checks
+""")

@@ -1,0 +1,80 @@
+##! experimental.givens
+import "../libraries.malloy"
+import "../library_value.malloy"
+
+// Drawn by state_library_aid.jsx. Presentation only. Queries filtered by $STATE (default NC) show that state; the rest
+// are national context.
+
+#" Next library dollar: the counties in a state ranked for the next state or federal library dollar, each tagged with
+#" its action (fund +$X a year to reach the state median, or "funding not the gap"), how stable its rank is under 11
+#" weightings, and how much output per dollar its library gets against similar systems (library_value). Below: why it
+#" ranks, what the dollar buys, how to check it. FY2024 PLS, ACS 2024 5-year. Replaces library_value and
+#" county_library_funding_gap as pages (their sources stay in the model).
+# artifact { title="Next library dollar" givens { STATE="NC" } } dashboard { columns=6 }
+query: state_library_aid_page is state_aid_targets -> {
+  where: state ~ $STATE
+  aggregate: counties, offline_hh, offline_hh_within_5mi, offline_share_near_branch, cost_to_median
+}
+
+#" Every county in the state with its need, spending, priority rank and suggested use, plus each factor's within-state
+#" percentile (the page re-weights them live) and the original four-factor rank.
+query: sa_counties is state_aid_targets -> {
+  where: state ~ $STATE
+  select: county_fips, county_name, state, systems, priority_rank, priority_score, no_internet_share, poverty_share,
+    households_share_5mi_plus, spend_per_resident, state_median_spend_per_resident, state_aid_per_resident,
+    offline_households, offline_within_5mi, offline_5mi_plus, offline_share_within_5mi, suggested_use,
+    cost_to_state_median, residents_2024, visits, library_spend, growth_2020_2024,
+    priority_rank_v1, priority_score_v1, per_capita_income, local_effort_per_1k_income, hours_change_2019_2024,
+    no_vehicle_share, pr_offline, pr_poverty, pr_distance, pr_underfunded, pr_low_capacity, pr_effort, pr_hour_cut,
+    pr_no_vehicle, pr_low_state_aid
+  order_by: priority_rank
+}
+
+#" Offline households by distance to a library building, the state and the US.
+query: sa_distance is state_library_distance -> by_distance + { where: state ~ $STATE }
+query: sa_distance_us is state_library_distance -> by_distance
+
+#" State aid, federal aid and local money per resident by poverty third, the state and every state.
+query: sa_fair is state_aid_fairness -> {
+  where: state ~ $STATE
+  select: state, poverty_third, systems, people, avg_poverty, state_aid_per_resident, federal_aid_per_resident,
+    local_per_resident, spend_per_resident, aid_vs_lowest_third
+  order_by: poverty_third
+}
+query: sa_fair_states is state_aid_fairness -> {
+  select: state, poverty_third, state_aid_per_resident, state_aid_per_resident_all, systems
+  order_by: state, poverty_third
+}
+
+#" Five-year effect of operating spend on visits and borrowing (to size what the dollar buys).
+query: sa_effects is library_cut_effects -> effects
+
+#" The state's 10 highest-priority counties against its others, FY2018-FY2024.
+query: sa_trend is state_aid_trend -> {
+  where: state ~ $STATE
+  select: county_group, fiscal_year, spend_per_resident, state_aid_per_resident, visits_per_resident, counties
+  order_by: county_group, fiscal_year
+}
+
+#" Every library system in the state: output per dollar and spend per resident against its 25 most similar US systems
+#" (matched to counties by system name on the page).
+query: sa_systems is library_value -> {
+  where: state ~ $STATE
+  select: library_name, state, population_served, value_index, value_band, spend_per_capita, peer_spend_per_capita,
+    visits_per_capita, peer_visits_per_capita
+}
+
+#" Every state with county rows, for the state picker (filters ignored).
+query: sa_states is state_aid_targets -> {
+  group_by: state
+  aggregate: counties
+  order_by: state
+}
+
+#" National: systems grouped by spend per resident against their peers (use per resident and output per dollar).
+query: sa_spend_bands is library_value -> more_money_more_use
+
+#" About this data (filters ignored).
+query: sa_about is state_aid_targets -> {
+  aggregate: counties, offline_hh, offline_share_near_branch
+}

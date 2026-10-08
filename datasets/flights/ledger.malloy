@@ -1,0 +1,351 @@
+// Disruption ledger: departures from the 100 busiest US airports, May-July 2026, priced in dollars and split into
+// three parts that add up to the total (controllable, weather, resilience gap). Built by ledger/build_ledger.sh
+// (IEM ASOS/METAR weather at both ends of each flight + the BTS flights files) and loaded into MotherDuck
+// ltools.flights.ledger_*.
+import { airport_list } from 'summaries.malloy'
+
+#" START HERE for "what did disruption cost, and how much was weather?" (fast: one row per airline x departure
+#" airport x weather band). Departures from the 100 busiest US airports (91% of US flights), May-July 2026, with the
+#" weather band at BOTH ends (worse end counts): "0 None" (clear), "1 Minor" (no thunder; low cloud, poor visibility
+#" or 30 kt+ gusts), "2 Moderate" (thunder 1-3 hours), "3 Severe" (heavy thunder or thunder 4+ hours), "4 Extreme"
+#" (both); from each airport's own weather observations, 6am-10pm local. Cost = arrival delay minutes x $69.07 (A4A
+#" 2025 block-minute cost less fuel) to $100.76 (A4A 2024 block-minute cost), plus cancellations x $5,770 (masFlight
+#" 2014 US average per cancelled flight) to $22,000 (EUROCONTROL Standard Inputs EUR 20,930, 2022 prices). *_lo =
+#" low prices, *_hi = high prices; quote them as a range. The three parts ADD UP to the total:
+#" - controllable = all cost on clear days + on weather days, the excess over the weather expectation that even the
+#"   best airline at the same airport and band also had (an airport-wide excess).
+#" - weather = on weather days, the expectation: what flights at OTHER airports cost in the same band at origin, the
+#"   same band at destination and the same time of day (capped at what actually happened).
+#" - resilience gap = on weather days, the excess over the expectation that the best airline at the same airport and
+#"   band avoided: what this airline would save by matching it.
+#" Diverted flights are not priced. Association, not cause. One summer.
+source: disruption_ledger is motherduck.sql("""
+  SELECT * FROM ltools.flights.ledger_cells
+""") extend {
+  join_one: airport is airport_list on origin = airport.origin
+
+  dimension:
+    #" Weather band without its sort number, e.g. "Severe".
+    band_label is substr(band, 3)
+    #" "Clear" (no weather band at either end) or "Weather".
+    day_type is pick 'Clear' when band = '0 None' else 'Weather'
+    #" Severe or Extreme at either end.
+    is_storm is band >= '3'
+
+  measure:
+    #" Scheduled departures.
+    flight_count is flights.sum()
+    cancellation_count is cancellations.sum()
+    # percent
+    cancel_rate is cancellations.sum() / flights.sum()
+    #" Average arrival delay per scheduled departure, minutes (early = 0; cancelled = 0).
+    delay_minutes_per_flight is delay_min.sum() / flights.sum()
+    #" Total disruption cost, low prices (US dollars, May-July 2026).
+    # currency
+    total_cost_lo is a_lo.sum()
+    #" Total disruption cost, high prices.
+    # currency
+    total_cost_hi is a_hi.sum()
+    # currency
+    controllable_cost_lo is controllable_lo.sum()
+    # currency
+    controllable_cost_hi is controllable_hi.sum()
+    # currency
+    weather_cost_lo is weather_lo.sum()
+    # currency
+    weather_cost_hi is weather_hi.sum()
+    # currency
+    resilience_gap_lo is resilience_lo.sum()
+    # currency
+    resilience_gap_hi is resilience_hi.sum()
+    #" Check: controllable + weather + resilience minus the total (should be 0).
+    parts_minus_total_hi is controllable_hi.sum() + weather_hi.sum() + resilience_hi.sum() - a_hi.sum()
+    parts_minus_total_lo is controllable_lo.sum() + weather_lo.sum() + resilience_lo.sum() - a_lo.sum()
+    # percent
+    controllable_share is controllable_hi.sum() / a_hi.sum()
+    # percent
+    weather_share is weather_hi.sum() / a_hi.sum()
+    # percent
+    resilience_share is resilience_hi.sum() / a_hi.sum()
+    #" Cost on clear days only (high prices).
+    # currency
+    clear_day_cost_hi is a_hi.sum() { where: band = '0 None' }
+    # currency
+    clear_day_cost_lo is a_lo.sum() { where: band = '0 None' }
+    #" Cost on weather days (high prices).
+    # currency
+    weather_day_cost_hi is a_hi.sum() { where: band != '0 None' }
+    #" Weather-day cost the severity-matched expectation predicts (high prices).
+    # currency
+    expected_weather_day_cost_hi is e_hi.sum() { where: band != '0 None' }
+    #" Weather-day cost / expectation (1 = as the weather predicts).
+    weather_day_ratio is a_hi.sum() { where: band != '0 None' } / e_hi.sum() { where: band != '0 None' }
+    #" Share of the total cost that is delay minutes (the rest is cancellations), high prices.
+    # percent
+    delay_share_of_cost is a_delay_hi.sum() / a_hi.sum()
+    #" Weather part net of what the same airline at the same airport loses on a clear day (sensitivity: the storm's
+    #" increment only).
+    # currency
+    weather_net_of_clear_day_hi is weather_net_hi.sum()
+    #" The part of the weather cost that is just the airline's normal clear-day level at this airport (weather minus
+    #" the storm's increment). Shows how much of "weather" would have happened on a clear day anyway.
+    # currency
+    weather_normal_level_hi is weather_hi.sum() - weather_net_hi.sum()
+    #" Departures in thin weather cells (under 100 flights or under 3 days for the airline, airport and band).
+    thin_flights is flights.sum() { where: thin }
+    #" Share of departures whose destination weather is not known (destination outside the 100 airports).
+    # percent
+    dest_unknown_share is n_dest_unknown.sum() / flights.sum()
+
+    // Severity threshold sensitivity: a band below the threshold counts as clear (all controllable).
+    #" Controllable, if only Moderate+ (thunder) counts as weather.
+    # currency
+    controllable_hi_moderate is a_hi.sum() { where: band < '2' } + controllable_hi.sum() { where: band >= '2' }
+    # currency
+    weather_hi_moderate is weather_hi.sum() { where: band >= '2' }
+    # currency
+    resilience_hi_moderate is resilience_hi.sum() { where: band >= '2' }
+    #" Controllable, if only Severe+ counts as weather.
+    # currency
+    controllable_hi_severe is a_hi.sum() { where: band < '3' } + controllable_hi.sum() { where: band >= '3' }
+    # currency
+    weather_hi_severe is weather_hi.sum() { where: band >= '3' }
+    # currency
+    resilience_hi_severe is resilience_hi.sum() { where: band >= '3' }
+
+  #" PLAYBOOK "What did disruption cost and how much was weather?" The three parts, low and high prices.
+  view: ledger_totals is {
+    aggregate:
+      flight_count, cancellation_count, total_cost_lo, total_cost_hi,
+      controllable_cost_lo, controllable_cost_hi, weather_cost_lo, weather_cost_hi, resilience_gap_lo, resilience_gap_hi,
+      controllable_share, weather_share, resilience_share, parts_minus_total_lo, parts_minus_total_hi,
+      delay_share_of_cost, dest_unknown_share
+  }
+
+  #" The ledger by weather band at the worse end of the flight.
+  view: ledger_by_band is {
+    group_by: band
+    aggregate:
+      flight_count, cancel_rate, delay_minutes_per_flight, total_cost_lo, total_cost_hi,
+      controllable_cost_hi, weather_cost_hi, weather_normal_level_hi, resilience_gap_hi, weather_day_ratio
+    order_by: band
+  }
+
+  #" PLAYBOOK "Which airports lose the most money they could control?" Departure airports by controllable cost.
+  view: ledger_by_airport is {
+    group_by: origin
+    aggregate:
+      flight_count, total_cost_lo, total_cost_hi, controllable_cost_lo, controllable_cost_hi, weather_cost_hi,
+      resilience_gap_hi, controllable_share, weather_day_ratio
+    order_by: controllable_cost_hi desc
+  }
+
+  #" PLAYBOOK "Airline x airport ledger" (100+ departures).
+  view: ledger_by_airline_airport is {
+    group_by: airline, origin
+    aggregate:
+      flight_count, total_cost_lo, total_cost_hi, controllable_cost_lo, controllable_cost_hi, weather_cost_lo,
+      weather_cost_hi, resilience_gap_lo, resilience_gap_hi, weather_day_ratio
+    having: flight_count >= 100
+    order_by: total_cost_hi desc
+  }
+
+  #" PLAYBOOK "Which airlines would save most by matching the best airline at the same airport in the same weather?"
+  view: resilience_gaps is {
+    group_by: airline, origin
+    aggregate:
+      weather_flights is flight_count { where: band != '0 None' }
+      resilience_gap_lo, resilience_gap_hi, weather_day_ratio
+      best_airline_here is best_carrier.max() { where: band = '3 Severe' }
+    having: resilience_gap_hi > 0
+    order_by: resilience_gap_hi desc
+    limit: 25
+  }
+
+  #" How the split moves with the severity threshold (high prices): which bands count as weather.
+  view: threshold_sensitivity is {
+    aggregate:
+      total_cost_hi
+      controllable_minor_plus is controllable_cost_hi
+      weather_minor_plus is weather_cost_hi
+      resilience_minor_plus is resilience_gap_hi
+      controllable_hi_moderate, weather_hi_moderate, resilience_hi_moderate
+      controllable_hi_severe, weather_hi_severe, resilience_hi_severe
+      weather_net_of_clear_day_hi
+  }
+}
+
+#" START HERE for "which first departures start the costliest delay chains on CLEAR days?" One row per airline x
+#" first-flight airport x scheduled hour (100 busiest airports, May-July 2026). Chain cost = "late aircraft" delay
+#" minutes on the same aircraft's later flights that day, when its first flight arrived 15+ minutes late: low =
+#" next flight only x $69.07, high = every later flight x $100.76 (same as chain_slots_summary). Split by the
+#" weather at both ends of the FIRST flight: clear_* = clear days; controllable/weather/resilience as in
+#" disruption_ledger (they add up to total). rank_all_hi = national rank on all days; rank_clear_hi = rank on clear
+#" days only; rank_controllable_hi = rank on the controllable part; rank_clear_rate_hi = rank on clear_rate_quarter_hi,
+#" the clear-day cost per clear-day first departure x all first departures (what the slot would cost in the quarter if
+#" every day were clear; removes the bias toward airports that simply have more clear days; null under 30 clear-day
+#" first departures). A slot that ranks high on all days but low on
+#" clear days was mostly weather. thin = under 20 late starts.
+source: chain_slot_ledger is motherduck.sql("""
+  SELECT * FROM ltools.flights.ledger_slots
+""") extend {
+  join_one: airport is airport_list on origin = airport.origin
+
+  dimension:
+    #" Departure time of the slot as a label, e.g. "7am".
+    hour_label is
+      pick '12am' when dep_hour = 0
+      pick concat(dep_hour::"INTEGER"::string, 'am') when dep_hour < 12
+      pick '12pm' when dep_hour = 12
+      else concat((dep_hour - 12)::"INTEGER"::string, 'pm')
+    #" "AA DFW 7am"
+    slot_label is concat(carrier, ' ', origin, ' ', hour_label)
+    #" Rank places gained (+) or lost (-) when weather days are removed.
+    rank_move is rank_all_hi - rank_clear_hi
+
+  measure:
+    slot_count is count()
+    first_departure_count is first_departures.sum()
+    late_start_count is late_starts.sum()
+    # currency
+    chain_cost_lo is total_lo.sum()
+    # currency
+    chain_cost_hi is total_hi.sum()
+    # currency
+    clear_chain_cost_lo is clear_lo.sum()
+    # currency
+    clear_chain_cost_hi is clear_hi.sum()
+    # currency
+    weather_day_chain_cost_hi is weatherday_hi.sum()
+    # currency
+    controllable_chain_cost_lo is controllable_lo.sum()
+    # currency
+    controllable_chain_cost_hi is controllable_hi.sum()
+    # currency
+    weather_chain_cost_hi is weather_hi.sum()
+    # currency
+    resilience_chain_gap_hi is resilience_hi.sum()
+    #" Share of the slot's chain cost incurred on clear days.
+    # percent
+    clear_share is clear_hi.sum() / total_hi.sum()
+    parts_minus_total_hi is controllable_hi.sum() + weather_hi.sum() + resilience_hi.sum() - total_hi.sum()
+    #" What the slots would cost in the quarter if every day were clear (high prices).
+    # currency
+    clear_rate_cost_hi is clear_rate_quarter_hi.sum()
+    # currency
+    clear_rate_cost_lo is clear_rate_quarter_lo.sum()
+    #" Clear-day chain cost per clear-day first departure, US dollars (high prices).
+    # currency
+    clear_cost_per_departure is clear_hi.sum() / clear_first_departures.sum()
+
+  #" PLAYBOOK "Which slots are costly even on clear days?" The national top slots ranked on clear days, with their
+  #" all-days rank: the ones to add turn buffer or a spare aircraft to.
+  view: costly_on_clear_days is {
+    where: clear_rate_quarter_hi is not null
+    group_by: rank_clear_rate_hi, rank_all_hi, rank_clear_hi, airline, origin, hour_label
+    aggregate: late_start_count, clear_rate_cost_lo, clear_rate_cost_hi, clear_chain_cost_hi, chain_cost_hi, clear_share
+    order_by: rank_clear_rate_hi
+    limit: 25
+  }
+
+  #" PLAYBOOK "Which 'costly slots' were really just weather?" Top-100 slots on all days that fall furthest when
+  #" weather days are removed.
+  view: costly_slots_that_were_weather is {
+    where: rank_all_hi <= 100
+    group_by: rank_all_hi, rank_clear_hi, airline, origin, hour_label
+    aggregate: chain_cost_hi, clear_chain_cost_hi, clear_share
+    order_by: clear_share
+    limit: 15
+  }
+
+  #" How much the top-25 list changes when weather days are removed.
+  view: ranking_overlap is {
+    aggregate:
+      top25_all_also_top25_clear is slot_count { where: rank_all_hi <= 25 and rank_clear_hi <= 25 }
+      top50_all_also_top50_clear is slot_count { where: rank_all_hi <= 50 and rank_clear_hi <= 50 }
+      top25_all_also_top25_clear_rate is slot_count { where: rank_all_hi <= 25 and rank_clear_rate_hi <= 25 }
+      chain_cost_lo, chain_cost_hi, clear_chain_cost_lo, clear_chain_cost_hi, clear_share
+      controllable_chain_cost_lo, controllable_chain_cost_hi, weather_chain_cost_hi, resilience_chain_gap_hi, parts_minus_total_hi
+  }
+}
+
+#" START HERE for insurers / delay-cover pricing. One row per departure airport x month x weather band at the
+#" DEPARTURE airport (as a forecast would give it), 100 busiest US airports, May-July 2026. days = airport-days in
+#" the band that month; expected = what departures at OTHER airports cost in the same band and time of day (the
+#" pricing benchmark); actual = what this airport's departures cost. Prices as disruption_ledger (*_lo / *_hi).
+#" Expected loss per month = band days per month x expected loss per band day (per-month figures average the three
+#" months; filter to one month_num for a single month).
+source: weather_risk is motherduck.sql("""
+  SELECT * FROM ltools.flights.ledger_insurer
+""") extend {
+  join_one: airport is airport_list on origin = airport.origin
+
+  dimension:
+    band_label is substr(band, 3)
+    is_storm is band >= '3'
+
+  measure:
+    band_days is n_days.sum()
+    month_count is count(month_num)
+    #" Average days a month in the band over the three months (May-July).
+    days_per_month is n_days.sum() / 3
+    flight_count is flights.sum()
+    # percent
+    cancel_rate is cancellations.sum() / flights.sum()
+    #" Expected cost per band day at this airport's traffic (high prices).
+    # currency
+    expected_loss_per_day_hi is e_hi.sum() / n_days.sum()
+    # currency
+    expected_loss_per_day_lo is e_lo.sum() / n_days.sum()
+    #" Actual cost per band day.
+    # currency
+    actual_loss_per_day_hi is a_hi.sum() / n_days.sum()
+    #" Expected cost per departure (high prices): the per-flight premium basis.
+    # currency
+    expected_loss_per_departure_hi is e_hi.sum() / flights.sum()
+    # currency
+    actual_loss_per_departure_hi is a_hi.sum() / flights.sum()
+    #" Actual / expected (the airport's risk factor; 1 = as the weather predicts).
+    risk_factor is a_hi.sum() / e_hi.sum()
+    #" Expected cost per month in the band = days per month x expected per day (three-month average).
+    # currency
+    expected_loss_per_month_hi is e_hi.sum() / 3
+    # currency
+    expected_loss_per_month_lo is e_lo.sum() / 3
+
+  #" PLAYBOOK "Insurer pricing table": per airport and band, how often (days a month) x expected loss per day.
+  view: pricing_table is {
+    where: band != '0 None'
+    group_by: origin, band
+    aggregate:
+      days_per_month, expected_loss_per_day_lo, expected_loss_per_day_hi, expected_loss_per_departure_hi,
+      expected_loss_per_month_hi, actual_loss_per_day_hi, risk_factor
+    order_by: origin, band
+  }
+
+  #" Storm days (Severe/Extreme) by airport: frequency, expected loss and risk factor.
+  view: storm_risk_by_airport is {
+    where: is_storm
+    group_by: origin
+    aggregate:
+      band_days, days_per_month, expected_loss_per_month_lo, expected_loss_per_month_hi, expected_loss_per_day_hi,
+      actual_loss_per_day_hi, risk_factor, flight_count
+    order_by: expected_loss_per_month_hi desc
+  }
+
+  #" Storm-day frequency by month.
+  view: storm_days_by_month is {
+    where: is_storm
+    group_by: month_num, month_label
+    aggregate:
+      band_days
+      # currency
+      expected_loss_hi is e_hi.sum()
+    order_by: month_num
+  }
+}
+
+#" Build checks for the ledger (row counts, chain-minute reconciliation with delay_chains, parts minus total).
+source: ledger_checks is motherduck.sql("""
+  SELECT * FROM ltools.flights.ledger_checks
+""")

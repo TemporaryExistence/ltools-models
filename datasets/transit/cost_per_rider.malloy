@@ -1,0 +1,262 @@
+##! experimental { givens }
+
+// What do the transit agencies that serve the most people at the lowest cost do differently, and what would others
+// save by doing the same? Public data only:
+//   ntd_annual_financials   FTA NTD Time Series 2.1 (npsm-38gk), 2015-2024, extended 2026-10-07 with passenger miles,
+//                           peak vehicles, UZA land area / density, FTA region and a CPI-U factor to 2024 dollars
+//                           (build_ntd_annual_financials.sql).
+//   cost_peer_gaps etc.     the study tables built by units/ltools/public-data/transit/analysis/cost/*.sql (DuckDB),
+//                           loaded to MotherDuck ltools.transit.* (Parquet copies in public-data/transit/cost/).
+// Goal, measurably: cost per passenger trip (and per passenger mile), operating expense in 2024 dollars.
+// Cost per trip = cost per revenue hour (efficiency) / trips per revenue hour (effectiveness).
+
+import { ntd_annual_financials } from 'fare_free.malloy'
+
+given:
+  # label="Your agency" suggest { source=cost_peer_gaps dimension=agency_name }
+  MY_AGENCY :: filter<string> is f'City of Charlotte North Carolina'
+
+#" NTD annual data (Time Series 2.1) with money in 2024 dollars and the cost-per-rider measures. One row per agency x
+#" mode x type of service x report year, 2015 to 2024. cost_per_trip = cost_per_revenue_hour / trips_per_revenue_hour.
+#" Density bands use the agency's primary urbanized area (2020 Census population / land area); rural reporters have none.
+#" Passenger miles are reported by full reporters only, so cost_per_passenger_mile uses only rows that report them.
+source: ntd_cost is ntd_annual_financials extend {
+  dimension:
+    #" Mode family: Bus (local bus, bus rapid transit, trolleybus, commuter bus, publico), Demand response (dial-a-ride,
+    #" ADA paratransit, microtransit, taxi), Vanpool, Rail (all rail modes), Ferry.
+    mode_family is
+      pick 'Bus' when mode_code = 'MB' or mode_code = 'RB' or mode_code = 'TB' or mode_code = 'CB' or mode_code = 'PB'
+      pick 'Demand response' when mode_code = 'DR' or mode_code = 'DT'
+      pick 'Vanpool' when mode_code = 'VP'
+      pick 'Ferry' when mode_code = 'FB'
+      else 'Rail'
+    #" Local bus only (MB, RB, TB): the mode the peer comparison uses.
+    is_local_bus is mode_code = 'MB' or mode_code = 'RB' or mode_code = 'TB'
+    #" Urbanized-area density band (people per square mile of the agency's primary UZA, 2020 Census).
+    density_band is
+      pick '0 Rural / no UZA' when uza_density is null
+      pick '1 Under 1,500/sq mi' when uza_density < 1500
+      pick '2 1,500-2,000' when uza_density < 2000
+      pick '3 2,000-2,500' when uza_density < 2500
+      pick '4 2,500-3,500' when uza_density < 3500
+      else '5 3,500+'
+
+  measure:
+    #" Operating expense in 2024 dollars (CPI-U).
+    # currency
+    opex_2024usd is sum(operating_expenses * cpi_to_2024)
+    #" Operating cost per boarding, 2024 dollars.
+    # currency
+    cost_per_trip_real is sum(operating_expenses * cpi_to_2024) / nullif(trips.sum(), 0)
+    #" Operating cost per passenger mile, 2024 dollars (rows that report passenger miles only).
+    # currency
+    cost_per_passenger_mile is sum(operating_expenses * cpi_to_2024) { where: passenger_miles > 0 } / nullif(passenger_miles.sum() { where: passenger_miles > 0 }, 0)
+    #" Operating cost per vehicle revenue hour, 2024 dollars (efficiency).
+    # currency
+    cost_per_hour_real is sum(operating_expenses * cpi_to_2024) / nullif(vehicle_revenue_hours.sum(), 0)
+    #" Boardings per vehicle revenue hour (effectiveness).
+    trips_per_hour is trips.sum() / nullif(vehicle_revenue_hours.sum(), 0)
+    #" Average load: passenger miles per vehicle revenue mile (people on board, on average).
+    avg_load is passenger_miles.sum() { where: passenger_miles > 0 } / nullif(vehicle_revenue_miles.sum() { where: passenger_miles > 0 }, 0)
+
+  #" THE PROBLEM: national cost per boarding by year, 2024 dollars, all modes and local bus, with its two parts.
+  #" WHO ACTS: state DOTs and budget offices funding transit operations.
+  view: national_trend is {
+    group_by: report_year
+    aggregate:
+      opex_2024usd, trips_total, cost_per_trip_real, cost_per_hour_real, trips_per_hour, cost_per_passenger_mile
+      bus_cost_per_trip is cost_per_trip_real { where: is_local_bus }
+      bus_cost_per_hour is cost_per_hour_real { where: is_local_bus }
+      bus_trips_per_hour is trips_per_hour { where: is_local_bus }
+    order_by: report_year
+  }
+
+  #" MODE CHOICE: 2024 cost per boarding by mode family and density band (urban reporters), pooled.
+  #" WHO ACTS: boards choosing between bus routes, on-demand zones and vanpool.
+  view: cost_by_mode_and_density is {
+    where: report_year = 2024 and reporting_module = 'Urban' and uza_density is not null
+      and (mode_family = 'Bus' or mode_family = 'Demand response' or mode_family = 'Vanpool')
+    group_by: density_band, mode_family
+    aggregate: cost_per_trip_real, trips_per_hour, cost_per_hour_real, trips_total, agencies
+    order_by: density_band, mode_family
+  }
+}
+
+#" One row per local-bus agency x year (urban full reporters, 5,000+ bus revenue hours), 2015-2024, 2024 dollars,
+#" compared with its PEER GROUP: same urbanized-area density band and bus size band (revenue hours: under 50k, 50k-200k,
+#" 200k-1M; agencies with 1M+ hours are one group whatever their density). peer_median_* = median of the agencies in the
+#" group. save_to_median = what the agency would save carrying the same riders at the peer-median cost per trip (0 when
+#" at or below it). save_riders_per_hr + save_cost_per_hr = save_to_median split by lever: the gap in riders per hour
+#" (fewer than peers) and the gap in cost per hour (more than peers), shared in proportion to their log gaps.
+#" pt_share = share of bus hours run by a contractor (purchased transportation). GoRaleigh (40007) 2024 boardings are
+#" inflated by a July 2024 counting change.
+source: cost_peer_gaps is motherduck.table('transit.cost_peer_gaps') extend {
+  dimension:
+    #" Agency name with its state.
+    agency_label is concat(agency_name, ' (', state, ')')
+    #" Peer group label.
+    peer_group is concat(peer_density, ' · ', size_band)
+    #" Contracted (90%+ of bus hours purchased) or directly operated.
+    operation is pick 'Contracted' when pt_share >= 0.9 pick 'Directly operated' when pt_share <= 0.1 else 'Mixed'
+  measure:
+    agencies is count(ntd_id)
+    # currency
+    total_opex is opex.sum()
+    # currency
+    savings_to_peer_median is save_to_median.sum()
+    # currency
+    savings_from_riders_per_hour is save_riders_per_hr.sum()
+    # currency
+    savings_from_cost_per_hour is save_cost_per_hr.sum()
+    # percent
+    savings_share_of_opex is save_to_median.sum() / nullif(opex.sum(), 0)
+    agencies_above_peer_median is count() { where: above_median }
+
+  #" WHAT IT IS WORTH: 2024 savings if every local-bus agency above its peer median cost per trip reached it, split by lever.
+  #" WHO ACTS: state DOTs allocating operating money, budget offices, transit boards.
+  view: savings_by_lever is {
+    where: report_year = 2024
+    aggregate: agencies, agencies_above_peer_median, total_opex, savings_to_peer_median, savings_from_riders_per_hour,
+      savings_from_cost_per_hour, savings_share_of_opex
+  }
+
+  #" The same by year (2019 vs 2024 robustness).
+  view: savings_by_year is {
+    group_by: report_year
+    aggregate: agencies, agencies_above_peer_median, savings_to_peer_median, savings_from_riders_per_hour, savings_from_cost_per_hour
+    order_by: report_year
+  }
+
+  #" WHERE: the agencies with the biggest 2024 gap to their peer median, in dollars. WHO ACTS: their boards; state DOTs.
+  view: biggest_gaps is {
+    where: report_year = 2024 and save_to_median > 0
+    select: agency_label, peer_group, operation, cost_per_trip, peer_median_cost_per_trip, cost_per_hour,
+      peer_median_cost_per_hour, trips_per_hour, peer_median_trips_per_hour, save_to_median, save_riders_per_hr, save_cost_per_hr
+    order_by: save_to_median desc
+    limit: 25
+  }
+
+  #" North Carolina local-bus agencies, 2024, against their peers.
+  view: nc_agencies is {
+    where: report_year = 2024 and state = 'NC'
+    select: agency_label, peer_group, operation, cost_per_trip, peer_median_cost_per_trip, trips_per_hour,
+      peer_median_trips_per_hour, cost_per_hour, peer_median_cost_per_hour, save_to_median, save_riders_per_hr, save_cost_per_hr
+    order_by: save_to_median desc, cost_per_trip desc
+  }
+}
+
+#" 2024 local-bus agencies (peer groups of 8+) with their cost quartile WITHIN their peer group (1 = cheapest quarter of
+#" agencies with the same density and size) and what they look like: riders and cost per hour, average speed (miles /
+#" hours), average load (passenger miles / revenue miles), contracted share of hours, demand-response share of the whole
+#" budget, revenue hours and boardings per UZA resident (only where the agency is the UZA's only bus operator), fare per trip.
+source: cost_agency_profile is motherduck.table('transit.cost_agency_profile') extend {
+  measure:
+    agencies is count()
+    #" Typical values are geometric means (exp of the mean log): Malloy has no median aggregate, and these ratios are skewed.
+    # currency
+    typical_cost_per_trip is exp(avg(ln(cost_per_trip)))
+    # currency
+    typical_cost_per_hour is exp(avg(ln(cost_per_hour)))
+    typical_trips_per_hour is exp(avg(ln(trips_per_hour)))
+    typical_speed_mph is exp(avg(ln(avg_speed_mph)))
+    typical_avg_load is exp(avg(ln(avg_load))) { where: avg_load > 0 }
+    # percent
+    share_contracted is avg(pick 1.0 when pt_share >= 0.9 else 0.0)
+    # percent
+    avg_demand_response_share is avg(demand_response_budget_share)
+    typical_trips_per_resident is exp(avg(ln(trips_per_resident))) { where: trips_per_resident > 0 }
+    typical_hours_per_resident is exp(avg(ln(hours_per_resident))) { where: hours_per_resident > 0 }
+    # currency
+    avg_fare_per_trip is avg(fare_per_trip)
+
+  #" WHY: what the cheapest quarter of each peer group does differently from the most expensive quarter.
+  #" WHO ACTS: boards and general managers deciding where to look first.
+  view: quartile_profile is {
+    group_by: cost_quartile
+    aggregate: agencies, typical_cost_per_trip, typical_cost_per_hour, typical_trips_per_hour, typical_speed_mph, typical_avg_load,
+      share_contracted, avg_demand_response_share, typical_trips_per_resident, typical_hours_per_resident, avg_fare_per_trip
+    order_by: cost_quartile
+  }
+}
+
+#" One row per US bus network redesign 2014-2023 (hand-built list with a source URL each; policy/network_redesigns.csv),
+#" analysed as a matched event study on MONTHLY NTD local-bus data: each agency against the 10 agencies of similar size
+#" (12-month boardings within 3x) whose riders per revenue hour tracked it best 36 to 13 months before launch.
+#" eff_* = change in log gap vs that baseline (0.10 is about +10%): tph = riders per hour, trips = boardings, hours =
+#" revenue hours; y1 = months +6..+17, y2 = +18..+29. pre_check = months -12..-1 (near 0 = good match). placebo_p_y1 =
+#" share of placebo agencies given the same date with an effect at least as large.
+source: network_redesign_results is motherduck.table('transit.network_redesign_results') extend {
+  measure:
+    redesigns is count()
+    # percent
+    mean_riders_per_hour_y1 is exp(eff_tph_y1.avg()) - 1
+    # percent
+    mean_riders_per_hour_y2 is exp(eff_tph_y2.avg()) - 1
+    # percent
+    mean_boardings_y1 is exp(eff_trips_y1.avg()) - 1
+    # percent
+    mean_hours_y1 is exp(eff_hours_y1.avg()) - 1
+
+  #" DOES A REDESIGN RAISE RIDERS PER HOUR? Mean effect by timing group. WHO ACTS: boards weighing a redesign.
+  view: effect_by_timing is {
+    group_by: timing_group
+    aggregate: redesigns, mean_riders_per_hour_y1, mean_riders_per_hour_y2, mean_boardings_y1, mean_hours_y1
+    order_by: timing_group
+  }
+
+  #" Every redesign, launch order.
+  view: redesign_list is {
+    select: agency_name, redesign_name, launch_date, timing_group, budget_note, pre_check, eff_tph_y1, eff_tph_y2,
+      eff_trips_y1, eff_hours_y1, placebo_p_y1, source_url
+    order_by: launch_date
+  }
+}
+
+#" Agencies whose local bus switched between directly operated and contracted (purchased transportation), 2016-2023,
+#" urban full reporters with 10,000+ bus hours: change from the two years before to years +1..+2 after, minus the
+#" same change at non-switching agencies of similar size and the same starting arrangement (log points).
+#" Several switches are reporting reclassifications of long-standing management contracts, not new contracts.
+source: contracting_switches is motherduck.table('transit.contracting_switches') extend {
+  measure:
+    switches is count()
+    # percent
+    mean_cost_per_hour_change is exp(effect_cost_per_hour.avg()) - 1
+    # percent
+    mean_cost_per_trip_change is exp(effect_cost_per_trip.avg()) - 1
+  view: by_direction is {
+    group_by: direction
+    aggregate: switches, mean_cost_per_hour_change, mean_cost_per_trip_change
+  }
+}
+
+#" Contracted (PT) minus directly operated (DO) local bus, within cells of the same year, density band, size band and
+#" FTA region (log points; -0.14 is about 13% lower). Weighted by matched pairs.
+source: contracting_cross_section is motherduck.table('transit.contracting_cross_section')
+
+#" General-public on-demand (microtransit-like: 80%+ of on-demand trips neither ADA nor sponsored) against the SAME
+#" agency's local bus, 2024, agencies with 10,000+ on-demand trips. ratio = on-demand cost per trip / bus cost per trip.
+#" breakeven_bus_trips_per_hour = riders per bus hour below which a bus trip costs more than this agency's on-demand trip.
+source: ondemand_vs_bus is motherduck.table('transit.ondemand_vs_bus') extend {
+  measure:
+    agencies is count()
+    #" Typical (geometric mean) on-demand cost per trip as a multiple of the same agency's bus cost per trip.
+    typical_ratio is exp(avg(ln(ratio)))
+    # currency
+    typical_ondemand_cost_per_trip is exp(avg(ln(od_cost_per_trip)))
+    # currency
+    typical_bus_cost_per_trip is exp(avg(ln(bus_cost_per_trip)))
+    typical_ondemand_trips_per_hour is exp(avg(ln(od_trips_per_hour)))
+    typical_breakeven is exp(avg(ln(breakeven_bus_trips_per_hour)))
+    agencies_where_ondemand_cheaper is count() { where: ratio < 1 }
+    #" On-demand spend above what the same trips would cost at the agency's bus cost per trip (an upper bound: not every
+    #" on-demand rider could be served by a route).
+    # currency
+    ondemand_premium is sum(od_opex - od_trips * bus_cost_per_trip)
+  view: summary is {
+    aggregate: agencies, typical_ratio, typical_ondemand_cost_per_trip, typical_bus_cost_per_trip,
+      typical_ondemand_trips_per_hour, typical_breakeven, agencies_where_ondemand_cheaper, ondemand_premium
+  }
+}
+
+#" The national savings figure re-derived under other choices (2019, universities out, largest systems out, region peers).
+source: cost_savings_robustness is motherduck.table('transit.cost_savings_robustness')

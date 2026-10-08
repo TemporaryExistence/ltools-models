@@ -1,0 +1,299 @@
+##! experimental { givens }
+
+// A transit board's budget question: the budget is fixed and probably shrinking. Where do the service hours go, what
+// gets cut, while losing the fewest riders and keeping the people who depend on the service? Public data only:
+//   budget_agency            one row per agency (2024): operating money by source (FTA TS1.2 2015-2024 via the Wayback
+//                            Machine, and the 2022-24 NTD funding tables qpjk-b3zw / 8tvb-ywj3 / dd43-h6wv / 4tmr-gwuu),
+//                            the federal money above the agency's own 2017-19 level (relief that is running out), and the
+//                            cut menu: riders lost a year per $1M of bus or rail service cut (NTD Time Series 2.1, 2024).
+//   service_change_*         matched event study of sharp service cuts and additions, NTD monthly 2002 - Aug 2026.
+//   service_elasticity_panel agency-level 12-month changes, riders vs service hours, demeaned by year x size band.
+//   gtfs_frequency           weekday bus hours on frequent (<=15 min midday) vs coverage routes, public GTFS feeds.
+// Built by units/ltools/public-data/transit/analysis/budget/*.sql (DuckDB), loaded to MotherDuck ltools.transit.*
+// (Parquet copies in public-data/transit/budget/).
+
+given:
+  # label="Your agency" suggest { source=budget_agency dimension=agency_name }
+  BUDGET_AGENCY :: filter<string> is f'City of Raleigh'
+
+#" One row per transit agency, 2024 (money in nominal dollars unless the column says otherwise). relief_gap = federal
+#" operating money in 2024 above the agency's own 2017-19 federal share of its operating budget (agencies with no
+#" 2017-19 money get the median baseline of their size class and urbanized-area band, baseline_from_peers). Relief
+#" (CARES, CRRSAA, ARP) is not a separate column anywhere in the NTD, so this is the stand-in. flagged = relief_share
+#" 10%+ (in 2018, before relief existed, 3-4% of bus and big agencies would have crossed it against a 2015-17 baseline).
+#" Cut menu: riders lost a year per $1M of service cut = elasticity x riders per revenue hour x $1M / hours-driven cost
+#" per revenue hour (operating cost minus general administration). Elasticities from sharp cuts against matched peers:
+#" bus 0.74 by year 2 (0.67 year 1), rail 0.30. ADA paratransit (estimated as demand-response cost x ADA share of its
+#" trips) is a fixed claim: it is required wherever fixed routes run. cut_needed / riders_lost_if_cut: service that would
+#" have to be cut (bus and rail in proportion to cost, fares lost on the way made up by cutting more) to close the 2024
+#" relief gap with cuts alone, and the riders that would cost, at constant elasticity.
+source: budget_agency is motherduck.table('transit.budget_agency') extend {
+  dimension:
+    #" Agency name with its state.
+    agency_label is concat(agency_name, ' (', state, ')')
+    #" Short name used on the page: the news name if the system is in the validation list, else the agency label.
+    short_label is coalesce(news_name, concat(agency_name, ' (', state, ')'))
+    #" In the 2025-26 news for an operating-budget crisis (the validation list; the news is not used to build the measure).
+    in_the_news is news_name is not null
+    #" Robustness check on the ranking: the same relief gap against a 2019-only federal share (the 2017-19 baseline
+    #" when the agency had no 2019 money). Never below zero.
+    # currency
+    relief_gap_2019base is
+      pick fed_2024 - coalesce(fed_share_2019, fed_share_base) * ops_2024
+        when fed_2024 - coalesce(fed_share_2019, fed_share_base) * ops_2024 > 0
+      else 0
+    #" Relief-share band.
+    relief_band is
+      pick '4 25%+' when relief_share >= 0.25
+      pick '3 10-25%' when relief_share >= 0.10
+      pick '2 3-10%' when relief_share >= 0.03
+      else '1 Under 3%'
+
+  measure:
+    agencies is count(ntd_id)
+    agencies_flagged is count() { where: flagged }
+    # currency
+    operating_budget is ops_2024.sum()
+    # currency
+    relief_gap_total is relief_gap.sum()
+    # percent
+    relief_share_pooled is relief_gap.sum() / nullif(ops_2024.sum(), 0)
+    # percent
+    federal_share_pooled is fed_2024.sum() / nullif(ops_2024.sum(), 0)
+    # percent
+    fare_share_pooled is fares_2024.sum() / nullif(ops_2024.sum(), 0)
+    # currency
+    ada_paratransit_cost is ada_opex_est.sum()
+    # percent
+    ada_share_pooled is ada_opex_est.sum() / nullif(opex_all.sum(), 0)
+    # currency
+    cut_needed_total is cut_needed.sum()
+    riders_lost_total is riders_lost_if_cut.sum()
+    trips_total is trips_all.sum()
+    # percent
+    riders_lost_share is riders_lost_if_cut.sum() / nullif(trips_all.sum(), 0)
+    #" Riders lost a year per $1M of local-bus service cut, pooled over agencies (weighted by bus cost).
+    bus_riders_lost_per_1m_pooled is sum(bus_riders_lost_per_1m * bus_opex) / nullif(bus_opex.sum() { where: bus_riders_lost_per_1m > 0 }, 0)
+    #" Fares those riders paid, per $1M of local-bus service cut (pooled).
+    # currency
+    bus_fares_lost_per_1m_pooled is sum(bus_fares_lost_per_1m * bus_opex) / nullif(bus_opex.sum() { where: bus_riders_lost_per_1m > 0 }, 0)
+    #" Riders lost a year per $1M of rail service cut, pooled (weighted by rail cost).
+    rail_riders_lost_per_1m_pooled is sum(rail_riders_lost_per_1m * rail_opex) / nullif(rail_opex.sum() { where: rail_riders_lost_per_1m > 0 }, 0)
+    bus_riders_per_hour_pooled is bus_trips_2024.sum() / nullif(bus_vrh_2024.sum(), 0)
+    # currency
+    bus_cost_per_hour_pooled is sum(bus_avoidable_cost_per_hour * bus_vrh_2024) / nullif(bus_vrh_2024.sum() { where: bus_avoidable_cost_per_hour > 0 }, 0)
+
+  #" VALIDATION: the systems in the 2025-26 news for budget crises, with their national rank on the relief gap.
+  #" WHO ACTS: anyone deciding whether to trust the ranking (bond analysts, state budget offices).
+  view: in_the_news_check is {
+    where: in_the_news
+    select: news_name, news, agency_label, ops_2024, fed_share_base, fed_share_2022, fed_share_2023, fed_share_2024,
+      relief_share, relief_gap, rank_gap_all, flagged, fare_share_2019, fare_share_2024
+    order_by: rank_gap_all
+  }
+
+  #" WHO IS EXPOSED: the biggest 2024 relief gaps among big multimodal systems.
+  view: biggest_gaps_big_systems is {
+    where: size_class = 'Big multimodal (rail or $500M+)' and relief_gap > 0
+    select: short_label, in_the_news, ops_2024, fed_share_base, fed_share_2024, relief_share, relief_gap, fare_share_2024,
+      cut_needed, riders_lost_if_cut, rank_gap_all
+    order_by: relief_gap desc
+    limit: 25
+  }
+
+  #" WHO IS EXPOSED AND NOT IN THE NEWS: bus agencies ($10M+, 0.5M+ bus trips) by 2024 relief share, gap $3M+.
+  #" WHO ACTS: municipal bond analysts and rating agencies, state DOTs, the agencies' own boards.
+  view: exposed_bus_agencies is {
+    where: size_class = 'Bus agency ($10M+, 0.5M+ bus trips)' and relief_gap >= 3000000
+    select: agency_label, ops_2024, fed_share_base, fed_share_2022, fed_share_2023, fed_share_2024, relief_share, relief_gap,
+      fare_share_2024, local_general_fund_share, ada_share_opex, cut_needed, riders_lost_if_cut, baseline_from_peers
+    order_by: relief_share desc
+    limit: 30
+  }
+
+  #" THE GAP COMING, by size class: 2024 relief gap, how many agencies are flagged, and the riders it would cost if the
+  #" flagged agencies closed it with service cuts alone.
+  view: gap_by_class is {
+    group_by: size_class
+    aggregate: agencies, agencies_flagged, operating_budget, relief_gap_total, relief_share_pooled, federal_share_pooled,
+      fare_share_pooled
+    nest: if_flagged_cut_service is {
+      where: flagged
+      aggregate: agencies, relief_gap_total, cut_needed_total, riders_lost_total, trips_total, riders_lost_share
+    }
+    order_by: relief_gap_total desc
+  }
+
+  #" WHAT EACH CUT COSTS: riders lost a year per $1M of local-bus service cut, by kind of bus system (2024 riders per
+  #" revenue hour), with what the hours cost and the ADA paratransit share of the budget. Bus agencies with 0.5M+ trips.
+  #" WHO ACTS: transit boards choosing what to cut.
+  view: cut_menu_by_type is {
+    where: bus_trips_2024 >= 500000 and bus_riders_lost_per_1m > 0
+    group_by: bus_type
+    aggregate: agencies, bus_riders_per_hour_pooled, bus_cost_per_hour_pooled, bus_riders_lost_per_1m_pooled,
+      bus_fares_lost_per_1m_pooled, ada_share_pooled
+    order_by: bus_type
+  }
+
+  #" WHAT THE MONEY STANDS ON, by size class: fares, taxes the agency levies, local general fund vs other local money,
+  #" state general fund vs other state money, federal (2024 operating funds; general-fund splits use each table's
+  #" operating + capital mix).
+  view: funding_mix_by_class is {
+    group_by: size_class
+    aggregate:
+      operating_budget
+      # percent
+      fares is fares_2024.sum() / nullif(ops_2024.sum(), 0)
+      # percent
+      agency_taxes is sum(agency_tax_share * ops_2024) / nullif(ops_2024.sum(), 0)
+      # percent
+      local_general_fund is sum(local_general_fund_share * ops_2024) / nullif(ops_2024.sum(), 0)
+      # percent
+      local_other is sum(local_other_share * ops_2024) / nullif(ops_2024.sum(), 0)
+      # percent
+      state_general_fund is sum(state_general_fund_share * ops_2024) / nullif(ops_2024.sum(), 0)
+      # percent
+      state_other is sum(state_other_share * ops_2024) / nullif(ops_2024.sum(), 0)
+      federal_share_pooled
+    order_by: operating_budget desc
+  }
+
+  #" North Carolina agencies with $5M+ operating budgets: exposure, funding mix and cut menu.
+  view: nc_agencies is {
+    where: state = 'NC' and ops_2024 >= 5000000
+    select: agency_label, ops_2024, fed_share_base, fed_share_2024, relief_share, relief_gap, fare_share_2024,
+      local_general_fund_share, local_other_share, ada_share_opex, bus_type, bus_riders_per_hour, bus_riders_lost_per_1m,
+      bus_fares_lost_per_1m
+    order_by: ops_2024 desc
+  }
+}
+
+#" National operating money by year and size class, 2015-2024: federal share, fare share, and federal money above each
+#" agency's 2017-19 share (relief_gap; 2015-18 values are the normal-year noise floor).
+source: relief_by_year is motherduck.table('transit.relief_by_year') extend {
+  rename: relief_gap is excess_fed
+  measure:
+    # currency
+    operating_money is ops.sum()
+    # currency
+    federal_money is fed.sum()
+    # currency
+    relief_gap_total is relief_gap.sum()
+    # percent
+    federal_share is fed.sum() / nullif(ops.sum(), 0)
+    # percent
+    fare_share_pooled is sum(fare_share * ops) / nullif(ops.sum(), 0)
+
+  #" THE GAP COMING: national operating money and federal money above the pre-COVID level, by year.
+  view: national_cliff is {
+    group_by: report_year
+    aggregate: operating_money, federal_money, relief_gap_total, federal_share, fare_share_pooled
+    order_by: report_year
+  }
+}
+
+#" How often the relief flag fires: in 2018 (no relief existed; against 2015-17) vs 2024, by size class, plus a 2019-only
+#" baseline and 2023.
+source: relief_robustness is motherduck.table('transit.relief_robustness') extend {
+  view: by_check is { select: check_name, size_class, agencies, flag_rate, excess order_by: check_name, size_class }
+}
+
+#" Sharp service changes (hours 15%+ below / above the same month a year earlier for 3 months running), local bus and
+#" rail, 2003 - 2026, each against the 10 best-matched same-size peers whose hours held steady. *_vs_peers = change in
+#" mean log riders / hours over the year after (y1: months 0-11, y2: months 12-23) vs the year before, minus the peers'.
+#" dropped = counting break (riders moved 0.5+ log away from hours) or poor pre-match (pre_gap beyond 0.15).
+source: service_change_events is motherduck.table('transit.service_change_events') extend {
+  dimension:
+    agency_label is concat(agency_name, ' (', state, ')')
+  measure:
+    events is count()
+    #" Riders lost (or gained) per 1% of service hours, pooled: sum of rider gaps / sum of hour gaps.
+    elasticity_pooled_y1 is riders_vs_peers_y1.sum() / nullif(hours_vs_peers_y1.sum(), 0)
+    elasticity_pooled_y2 is riders_vs_peers_y2.sum() / nullif(hours_vs_peers_y2.sum() { where: riders_vs_peers_y2 is not null }, 0)
+
+  #" HOW TO CHECK: elasticity by mode, direction and period (COVID-era changes shown, not pooled).
+  view: by_direction is {
+    where: not dropped
+    group_by: mode_family, direction, period
+    aggregate: events, elasticity_pooled_y1, elasticity_pooled_y2
+    order_by: mode_family, direction, period
+  }
+
+  #" By kind of bus system (2019 riders per hour band), sharp bus changes outside COVID.
+  view: by_bus_type is {
+    where: not dropped and mode_family = 'bus' and period != '2 COVID (Mar 2020-Jun 2021)'
+    group_by: direction, bus_type
+    aggregate: events, elasticity_pooled_y1, elasticity_pooled_y2
+    order_by: direction, bus_type
+  }
+
+  #" Every sharp cut since July 2021, newest first.
+  view: recent_cuts is {
+    where: direction = 'cut' and period = '3 After COVID (Jul 2021-2026)'
+    select: agency_label, mode_family, event_month, hours_vs_peers_y1, riders_vs_peers_y1, elasticity_y1, dropped
+    order_by: event_month desc
+  }
+}
+
+#" Pooled results of the event study with 95% bootstrap bands (500 draws over events) on the all-periods-except-COVID rows.
+source: service_change_summary is motherduck.table('transit.service_change_summary') extend {
+  view: headline is {
+    where: period = 'All periods except COVID'
+    select: mode_family, direction, events, elasticity_y1, e_y1_lo, e_y1_hi, elasticity_y2, e_y2_lo, e_y2_hi, pre_gap
+    order_by: mode_family, direction
+  }
+}
+
+#" Month-by-month path around sharp local-bus cuts and additions (outside COVID): log riders and log hours vs matched
+#" peers, each indexed to its own 12 months before. t = months from the change.
+source: service_change_path is motherduck.table('transit.service_change_path') extend {
+  measure:
+    # percent
+    riders_change is avg(exp(riders_vs_peers) - 1)
+    # percent
+    hours_change is avg(exp(hours_vs_peers) - 1)
+  view: path is {
+    group_by: dir, t
+    aggregate: riders_change, hours_change, events is events.max()
+    order_by: dir, t
+  }
+}
+
+#" Agency-level 12-month changes (windows ending in August, 2003-2026): elasticity of riders to service hours by mode
+#" family x period, bus type, size band, and cuts vs adds, with 95% agency-cluster bootstrap bands.
+source: service_elasticity_panel is motherduck.table('transit.service_elasticity_panel') extend {
+  view: by_group is {
+    select: breakdown, mode_family, group_name, obs, agencies, elasticity_1yr, e1_lo, e1_hi, elasticity_2yr, e2_lo, e2_hi
+    order_by: breakdown, mode_family, group_name
+  }
+}
+
+#" Weekday bus service by how often each route runs at midday (10:00-15:00, busier direction), from each agency's public
+#" GTFS schedule (Mobility Database catalog, keyless; schedules mostly Oct 2026, some 2025), joined to NTD 2024 riders
+#" and cost per revenue hour. share_freq15 = share of weekday bus hours on routes every 15 minutes or better (frequent
+#" network); the rest is coverage service. hours_check_flag = scheduled hours far from NTD's (partial feed or mismatched
+#" reporting: TARC, GoTriangle). Schedules, not ridership: route-level ridership is not public here.
+source: gtfs_frequency is motherduck.table('transit.gtfs_frequency') extend {
+  measure:
+    agencies is count()
+    # percent
+    frequent_share_pooled is sum(share_freq15 * weekday_bus_hours) / nullif(weekday_bus_hours.sum(), 0)
+    riders_per_hour_pooled is trips_2024.sum() / nullif(vrh_2024.sum(), 0)
+  dimension:
+    frequent_band is pick '3 40%+ frequent' when share_freq15 >= 0.4 pick '2 20-40%' when share_freq15 >= 0.2 else '1 Under 20%'
+
+  #" WHAT TO PROTECT: agencies grouped by how much of their bus service is frequent, with riders per hour (2024).
+  view: riders_by_frequent_band is {
+    where: not hours_check_flag
+    group_by: frequent_band
+    aggregate: agencies, frequent_share_pooled, riders_per_hour_pooled
+    order_by: frequent_band
+  }
+}
+
+#" One row per bus route in the GTFS sample: midday headway (minutes), weekday scheduled hours and trips, class.
+source: gtfs_routes is motherduck.table('transit.gtfs_routes') extend {
+  measure:
+    routes is count()
+    weekday_hours_total is weekday_hours.sum()
+}

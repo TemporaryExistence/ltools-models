@@ -1,0 +1,81 @@
+##! experimental.givens
+import "../flights.malloy"
+import "../summaries.malloy"
+import "../airline_risk.malloy"
+
+#" Airlines, nationally: the flights and first-departure slots to fix first. (1) Flights on DOT's chronic-delay clock
+#" (14 CFR 399.81(c), BTS Feb-Jul 2026): 3-4 consecutive chronic months running in July, so a 5th chronic month in
+#" August or September is a breach. (2) First-departure slots whose delay chains are costly even on clear days
+#" (disruption ledger, May-Jul 2026): where turn buffer or a spare aircraft pays. The selected airline (default
+#" American) is highlighted in both national rankings. Proof below: when the clock started, each flight's monthly
+#" record, the clear-day vs all-days ranks, and refund exposure under DOT's automatic-refund rule (14 CFR 260).
+# artifact { title="Airlines: flights to fix" givens { AIRLINE="American" } } dashboard { columns=6 }
+query: ar_fix is chronic_flights -> {
+  # colspan=6
+  aggregate:
+    #" The selected airline's flights at risk (also declares the AIRLINE given for the page).
+    sel_at_risk is at_risk_count { where: airline ~ $AIRLINE }
+  nest:
+    #" Every flight at risk in July nationally (3-4 chronic months running).
+    clock is {
+      where: end_mon = 7 and months_running >= 3
+      group_by: carrier, airline, origin, dest, sched_time, flight_label, start_mon, months_running
+      aggregate:
+        operations, late30_rate
+        july_late30 is last_month_late30_share.max()
+        july_ops is last_month_ops.max()
+      order_by: months_running desc, july_late30 desc, flight_label
+    }
+    #" Every airline with a chronic flight in Feb-Jul (picker list).
+    airlines is {
+      group_by: airline
+      aggregate: flight_count
+      order_by: airline
+    }
+}
+
+#" Delay-chain slots nationally, ranked by clear-day cost at a full quarter of clear days (rank_clear_rate_hi), with
+#" the all-days rank; and the selected airline's top slots.
+# colspan=6
+query: ar_slots is buffer_slots -> {
+  nest:
+    clear is {
+      where: clear_rate_quarter_hi is not null and rank_clear_rate_hi <= 15
+      group_by: rank_clear_rate_hi, rank_all_hi, rank_clear_hi, carrier, airline, origin, dep_hour, hour_label, thin
+      aggregate: late_start_count, clear_rate_cost_lo, clear_rate_cost_hi, chain_cost_hi, clear_share
+      order_by: rank_clear_rate_hi
+    }
+    sel is {
+      where: airline ~ $AIRLINE and clear_rate_quarter_hi is not null
+      group_by: rank_clear_rate_hi, rank_all_hi, rank_clear_hi, carrier, airline, origin, dep_hour, hour_label, thin
+      aggregate: late_start_count, clear_rate_cost_lo, clear_rate_cost_hi, chain_cost_hi, clear_share
+      order_by: rank_clear_rate_hi
+      limit: 5
+    }
+    airlines is {
+      group_by: airline
+      aggregate: slot_count
+      order_by: airline
+    }
+}
+
+#" Flights meeting DOT's monthly test, by month: all airlines, those touching SFO, and the selected airline.
+query: ar_clock is chronic_months -> {
+  group_by: month_num, month_label
+  aggregate:
+    all_chronic is chronic_flights
+    all_sfo is chronic_flights { where: touches_sfo }
+    airline_chronic is chronic_flights { where: airline ~ $AIRLINE }
+  order_by: month_num
+}
+
+#" Monthly late-30 share of the selected airline's at-risk flights (any origin).
+query: ar_watch is at_risk_history -> {
+  where: airline ~ $AIRLINE
+  group_by: flight_label, months_running, month_num, month_label
+  aggregate: late30_rate
+  order_by: flight_label, month_num
+}
+
+#" Refund exposure ceiling by airline, May-Jul 2026 (14 CFR 260).
+query: ar_refund is refund_exposure -> exposure_by_airline
