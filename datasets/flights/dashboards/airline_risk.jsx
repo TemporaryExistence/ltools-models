@@ -266,7 +266,7 @@ const SOURCES = [
 const METHOD = [
   "One flight = the airline's flights in an airport pair within 30 minutes of the month's most frequent departure time (399.81(c)(3)), linked month to month within 30 minutes.",
   "On the clock = 3 or 4 chronic months running in July. Breach month = the month a 5th chronic month would land (August for 4 months, September for 3). The data ends in July, so a breach is decided by data not yet published, not by a date still ahead. Rows are ordered by breach month, then by July's late share (the best guide to August).",
-  "The selected airline's #1 = the higher-value of its top flight on the clock (valued at DOT's Frontier precedent, ≈$217k a flight) and its costliest clear-day slot (low end of the quarter's cost). The other is #2.",
+  "The selected airline's list = every flight it has on the clock (each valued at DOT's Frontier precedent, ≈$217k a flight) and its five costliest clear-day slots (low end of the quarter's cost), ranked by that value; among flights, an August breach comes before a September one, then the later flight in July.",
   "Costly on clear days = the slot's clear-day chain cost per clear-day first departure × all its first departures (what the quarter would cost if every day were clear; 30+ clear-day first departures). Rank 1 = costliest nationally.",
   "Refund exposure = (cancellations + arrivals 3h+ late) × passengers (70 seats regional / 160 mainline × load factor 0.80–0.92) × one-way fare. A ceiling.",
 ];
@@ -319,7 +319,7 @@ function CarrierPicker({ options }) {
 // DOT's Frontier fine (16 Jan 2025): $650k for three chronically delayed flights.
 const FINE_PER_FLIGHT = 650000 / 3;
 // What the clock waits on: data for the breach month (data ends July 2026; July came out 21 Sep 2026).
-const breachText = (b) => (b === 8 ? "breaches if Aug data >50% late" : "breaches if Aug + Sep data >50% late");
+const breachText = (b) => (b === 8 ? "late again in Aug = DOT breach" : "late in Aug and Sep = DOT breach");
 const hourText = (h) => (h === 0 ? "midnight" : h < 12 ? `${h}am` : h === 12 ? "noon" : `${h - 12}pm`);
 
 export default function Dashboard({ dashboard, givens }) {
@@ -357,8 +357,8 @@ export default function Dashboard({ dashboard, givens }) {
       name: `${r.airline} ${r.origin} → ${r.dest} ${r.sched_time}`,
       chips: sfo ? [{ t: "SFO" }] : [],
       frac: num(r.july_late30), mark: 0.5,
-      value: `${pct0(r.july_late30)} late`, small: `${num(r.months_running)} mo (${MONTHS[num(r.start_mon)]}–Jul) · 5th month = ${when}`,
-      tag: breachText(r.breach),
+      value: `${pct0(r.july_late30)} late in Jul`, small: breachText(r.breach),
+      tag: `${num(r.months_running)} months late`,
     };
   };
   const clockRows = clockAll.map(clockRow);
@@ -383,24 +383,27 @@ export default function Dashboard({ dashboard, givens }) {
   const selSlots = list(s0.sel).map(slotRow).map((r) => ({ ...r, sel: true })).filter((r) => !shownKeys.has(r.key));
   const slotShown = slotRows.slice(0, narrow ? 6 : 9).concat(selSlots.length ? [{ gap: true, key: "gap" }, ...selSlots.slice(0, 2)] : []);
 
-  // The selected airline's #1 and #2: its top flight on the clock vs its costliest clear-day slot.
-  const fl = selClock[0];
-  const sl0 = list(s0.sel)[0];
+  // The selected airline's whole list: every flight it has on DOT's clock and its costliest morning slots,
+  // ranked by money at stake (fine for a flight; low end of the quarter's cost for a slot).
   const acts = [];
-  if (fl) acts.push({
-    v: FINE_PER_FLIGHT, key: "flight", name: `${fl.origin} → ${fl.dest} ${fl.sched_time}`,
+  selClock.forEach((fl) => acts.push({
+    v: FINE_PER_FLIGHT, late: (10 - fl.breach) + num(fl.july_late30), key: `f${fl.carrier}${fl.flight_label}`,
+    name: `${fl.origin} → ${fl.dest} ${fl.sched_time}`,
     chips: fl.origin === "SFO" || fl.dest === "SFO" ? [{ t: "SFO" }] : [],
-    meta: `on DOT's clock ${num(fl.months_running)} mo (${MONTHS[num(fl.start_mon)]}–Jul), ${pct0(fl.july_late30)} late in Jul`,
-    value: `≈${usd(FINE_PER_FLIGHT)}`, small: "fine if it breaches (DOT precedent)", tag: breachText(fl.breach),
-  });
-  if (sl0) acts.push({
-    v: num(sl0.clear_rate_cost_lo), key: "slot", name: `${sl0.origin} ${hourText(num(sl0.dep_hour))} first departures`,
-    chips: [], meta: `national #${num(sl0.rank_clear_rate_hi)} on clear days`,
-    value: range(sl0.clear_rate_cost_lo, sl0.clear_rate_cost_hi), small: "a quarter, clear days", tag: "add turn buffer",
-  });
-  acts.sort((a, b) => b.v - a.v);
+    meta: `${pct0(fl.july_late30)} late in Jul`,
+    value: `≈${usd(FINE_PER_FLIGHT)}`, small: breachText(fl.breach), tag: `${num(fl.months_running)} months late`,
+  }));
+  list(s0.sel).forEach((s) => acts.push({
+    v: num(s.clear_rate_cost_lo), late: 0, key: `s${s.carrier}${s.origin}${s.dep_hour}`,
+    name: `${s.origin} ${hourText(num(s.dep_hour))} first flights`,
+    chips: [], meta: `#${num(s.rank_clear_rate_hi)} nationally`,
+    value: range(s.clear_rate_cost_lo, s.clear_rate_cost_hi), small: "delay cost a quarter", tag: "add turn buffer",
+  }));
+  acts.sort((a, b) => b.v - a.v || b.late - a.late);
   const actMax = Math.max(1, ...acts.map((a) => a.v));
   const actRows = acts.map((a, i) => ({ ...a, rank: i + 1, top: i === 0, frac: a.v / actMax }));
+  const actHead = actRows.slice(0, narrow ? 6 : 8);
+  const actMore = actRows.slice(narrow ? 6 : 8);
 
   // Proof: clock by month.
   const clockBars = [];
@@ -442,13 +445,19 @@ export default function Dashboard({ dashboard, givens }) {
         <div className={loading ? "loading" : ""}>
           <section className="od-card od-hero">
             <h2>{airline}: fix first</h2>
-            <div className="sub">Data ends Jul 2026 · Aug on-time data expected late Oct (Jul came out 21 Sep) · ranked by value</div>
-            {actRows.length ? <Ranked rows={actRows} /> : <div className="od-src">No {airline} flight on the clock or ranked slot.</div>}
-            <Tags items={["Flight value = DOT's Frontier fine, $650k for 3 chronic flights (Jan 2025)", "Slot value = clear-day delay-chain cost, a quarter"]} />
+            <div className="sub">Ranked by money at stake · data through July 2026</div>
+            {actRows.length ? <Ranked rows={actHead} /> : <div className="od-src">No {airline} flight on the clock or ranked slot.</div>}
+            {actMore.length > 0 && (
+              <details>
+                <summary>All {actRows.length}</summary>
+                <Ranked rows={actMore} />
+              </details>
+            )}
+            <Tags items={["Flight = DOT fined Frontier $650k for 3 such flights (2025)", "Slot = cost of delays it passes down the day"]} />
           </section>
           <h2 className="od-ctx">National context</h2>
           <div className="od-grid">
-            <Card title="DOT chronic-delay clock" sub={`${aug.length} hit a 5th month in Aug, ${sep.length} in Sep · ${airline}: ${selClock.length}`}>
+            <Card title="DOT chronic-delay clock" sub={`${aug.length} could breach in Aug, ${sep.length} in Sep · ${airline}: ${selClock.length}`}>
               <Key items={[[airline, P.sel], ["SFO = touches SFO", P.wx]]} />
               <Ranked rows={clockShown} />
               <Tags items={[
