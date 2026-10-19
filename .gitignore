@@ -7,3 +7,6 @@ malloy-config-local.json
 datasets/*/data/
 # Never let publish --repo archive local secrets (it runs git add -A; review finding H1)
 .env*
+
+# Parked datasets (moved out of datasets/ so they are not published); their data stays local
+/parked/*/data/
