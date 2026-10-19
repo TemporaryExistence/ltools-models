@@ -18,7 +18,8 @@ given:
 #" Value per dollar, peer-adjusted. One row per comparable US public library system (FY2024 record, 7,896 systems
 #" serving 1,000+ people; not-comparable entities left out). Outputs per $1,000 of operating spend are pooled over
 #" FY2023-FY2024 (each over the years it was reported with spend): visits, circulation (print + digital), program
-#" attendance, public computer sessions. PEERS: the 25 nearest systems nationally on service population, density,
+#" attendance, public computer sessions. FY2024 circulation is blank for 2,791 systems (they count on FY2023 only)
+#" and the survey changed its digital questions that year, so the circulation ratio mixes definitions. PEERS: the 25 nearest systems nationally on service population, density,
 #" poverty, children under 18, residents 65+, bachelor's degrees, home broadband and median household income (ACS 2024
 #" 5-year for the legal service area: one Census geography for 88% of systems, else the population-weighted counties
 #" the system's buildings sit in; standardized, equal weights). Each ratio = own / peer median; value_index = geometric

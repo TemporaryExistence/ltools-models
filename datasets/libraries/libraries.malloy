@@ -180,7 +180,7 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
     #" People in the libraries' legal service areas.
     total_population is population_served.sum()
     // Every per-person measure divides by the population of the systems that REPORTED that figure, so a
-    // system with a missing value doesn't drag the rate down (FY2024: 2,791 systems left circulation unreported).
+    // system with a missing value doesn't drag the rate down (FY2024: 2,791 systems left total circulation blank).
     #" Visits per person in the area served (systems that reported visits).
     visits_per_capita is total_visits / nullif(population_served.sum() { where: visits is not null }, 0)
     #" Items borrowed per person in the area served (systems that reported total circulation).
@@ -188,6 +188,13 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
     #" Systems with no total borrowing figure (circulation blank). 72-74 a year in FY2022-FY2023, 2,791 in FY2024; a
     #" borrowing total over a year with many of these undercounts (use circulation_per_capita for trends).
     systems_not_reporting_borrowing is count() { where: circulation is null }
+    #" Physical items borrowed per person served (systems that reported physical circulation). Complete in every year
+    #" (about 70 blanks), so it is the borrowing series to compare FY2023 with FY2024.
+    physical_per_capita is physical_circulation.sum() / nullif(population_served.sum() { where: physical_circulation is not null }, 0)
+    #" Digital items borrowed per person served (systems that reported digital circulation). FY2024 is not comparable
+    #" with earlier years: the survey split digital circulation into new e-book / e-serial / e-audio / e-video
+    #" questions that year, and 2,781 systems left it blank (every system in IA, MA, OR, FL and PR).
+    digital_per_capita is digital_circulation.sum() / nullif(population_served.sum() { where: digital_circulation is not null }, 0)
     #" Operating spend per person served, US dollars as reported that year.
     # currency
     spend_per_capita is operating_spend.sum() / nullif(population_served.sum() { where: operating_spend is not null }, 0)
@@ -248,11 +255,12 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
 #" collection_spend (materials budget = print_spend + econtent_spend + other materials), econtent_spend (e-books,
 #" e-audio, e-video, databases, e-serials), print_spend. Use columns: visits, circulation (all borrowing),
 #" digital_circulation, physical_circulation. population_served is the legal service area.
-#" CAVEATS: (1) FY2024: 2,791 systems left total and digital borrowing unreported (incl. Chicago, Miami-Dade,
-#" Broward); per-person measures divide only by systems that reported, so FY2024 totals of borrowing undercount but
-#" rates do not (see did_borrowing_fall_in_fy2024). (2) Durham County Library (NC) visits swing between years
-#" (746k FY2018, 1.33M FY2019, 907k FY2020 with closures from March 2020, 500k FY2024); which year
-#" is off is not known, so its change is somewhere between -33% (vs FY2018) and -62% (vs FY2019). (3) Size bands and
+#" CAVEATS: (1) FY2024: 2,791 systems left total and digital borrowing blank (incl. Chicago, Miami-Dade, Broward;
+#" every system in IA, MA, OR, FL, PR), though nearly all reported physical borrowing. The survey restructured its
+#" digital circulation questions that year. FY2024 borrowing totals undercount; compare FY2024 with earlier years on
+#" physical_per_capita (see did_borrowing_fall_in_fy2024). (2) Durham County Library (NC) visits swing between years
+#" (746k FY2018, 1.33M FY2019, 907k FY2020 despite closures from March 2020, 500k FY2024); FY2018 may be the low
+#" year, but which year is off is not known, so its change is somewhere between -33% (vs FY2018) and -62% (vs FY2019). (3) Size bands and
 #" "not comparable" systems: see size_band.
 source: library_years is library_years_base extend {
   // Views live here, not on library_years_base, so sources built on the base (econtent_*) don't inherit them.
@@ -266,8 +274,8 @@ source: library_years is library_years_base extend {
 
   #" PLAYBOOK. Has library use recovered since the pandemic? One row per fiscal year FY2018 – FY2024: visits,
   #" visits per person, borrowing per person and the digital share. Answer: visits are still about 30% below FY2019
-  #" while digital borrowing keeps growing. Use per-person rates, not the FY2024 borrowing total (2,791 systems did
-  #" not report borrowing in FY2024). Who acts: library directors and boards planning hours and branches.
+  #" and digital borrowing grew every year to FY2023. FY2024 total and digital borrowing are blank for 2,791 systems
+  #" and the digital questions changed that year, so read FY2024 borrowing with did_borrowing_fall_in_fy2024. Who acts: library directors and boards planning hours and branches.
   # line_chart { x=fiscal_year y=visits_per_capita }
   view: library_use_recovery_since_2019 is {
     where: size_band != '6 Not comparable'
@@ -282,11 +290,13 @@ source: library_years is library_years_base extend {
     order_by: fiscal_year
   }
 
-  #" DID LIBRARY BORROWING FALL IN FY2024? No. One row per fiscal year FY2022 – FY2024. The borrowing total falls
-  #" about 13% in FY2024 and borrowing over everyone served falls to about 5 per person, but only because 2,791
-  #" systems (incl. Chicago, Miami-Dade, Broward) left borrowing blank that year. Per person among systems that
-  #" reported (circulation_per_capita) it rose; borrowing_same_systems confirms it on systems that reported both
-  #" years. borrowing_over_everyone_served is shown only to make the trap visible: never quote it.
+  #" DID LIBRARY BORROWING FALL IN FY2024? Not as the total says. One row per fiscal year FY2022 - FY2024. The borrowing
+  #" total falls about 13% in FY2024 and borrowing over everyone served falls to about 5 per person, only because 2,791
+  #" systems (incl. Chicago, Miami-Dade, Broward) left total and digital borrowing blank that year; nearly all of them
+  #" reported physical borrowing. Physical borrowing per person, complete in both years, went from about 4.25 to 4.18
+  #" (about -2%). Among systems that reported a total, borrowing per person rose (5.89 to 6.30), but all of that rise
+  #" is digital, and the survey changed its digital questions in FY2024, so the digital rise may partly be a change in
+  #" what is counted. borrowing_over_everyone_served is shown only to make the trap visible: never quote it.
   view: did_borrowing_fall_in_fy2024 is {
     where: fiscal_year >= 2022
     group_by: fiscal_year
@@ -296,12 +306,15 @@ source: library_years is library_years_base extend {
       borrowing_total is circulation.sum()
       borrowing_over_everyone_served is circulation.sum() / nullif(total_population, 0)
       circulation_per_capita
+      physical_per_capita
+      digital_per_capita
     order_by: fiscal_year
   }
 
-  #" Borrowing per person, FY2023 against FY2024, on the same systems: only systems that reported borrowing and
-  #" population in both years (about 6,400), so systems that stopped reporting can't move the rate. Also shows the
-  #" systems that reported in FY2023 but not FY2024 and their FY2023 rate, to check they were not unusual.
+  #" Borrowing per person, FY2023 against FY2024, on the same systems, split physical and digital. "Reported both
+  #" years" (about 6,400 systems) can't be moved by systems that stopped reporting: there, physical per person is flat
+  #" (about 4.25 both years) and digital rises about 23% (FY2024 digital questions changed). Also shows the systems
+  #" that reported a total in FY2023 but not FY2024, and their FY2023 rate, to check they were not unusual.
   view: borrowing_same_systems is {
     where: fiscal_year = 2023 | 2024
     group_by: library_id
@@ -313,6 +326,10 @@ source: library_years is library_years_base extend {
       borrowing_2024 is circulation.sum() { where: fiscal_year = 2024 }
       population_2023 is population_served.sum() { where: fiscal_year = 2023 and circulation is not null }
       population_2024 is population_served.sum() { where: fiscal_year = 2024 and circulation is not null }
+      physical_2023 is physical_circulation.sum() { where: fiscal_year = 2023 and circulation is not null }
+      physical_2024 is physical_circulation.sum() { where: fiscal_year = 2024 and circulation is not null }
+      digital_2023 is digital_circulation.sum() { where: fiscal_year = 2023 and circulation is not null }
+      digital_2024 is digital_circulation.sum() { where: fiscal_year = 2024 and circulation is not null }
   } -> {
     group_by:
       reporting is
@@ -324,6 +341,10 @@ source: library_years is library_years_base extend {
       systems is count()
       per_person_fy2023 is borrowing_2023.sum() / nullif(population_2023.sum(), 0)
       per_person_fy2024 is borrowing_2024.sum() / nullif(population_2024.sum(), 0)
+      physical_per_person_fy2023 is physical_2023.sum() / nullif(population_2023.sum(), 0)
+      physical_per_person_fy2024 is physical_2024.sum() / nullif(population_2024.sum(), 0)
+      digital_per_person_fy2023 is digital_2023.sum() / nullif(population_2023.sum(), 0)
+      digital_per_person_fy2024 is digital_2024.sum() / nullif(population_2024.sum(), 0)
     order_by: reporting
   }
 
@@ -896,7 +917,8 @@ source: county_population is motherduck.table('libraries.county_population') ext
 #" year (FY2018 – FY2024). A regional system (several counties) is shared out across its counties by population
 #" (pop_weight), so counties can be compared per resident. Every system in a county counts toward it (e.g. Orange
 #" County NC = Orange County Public Library + Chapel Hill Public Library). Dollars as reported, not inflation-adjusted.
-#" CAVEATS: Durham FY2019 visits look inflated (see library_years); FY2024 borrowing is unreported for many systems.
+#" CAVEATS: Durham visits swing between FY2018 and FY2020 (see library_years); FY2024 total and digital borrowing are
+#" blank for many systems (physical is reported).
 #" For "what would it cost to close the gap" questions use county_spend_gap.
 source: county_libraries is motherduck.table('libraries.library_counties') extend {
   join_one: sys is library_years on system_year_id = sys.system_year_id
