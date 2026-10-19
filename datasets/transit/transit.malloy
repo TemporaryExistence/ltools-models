@@ -87,6 +87,11 @@ source: transit is ntd_rows extend {
     is_demand_response is mode = 'Demand response'
     #" Agency name with its state, for chart labels (trailing spaces in eight NTD names trimmed).
     agency_label is concat(trim(agency_name), ' (', state, ')')
+    #" True for agencies whose way of counting boardings changed between 2019 and the latest 12 months, so their
+    #" totals can't be compared with 2019: GoRaleigh (NTD 40007), whose fixed-route boardings doubled in July 2024
+    #" on 5.5% more service hours (inferred counting change; no agency or FTA document found). The whole agency is
+    #" flagged, in every month, because its total mixes the two ways of counting.
+    counting_changed_since_2019 is ntd_id = '40007'
 
   measure:
     #" Unlinked passenger trips (boardings).
@@ -118,6 +123,11 @@ source: transit is ntd_rows extend {
     #" Triangle's) is overstated by a July 2024 counting change; see goraleigh_138_percent_check.
     # percent
     recovery_vs_2019 is trips_latest_12m / nullif(trips_2019, 0)
+    #" Recovery on consistent counting: recovery_vs_2019 leaving out agencies flagged counting_changed_since_2019 in
+    #" both years. Quote this one for a metro, a state or a region. Blank for GoRaleigh itself, whose latest figure
+    #" can't be compared with 2019 (see goraleigh_old_basis_range).
+    # percent
+    recovery_vs_2019_comparable is trips_latest_12m { where: not counting_changed_since_2019 } / nullif(trips_2019 { where: not counting_changed_since_2019 }, 0)
     #" Boardings per vehicle revenue hour over the latest 12 months.
     trips_per_hour_12m is trips_per_revenue_hour { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
     #" Boardings per vehicle revenue hour in calendar 2019.
@@ -330,20 +340,19 @@ source: transit is ntd_rows extend {
   #" change; without GoRaleigh it is at 86% of 2019 (still ahead of Charlotte at 61%). WHO ACTS: Triangle planners and
   #" the GoTriangle / Wake Transit boards (where to add service), and Charlotte (CATS), which has restored only about
   #" 81% of its 2019 service and recovered the fewest riders. Population is 2020 Census, so per-resident figures
-  #" overstate use in metros that have grown since. recovery_without_goraleigh equals recovery_vs_2019 for every
-  #" other metro; quote it for the Triangle. Ranked by that honest recovery.
-  # bar_chart { x=peer_metro y=recovery_without_goraleigh }
+  #" overstate use in metros that have grown since. recovery_vs_2019_comparable equals recovery_vs_2019 for every
+  #" other metro; quote it for the Triangle. Ranked by that comparable recovery.
+  # bar_chart { x=peer_metro y=recovery_vs_2019_comparable }
   view: triangle_vs_peer_metros is {
     where: peer_metro is not null
     group_by: peer_metro
     aggregate:
       recovery_vs_2019
-      # percent
-      recovery_without_goraleigh is trips_latest_12m { where: ntd_id != '40007' } / nullif(trips_2019 { where: ntd_id != '40007' }, 0)
+      recovery_vs_2019_comparable
       residents, trips_latest_12m, trips_per_resident_12m, trips_per_resident_2019,
       service_vs_2019, trips_per_hour_12m, yoy_change
-    // Ranked on the honest recovery (GoRaleigh left out), so the counting break does not lift the Triangle.
-    order_by: recovery_without_goraleigh desc
+    // Ranked on the comparable recovery (GoRaleigh left out), so the counting break does not lift the Triangle.
+    order_by: recovery_vs_2019_comparable desc
   }
 
   #" WHICH NORTH CAROLINA AGENCIES ARE STILL BELOW 2019? NC agencies with at least 100,000 trips in 2019, below
