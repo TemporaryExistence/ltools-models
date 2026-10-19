@@ -306,20 +306,24 @@ source: library_years is library_years_base extend {
     where: fiscal_year = 2023 | 2024
     group_by: library_id
     aggregate:
+      // Filtered sums return 0, not null, when nothing matches, so "reported" is a count of non-blank rows.
+      reported_2023 is count() { where: fiscal_year = 2023 and circulation is not null }
+      reported_2024 is count() { where: fiscal_year = 2024 and circulation is not null }
       borrowing_2023 is circulation.sum() { where: fiscal_year = 2023 }
       borrowing_2024 is circulation.sum() { where: fiscal_year = 2024 }
-      population_2023 is population_served.sum() { where: fiscal_year = 2023 }
-      population_2024 is population_served.sum() { where: fiscal_year = 2024 }
+      population_2023 is population_served.sum() { where: fiscal_year = 2023 and circulation is not null }
+      population_2024 is population_served.sum() { where: fiscal_year = 2024 and circulation is not null }
   } -> {
     group_by:
       reporting is
-        pick 'Reported both years' when borrowing_2023 is not null and borrowing_2024 is not null
-        pick 'Reported FY2023 only' when borrowing_2023 is not null and borrowing_2024 is null
-        else 'Other'
+        pick 'Reported both years' when reported_2023 > 0 and reported_2024 > 0
+        pick 'Reported FY2023 only' when reported_2023 > 0
+        pick 'Reported FY2024 only' when reported_2024 > 0
+        else 'Reported neither'
     aggregate:
       systems is count()
-      per_person_fy2023 is borrowing_2023.sum() / nullif(population_2023.sum() { where: borrowing_2023 is not null }, 0)
-      per_person_fy2024 is borrowing_2024.sum() / nullif(population_2024.sum() { where: borrowing_2024 is not null }, 0)
+      per_person_fy2023 is borrowing_2023.sum() / nullif(population_2023.sum(), 0)
+      per_person_fy2024 is borrowing_2024.sum() / nullif(population_2024.sum(), 0)
     order_by: reporting
   }
 
