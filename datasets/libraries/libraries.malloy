@@ -290,15 +290,16 @@ source: library_years is library_years_base extend {
     order_by: fiscal_year
   }
 
-  #" DID LIBRARY BORROWING FALL IN FY2024? Not as the total says. One row per fiscal year FY2022 - FY2024. The borrowing
-  #" total falls about 13% in FY2024 and borrowing over everyone served falls to about 5 per person, only because 2,791
-  #" systems (incl. Chicago, Miami-Dade, Broward) left total and digital borrowing blank that year; nearly all of them
-  #" reported physical borrowing. Physical borrowing per person, complete in both years, went from about 4.25 to 4.18
-  #" (about -2%). Among systems that reported a total, borrowing per person rose (5.89 to 6.30), but all of that rise
-  #" is digital, and the survey changed its digital questions in FY2024, so the digital rise may partly be a change in
-  #" what is counted. borrowing_over_everyone_served is shown only to make the trap visible: never quote it.
+  #" DID LIBRARY BORROWING FALL IN FY2024? Not as the total says. One row per fiscal year FY2022 - FY2024, comparable
+  #" systems only (size band 6 left out). The borrowing total falls about 13% in FY2024 and borrowing over everyone
+  #" served falls from about 5.9 to 5.1 per person, only because 2,663 systems (2,791 counting non-comparable entries;
+  #" incl. Chicago, Miami-Dade, Broward) left total and digital borrowing blank that year; nearly all of them reported
+  #" physical borrowing. Physical borrowing per person, reported by almost every system in both years, is flat (about
+  #" 4.27 both years). Among systems that reported a total it rose (5.91 to 6.31), but all of that rise is digital, and
+  #" the survey changed its digital questions in FY2024, so the digital rise may partly be a change in what is
+  #" counted. borrowing_over_everyone_served is shown only to make the trap visible: never quote it.
   view: did_borrowing_fall_in_fy2024 is {
-    where: fiscal_year >= 2022
+    where: fiscal_year >= 2022 and size_band != '6 Not comparable'
     group_by: fiscal_year
     aggregate:
       systems
@@ -311,12 +312,13 @@ source: library_years is library_years_base extend {
     order_by: fiscal_year
   }
 
-  #" Borrowing per person, FY2023 against FY2024, on the same systems, split physical and digital. "Reported both
-  #" years" (about 6,400 systems) can't be moved by systems that stopped reporting: there, physical per person is flat
-  #" (about 4.25 both years) and digital rises about 23% (FY2024 digital questions changed). Also shows the systems
-  #" that reported a total in FY2023 but not FY2024, and their FY2023 rate, to check they were not unusual.
+  #" Borrowing per person, FY2023 against FY2024, on the same comparable systems, split physical and digital.
+  #" "Reported both years" (about 6,360 systems) can't be moved by systems that stopped reporting: there, physical per
+  #" person is flat (about 4.26 both years) and digital rises about 24% (FY2024 digital questions changed). Also shows the systems
+  #" that reported a total in FY2023 but not FY2024 (they still reported physical in FY2024), to check they were not
+  #" unusual. Physical and digital rates each use the systems that reported that part.
   view: borrowing_same_systems is {
-    where: fiscal_year = 2023 | 2024
+    where: (fiscal_year = 2023 | 2024) and size_band != '6 Not comparable'
     group_by: library_id
     aggregate:
       // Filtered sums return 0, not null, when nothing matches, so "reported" is a count of non-blank rows.
@@ -326,10 +328,16 @@ source: library_years is library_years_base extend {
       borrowing_2024 is circulation.sum() { where: fiscal_year = 2024 }
       population_2023 is population_served.sum() { where: fiscal_year = 2023 and circulation is not null }
       population_2024 is population_served.sum() { where: fiscal_year = 2024 and circulation is not null }
-      physical_2023 is physical_circulation.sum() { where: fiscal_year = 2023 and circulation is not null }
-      physical_2024 is physical_circulation.sum() { where: fiscal_year = 2024 and circulation is not null }
-      digital_2023 is digital_circulation.sum() { where: fiscal_year = 2023 and circulation is not null }
-      digital_2024 is digital_circulation.sum() { where: fiscal_year = 2024 and circulation is not null }
+      // Physical and digital each over the systems that reported that part, so a system that left its total blank
+      // but reported physical still counts for physical.
+      physical_2023 is physical_circulation.sum() { where: fiscal_year = 2023 }
+      physical_2024 is physical_circulation.sum() { where: fiscal_year = 2024 }
+      physical_pop_2023 is population_served.sum() { where: fiscal_year = 2023 and physical_circulation is not null }
+      physical_pop_2024 is population_served.sum() { where: fiscal_year = 2024 and physical_circulation is not null }
+      digital_2023 is digital_circulation.sum() { where: fiscal_year = 2023 }
+      digital_2024 is digital_circulation.sum() { where: fiscal_year = 2024 }
+      digital_pop_2023 is population_served.sum() { where: fiscal_year = 2023 and digital_circulation is not null }
+      digital_pop_2024 is population_served.sum() { where: fiscal_year = 2024 and digital_circulation is not null }
   } -> {
     group_by:
       reporting is
@@ -341,10 +349,10 @@ source: library_years is library_years_base extend {
       systems is count()
       per_person_fy2023 is borrowing_2023.sum() / nullif(population_2023.sum(), 0)
       per_person_fy2024 is borrowing_2024.sum() / nullif(population_2024.sum(), 0)
-      physical_per_person_fy2023 is physical_2023.sum() / nullif(population_2023.sum(), 0)
-      physical_per_person_fy2024 is physical_2024.sum() / nullif(population_2024.sum(), 0)
-      digital_per_person_fy2023 is digital_2023.sum() / nullif(population_2023.sum(), 0)
-      digital_per_person_fy2024 is digital_2024.sum() / nullif(population_2024.sum(), 0)
+      physical_per_person_fy2023 is physical_2023.sum() / nullif(physical_pop_2023.sum(), 0)
+      physical_per_person_fy2024 is physical_2024.sum() / nullif(physical_pop_2024.sum(), 0)
+      digital_per_person_fy2023 is digital_2023.sum() / nullif(digital_pop_2023.sum(), 0)
+      digital_per_person_fy2024 is digital_2024.sum() / nullif(digital_pop_2024.sum(), 0)
     order_by: reporting
   }
 
