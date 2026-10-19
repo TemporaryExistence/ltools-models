@@ -52,8 +52,8 @@ source: ondemand_annual is motherduck.sql("""
     #" them in both years (ada_basis_mixed false). Kansas City's directly operated rows report 0 ADA trips in 2022
     #" and leave ADA trips blank in 2024; counting only the 2022 row would mix bases, so the series is left out in
     #" both years (22 series, 1.7% of urban on-demand hours 2022-2024). This excludes those series rather than
-    #" correcting them: 20 of the 22 report 0 ADA trips one year and none the other, and are likely all
-    #" general-public service, so growth here is a slight undercount.
+    #" correcting them: 19 of the 22 report 0 ADA trips in the year with a breakdown and are likely all
+    #" general-public service (two others are all ADA), so growth here is a slight undercount.
     counts_for_growth is ada_trips is not null and trips > 0 and not ada_basis_mixed
     #" Share of this row's trips that are general public: not ADA paratransit and not sponsored by a third party
     #" (human-service agencies, Medicaid brokers). From reported trips when available; otherwise 1 if the 2024
