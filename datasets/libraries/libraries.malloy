@@ -185,6 +185,9 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
     visits_per_capita is total_visits / nullif(population_served.sum() { where: visits is not null }, 0)
     #" Items borrowed per person in the area served (systems that reported total circulation).
     circulation_per_capita is circulation.sum() / nullif(population_served.sum() { where: circulation is not null }, 0)
+    #" Systems with no total borrowing figure (circulation blank). 72-74 a year in FY2022-FY2023, 2,791 in FY2024; a
+    #" borrowing total over a year with many of these undercounts (use circulation_per_capita for trends).
+    systems_not_reporting_borrowing is count() { where: circulation is null }
     #" Operating spend per person served, US dollars as reported that year.
     # currency
     spend_per_capita is operating_spend.sum() / nullif(population_served.sum() { where: operating_spend is not null }, 0)
@@ -247,8 +250,9 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
 #" digital_circulation, physical_circulation. population_served is the legal service area.
 #" CAVEATS: (1) FY2024: 2,791 systems left total and digital borrowing unreported (incl. Chicago, Miami-Dade,
 #" Broward); per-person measures divide only by systems that reported, so FY2024 totals of borrowing undercount but
-#" rates do not. (2) Durham County Library (NC) reported 1.33M visits in FY2019 against 746k in FY2018 and 500k in
-#" FY2024; FY2019 looks like a counting change, so Durham's change since FY2019 is overstated. (3) Size bands and
+#" rates do not (see did_borrowing_fall_in_fy2024). (2) Durham County Library (NC) visits swing between years
+#" (746k FY2018, 1.33M FY2019, 907k FY2020 with closures from March 2020, 500k FY2024); which year
+#" is off is not known, so its change is somewhere between -33% (vs FY2018) and -62% (vs FY2019). (3) Size bands and
 #" "not comparable" systems: see size_band.
 source: library_years is library_years_base extend {
   // Views live here, not on library_years_base, so sources built on the base (econtent_*) don't inherit them.
@@ -276,6 +280,47 @@ source: library_years is library_years_base extend {
       # percent
       visits_vs_fy2019 is total_visits / nullif(all(visits_fy2019), 0) - 1
     order_by: fiscal_year
+  }
+
+  #" DID LIBRARY BORROWING FALL IN FY2024? No. One row per fiscal year FY2022 – FY2024. The borrowing total falls
+  #" about 13% in FY2024 and borrowing over everyone served falls to about 5 per person, but only because 2,791
+  #" systems (incl. Chicago, Miami-Dade, Broward) left borrowing blank that year. Per person among systems that
+  #" reported (circulation_per_capita) it rose; borrowing_same_systems confirms it on systems that reported both
+  #" years. borrowing_over_everyone_served is shown only to make the trap visible: never quote it.
+  view: did_borrowing_fall_in_fy2024 is {
+    where: fiscal_year >= 2022
+    group_by: fiscal_year
+    aggregate:
+      systems
+      systems_not_reporting_borrowing
+      borrowing_total is circulation.sum()
+      borrowing_over_everyone_served is circulation.sum() / nullif(total_population, 0)
+      circulation_per_capita
+    order_by: fiscal_year
+  }
+
+  #" Borrowing per person, FY2023 against FY2024, on the same systems: only systems that reported borrowing and
+  #" population in both years (about 6,400), so systems that stopped reporting can't move the rate. Also shows the
+  #" systems that reported in FY2023 but not FY2024 and their FY2023 rate, to check they were not unusual.
+  view: borrowing_same_systems is {
+    where: fiscal_year = 2023 | 2024
+    group_by: library_id
+    aggregate:
+      borrowing_2023 is circulation.sum() { where: fiscal_year = 2023 }
+      borrowing_2024 is circulation.sum() { where: fiscal_year = 2024 }
+      population_2023 is population_served.sum() { where: fiscal_year = 2023 }
+      population_2024 is population_served.sum() { where: fiscal_year = 2024 }
+  } -> {
+    group_by:
+      reporting is
+        pick 'Reported both years' when borrowing_2023 is not null and borrowing_2024 is not null
+        pick 'Reported FY2023 only' when borrowing_2023 is not null and borrowing_2024 is null
+        else 'Other'
+    aggregate:
+      systems is count()
+      per_person_fy2023 is borrowing_2023.sum() / nullif(population_2023.sum() { where: borrowing_2023 is not null }, 0)
+      per_person_fy2024 is borrowing_2024.sum() / nullif(population_2024.sum() { where: borrowing_2024 is not null }, 0)
+    order_by: reporting
   }
 
   #" PLAYBOOK. How big and how fast-growing is the library e-content market? One row per fiscal year: e-content
