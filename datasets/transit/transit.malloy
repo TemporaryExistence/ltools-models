@@ -36,11 +36,12 @@ source: urbanized_areas is ntd_rows -> {
 #"   does_restoring_service_bring_riders_back  - transit boards and budget offices deciding whether to restore service
 #"   triangle_vs_peer_metros                   - Triangle (Raleigh-Durham) planners and GoTriangle/Wake Transit board
 #"   nc_agencies_below_2019                    - North Carolina agencies still short of 2019 ridership, largest gap first
-#"   goraleigh_138_percent_check               - why GoRaleigh's "138% of 2019" is a counting change, not riders
+#"   goraleigh_138_percent_check               - why GoRaleigh's "138% of 2019" can't be compared with 2019
 #" For MICROTRANSIT or on-demand prospects use the `ondemand_annual` source, not this one: here "Demand response"
 #" lumps ADA paratransit together with microtransit.
-#" Known data breaks: (1) GoRaleigh's fixed-route boardings double in July 2024 with flat service (a counting change),
-#" so its recovery and the Triangle's are overstated; the honest Triangle figure leaves GoRaleigh out (86%, not 98%).
+#" Known data breaks: (1) GoRaleigh's fixed-route boardings double in July 2024 on 5.5% more service hours (likely a
+#" counting change; not documented), so its recovery and the Triangle's can't be compared with 2019; quote
+#" recovery_vs_2019_comparable, which leaves GoRaleigh out (Triangle 86%, not 98%).
 #" (2) VIA (San Antonio) reports about a quarter of its usual demand-response hours for July and August 2026 (late
 #" filing), which understates its latest 12 months. (3) Agencies that file late understate the latest 12 months.
 #" (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
@@ -358,9 +359,10 @@ source: transit is ntd_rows extend {
   #" WHICH NORTH CAROLINA AGENCIES ARE STILL BELOW 2019? NC agencies with at least 100,000 trips in 2019, below
   #" their 2019 ridership in the latest 12 months, largest number of lost trips first, with service restored for
   #" comparison (an agency below 2019 on service is usually below on riders too). WHO ACTS: each agency's board and
-  #" NCDOT's Integrated Mobility Division (state transit funding). GoRaleigh is NOT on this list only because of its
-  #" July 2024 counting change; on consistent counting it was at about 80% of 2019 (see goraleigh_138_percent_check).
-  #" Only two NC agencies of that size are at or above 2019: GoDurham (103%) and GoRaleigh (138%, counting change).
+  #" NCDOT's Integrated Mobility Division (state transit funding). GoRaleigh is not on this list because of its July
+  #" 2024 counting change: it was at about 80% of 2019 in the year to June 2024, and its latest figure can't be
+  #" compared with 2019 (see goraleigh_138_percent_check). Only two NC agencies of that size read at or above 2019:
+  #" GoDurham (103%) and GoRaleigh (138%, not comparable).
   view: nc_agencies_below_2019 is {
     where: state = 'NC'
     group_by: agency_label, ntd_id
@@ -371,17 +373,18 @@ source: transit is ntd_rows extend {
     order_by: trips_lost_vs_2019 desc
   }
 
-  #" IS GORALEIGH REALLY AT 138% OF 2019? No. GoRaleigh's fixed-route boardings doubled from June to July 2024
-  #" (334,075 to 689,105) while service hours rose only about 5%, and boardings per hour stayed at the new level: a
-  #" change in how boardings are counted (inferred; the cause is not confirmed by the city), not a rider surge. On the
-  #" last full year of the old counting (July 2023 to June 2024) GoRaleigh carried about 80% of its 2019 fixed-route
-  #" riders on about 99% of its 2019 service. Since then GoRaleigh has also added a lot of service (about 149% of its
-  #" 2019 fixed-route hours in the latest 12 months), so later growth is partly real, but boardings under the new
-  #" counting cannot be compared with 2019. Fares resumed on 1 September 2024 (City of Raleigh), after the break, so
-  #" this data cannot show the effect of fare-free service. WHO ACTS: anyone quoting Triangle or GoRaleigh recovery
-  #" (use the pre-break year), and GoRaleigh, which could publish a bridged series. The "138%" people quote is
-  #" GoRaleigh's whole-agency figure (bus plus GoRaleigh Access paratransit); this view is fixed-route only, so its
-  #" latest row reads about 145%. Both rest on the new counting.
+  #" IS GORALEIGH REALLY AT 138% OF 2019? That figure can't be compared with 2019. GoRaleigh's fixed-route boardings
+  #" doubled from June to July 2024 (334,075 to 689,105) while service hours rose about 5.5%, and boardings per hour
+  #" stayed at the new level: most likely a change in how boardings are counted (inferred; no agency or FTA document
+  #" found). In the last full year before it (July 2023 to June 2024) GoRaleigh carried about 80% of its 2019
+  #" fixed-route riders on about 99% of its 2019 service; that is a year that ended June 2024, not today's figure.
+  #" Since then fixed-route service has grown to about 149% of 2019, so part of the later growth is real. On the old
+  #" counting the latest 12 months fall somewhere between about 74% and 120% of 2019 (goraleigh_old_basis_range).
+  #" Fares resumed after the break (City of Raleigh notices give 1 August and 1 September 2024), so this data cannot
+  #" show the effect of fare-free service. WHO ACTS: anyone quoting Triangle or GoRaleigh recovery (use
+  #" recovery_vs_2019_comparable, or this range for GoRaleigh), and GoRaleigh, which could publish a bridged series.
+  #" The "138%" people quote is GoRaleigh's whole-agency figure (bus plus GoRaleigh Access paratransit); this view is
+  #" fixed-route only, so its latest row reads about 145%. Both rest on the new counting.
   view: goraleigh_138_percent_check is {
     // Periods filtered in `where:`, not `having:` -- a `having:` on a dimension empties all() (friction log).
     where:
@@ -410,5 +413,33 @@ source: transit is ntd_rows extend {
     group_by: report_month
     aggregate: trips_total, revenue_hours, trips_per_revenue_hour
     order_by: report_month
+  }
+
+  #" WHERE WOULD GORALEIGH BE ON THE OLD COUNTING? Fixed-route only, one row. The latest 12 months against 2019 as
+  #" reported (about 145%), and two ends of a range for the same months on the pre-July-2024 counting:
+  #" low_if_jump_is_all_counting divides today's boardings by the June-to-July 2024 jump in boardings per hour
+  #" (about 1.95x), as if all of it were counting (about 74%); high_if_riders_per_hour_held carries the pre-break
+  #" rate (July 2023 to June 2024 boardings per hour) over today's service hours, as if none of the later rise
+  #" were counting (about 120%). The data can't say where in that range the real figure is.
+  view: goraleigh_old_basis_range is {
+    where: ntd_id = '40007' and is_fixed_route
+    aggregate:
+      trips_2019, trips_latest_12m, revenue_hours_12m
+      # percent
+      reported_vs_2019 is trips_latest_12m / nullif(trips_2019, 0)
+      jump_in_trips_per_hour_jul_2024 is
+        trips_per_revenue_hour { where: report_month ? @2024-07 }
+          / nullif(trips_per_revenue_hour { where: report_month ? @2024-06 }, 0)
+      # percent
+      low_if_jump_is_all_counting is
+        trips_latest_12m
+          * trips_per_revenue_hour { where: report_month ? @2024-06 }
+          / nullif(trips_per_revenue_hour { where: report_month ? @2024-07 }, 0)
+          / nullif(trips_2019, 0)
+      # percent
+      high_if_riders_per_hour_held is
+        revenue_hours_12m
+          * trips_per_revenue_hour { where: report_month >= @2023-07-01 and report_month < @2024-07-01 }
+          / nullif(trips_2019, 0)
   }
 }
