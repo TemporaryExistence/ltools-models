@@ -875,7 +875,7 @@ const ABOUT = {
     "Relief accounting differs: relief passed through a regional funder can show up as local money, and new state or local money voted in 2025–26 is not in 2024 data, so a gap here is the 2024 exposure, not a 2026 deficit.",
     "The action tag is the cut order the data supports if the gap is closed by cutting service. Fares, taxes and reserves are other ways to close it; this page does not rank them.",
     "Coverage routes lose fewer riders per dollar, but those riders are more likely to have no other way to travel; the NTD has no rider income or car ownership.",
-    "Boardings, not people. GoRaleigh's counting method changed in July 2024; its 2024 report year ends before the change.",
+    "Boardings, not people. GoRaleigh's boardings doubled in July 2024 on little more service, likely a counting change (not documented); its 2024 report year ends before the jump.",
     "Elasticity is linear in logs; cuts bigger than about 30% of service are outside most of the evidence.",
   ],
 };

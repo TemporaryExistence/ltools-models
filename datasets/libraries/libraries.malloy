@@ -186,8 +186,8 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
     #" Items borrowed per person in the area served (systems that reported total circulation). FY2024 is not
     #" comparable with earlier years (digital questions changed); compare years on physical_per_capita.
     circulation_per_capita is circulation.sum() / nullif(population_served.sum() { where: circulation is not null }, 0)
-    #" Systems with no total borrowing figure (circulation blank): 72-74 a year in FY2022-FY2023, 2,791 in FY2024, so
-    #" the FY2024 borrowing total undercounts.
+    #" Systems with no total borrowing figure (circulation blank): 72-74 entries a year in FY2022-FY2023 and 2,791 in
+    #" FY2024 (6-7 and 2,663 among comparable systems), so the FY2024 borrowing total undercounts.
     systems_not_reporting_borrowing is count() { where: circulation is null }
     #" Physical items borrowed per person served (systems that reported physical circulation). Nearly complete in
     #" every year, so it is the series to compare FY2024 with earlier years, on comparable systems (size_band !=
@@ -200,9 +200,10 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
     #" Operating spend per person served, US dollars as reported that year.
     # currency
     spend_per_capita is operating_spend.sum() / nullif(population_served.sum() { where: operating_spend is not null }, 0)
-    #" Share of borrowing that is e-books, e-audio and other digital items (systems that reported both).
+    #" Share of borrowing that is e-books, e-audio and other digital items (systems that reported both). FY2024 is not
+    #" comparable with earlier years: the survey changed its digital questions that year.
     # percent
-    digital_share is digital_circulation.sum() / nullif(circulation.sum() { where: digital_circulation is not null }, 0)
+    digital_share is digital_circulation.sum() { where: circulation is not null } / nullif(circulation.sum() { where: digital_circulation is not null }, 0)
     #" Visits in FY2019, the last full year before the pandemic (see the Durham caveat on the source).
     visits_fy2019 is total_visits { where: fiscal_year = 2019 }
     #" Visits in FY2024, the latest year.
@@ -296,12 +297,12 @@ source: library_years is library_years_base extend {
   }
 
   #" DID LIBRARY BORROWING FALL IN FY2024? Not as the total says. One row per fiscal year FY2022 - FY2024, comparable
-  #" systems only. The FY2024 borrowing total falls about 13%, only because 2,663 of these systems left total and
-  #" digital borrowing blank that year (nearly all reported physical). Physical borrowing per person is flat (about
-  #" 4.27 both years). Among systems that reported a total it rose (5.91 to 6.31), all of it digital, and the digital
-  #" questions changed in FY2024, so that rise may partly be a change in what is counted. Systems that stopped
-  #" reporting a total were not unusual: 5.81 items per person in FY2023 against 5.93 for systems that reported both
-  #" years. Who acts: anyone quoting a national borrowing trend.
+  #" systems only. The FY2024 borrowing total falls about 13%, only because 2,663 of these systems left the total
+  #" blank that year (nearly all reported physical). Physical borrowing per person is flat (about 4.27 both years).
+  #" Among systems that reported a total it rose (5.91 to 6.31; 5.93 to 6.32 on systems that reported both years),
+  #" all of it digital, and the digital questions changed in FY2024, so that rise may partly be a change in what is
+  #" counted. Systems that stopped reporting a total were not unusual: about 5.8 items per person in FY2023 against
+  #" 5.93. Who acts: anyone quoting a national borrowing trend.
   view: did_borrowing_fall_in_fy2024 is {
     where: fiscal_year >= 2022 and size_band != '6 Not comparable'
     group_by: fiscal_year

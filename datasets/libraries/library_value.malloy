@@ -162,6 +162,7 @@ source: library_branch_events is motherduck.table('libraries.library_branch_even
 #" and over five years, from the system's own visits per hour / per dollar and the national elasticities. Linear: read it
 #" for cuts from a few percent up to about a quarter. Example: Wake County Public Libraries, $1M cut = about 9,100 fewer
 #" visits and 29,000 fewer checkouts the same year, 22,000 visits and 104,000 checkouts a year after five years.
+#" Checkouts lost are blank (not 0) for the systems that left FY2024 total borrowing blank.
 source: library_cut_menu is motherduck.table('libraries.library_cut_menu') extend {
   primary_key: library_id
   measure:
