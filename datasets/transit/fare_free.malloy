@@ -168,7 +168,7 @@ source: fare_free_robustness is motherduck.table('transit.fare_free_robustness')
 
 #" One row per agency that appears in fare_policies: whether it went fare-free system-wide (all modes or the bus
 #" network) between January 2020 and December 2023 and stayed free through all of 2024 (the agencies the 2019-to-2024
-#" comparison treats as fare-free). GoRaleigh (fares back September 2024 and a July 2024 counting change) and
+#" comparison treats as fare-free). GoRaleigh (fares back August or September 2024 per City notices, after a likely July 2024 counting change) and
 #" GoTriangle (fares back July 2024) fall out by that rule.
 source: fare_policy_agencies is fare_policies -> {
   group_by: ntd_id
