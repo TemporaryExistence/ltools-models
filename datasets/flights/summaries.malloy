@@ -516,8 +516,10 @@ source: chain_starts_summary is motherduck.sql("""
 #" COST IS A RANGE, ALWAYS QUOTE BOTH ENDS: conservative_cost_usd (only the NEXT flight's late-aircraft minutes, at
 #" $69.07 a minute = A4A 2025 block-minute cost less fuel) to downstream_cost_usd (UPPER BOUND: every later flight's
 #" minutes, at $100.76 a minute = A4A 2024 block-minute cost). Nationally $101.3M to $369.9M over the three months.
+#" The two ends use different A4A years; at the 2025 block-minute cost ($98.41) the upper bound would be $361.2M.
 #" Caveats: attribution, not proof; storms delay first and later flights together, so not every minute was
-#" avoidable. Airlines see their own propagation in more detail; this public view's value is that it covers every
+#" avoidable. Legs are ordered by LOCAL scheduled departure; ordering by UTC changes the first flight on 319 of
+#" 411,140 aircraft-days and moves the national range by under 1% ($101.2M to $369.0M). Airlines see their own propagation in more detail; this public view's value is that it covers every
 #" airline at every airport, so airports, smaller carriers benchmarking peers, and corporate travel buyers can use it.
 source: chain_slots_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.chain_slots

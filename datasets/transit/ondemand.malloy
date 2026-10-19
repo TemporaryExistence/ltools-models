@@ -26,13 +26,33 @@
 #" not be the metro a person names ("Access Services in LA" is "Access Services (El Monte, CA)"); search with
 #" agency_label ~ '%Access%' or urban_area ~ '%Los Angeles%'. To narrow any saved view, refine it:
 #" run: ondemand_annual -> agency_detail + { where: agency_label ~ '%Access Services%' }
-source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
+source: ondemand_annual is motherduck.sql("""
+  -- ada_basis_mixed: this agency x type of service has hours in 2022 and 2024 (urban reporting) but an ADA trip
+  -- breakdown in only one of the two years. Such a series is left out of 2022-2024 growth in BOTH years.
+  SELECT *,
+    coalesce(
+      sum(CASE WHEN reporter_type = 'Full Reporter' AND report_year = 2022 THEN vehicle_revenue_hours END)
+        OVER (PARTITION BY ntd_id, type_of_service) > 0
+      AND sum(CASE WHEN reporter_type = 'Full Reporter' AND report_year = 2024 THEN vehicle_revenue_hours END)
+        OVER (PARTITION BY ntd_id, type_of_service) > 0
+      AND bool_or(reporter_type = 'Full Reporter' AND report_year = 2022 AND ada_trips IS NOT NULL AND trips > 0)
+        OVER (PARTITION BY ntd_id, type_of_service)
+      <> bool_or(reporter_type = 'Full Reporter' AND report_year = 2024 AND ada_trips IS NOT NULL AND trips > 0)
+        OVER (PARTITION BY ntd_id, type_of_service),
+      false) AS ada_basis_mixed
+  FROM ltools.transit.ondemand_annual
+""") extend {
   dimension:
     #" Agency name with city and state, e.g. "METRO (Houston, TX)". Use this to name an agency in an answer.
     agency_label is concat(agency_name, ' (', city, ', ', state, ')')
     #" True when the row reports ADA-related trips, so the ADA share is measured, not inferred from a flag. Urban
     #" (full-reporter) agencies almost always do; rural and reduced reporters never do.
     reports_ada_trips is ada_trips is not null and trips > 0
+    #" True when the row counts toward 2022-2024 growth: it reports ADA trips AND its agency x type of service reports
+    #" them in both years (ada_basis_mixed false). Kansas City's directly operated rows report ADA trips in 2022 but
+    #" not in 2024; counting only the 2022 row would mix bases, so the series is left out in both years (22 series,
+    #" 1.7% of urban on-demand hours 2022-2024).
+    counts_for_growth is ada_trips is not null and trips > 0 and not ada_basis_mixed
     #" Share of this row's trips that are general public: not ADA paratransit and not sponsored by a third party
     #" (human-service agencies, Medicaid brokers). From reported trips when available; otherwise 1 if the 2024
     #" schedule says the service is open to the general public, 0 if it says ADA only; null if neither is known.
@@ -130,7 +150,7 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
     momentum_since_2024 is hours_latest_12m.sum() { where: months_reported_latest_12m > 0 } / nullif(hours_2024_monthly_file.sum() { where: months_reported_latest_12m > 0 }, 0) - 1
     #" True when the agency reported on-demand trips with an ADA breakdown in both 2022 and 2024, so a 2022-to-2024
     #" change is real growth and not a first report (merger, new reporter ID, move from rural to urban reporting).
-    reported_both_years is ondemand_hours { where: report_year = 2022 and reports_ada_trips } > 0 and ondemand_hours { where: report_year = 2024 and reports_ada_trips } > 0
+    reported_both_years is ondemand_hours { where: report_year = 2022 and counts_for_growth } > 0 and ondemand_hours { where: report_year = 2024 and counts_for_growth } > 0
     #" Fewest months (of the latest 12) any of the agency's on-demand rows reported hours; under 12 means late filing.
     months_reported_latest_12m_min is months_reported_latest_12m.min()
 
@@ -146,7 +166,7 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
   #" new_service_hours_added desc limit: 15 }`. A refinement with only `limit` loses this view's order (rows come back
   #" in another order with no warning).
   view: agencies_scaling_microtransit is {
-    where: is_urban and reports_ada_trips
+    where: is_urban and counts_for_growth
     group_by: agency_label, ntd_id
     aggregate:
       // The ranking measure goes first: a refinement with only `limit` falls back to ordering by the first aggregate.
@@ -170,7 +190,7 @@ source: ondemand_annual is motherduck.table('transit.ondemand_annual') extend {
   #" agency's own 2024 general-public cost per hour. top_15_share_of_added_spend = how concentrated the growth is in
   #" the 15 agencies that added the most new hours.
   view: microtransit_market_size is {
-    where: is_urban and reports_ada_trips
+    where: is_urban and counts_for_growth
     group_by: ntd_id
     aggregate:
       reported_both_years

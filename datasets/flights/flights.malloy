@@ -395,7 +395,9 @@ source: aircraft_legs is flights -> {
 #" minutes BTS records on that aircraft's later flights that day are attributed to the first flight's airline,
 #" origin airport and scheduled departure hour. Cancelled and diverted flights and flights with no tail number are
 #" left out. This is attribution, not proof: storms delay first and later flights together, so not every minute
-#" was avoidable by fixing the first departure.
+#" was avoidable by fixing the first departure. Legs are numbered by LOCAL scheduled departure time; across time
+#" zones that misorders a few rotations (UTC order changes the first flight on 319 of 411,140 aircraft-days, under
+#" 1% of the cost).
 source: delay_chains is aircraft_legs -> {
   where: in_chain
   group_by: tail_number, flight_date
