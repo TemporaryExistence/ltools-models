@@ -88,8 +88,8 @@ source: ntd_cost is ntd_annual_financials extend {
 #" group. save_to_median = what the agency would save carrying the same riders at the peer-median cost per trip (0 when
 #" at or below it). save_riders_per_hr + save_cost_per_hr = save_to_median split by lever: the gap in riders per hour
 #" (fewer than peers) and the gap in cost per hour (more than peers), shared in proportion to their log gaps.
-#" pt_share = share of bus hours run by a contractor (purchased transportation). GoRaleigh (40007) 2024 boardings
-#" double from July 2024 on flat service, likely a counting change (inferred), so they are probably overstated.
+#" pt_share = share of bus hours run by a contractor (purchased transportation). GoRaleigh (40007) boardings
+#" from July 2024 can't be compared with earlier years (see transit's counting_changed_since_2019).
 source: cost_peer_gaps is motherduck.table('transit.cost_peer_gaps') extend {
   dimension:
     #" Agency name with its state.

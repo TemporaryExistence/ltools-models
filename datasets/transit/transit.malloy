@@ -37,15 +37,13 @@ source: urbanized_areas is ntd_rows -> {
 #"   triangle_vs_peer_metros                   - Triangle (Raleigh-Durham) planners and GoTriangle/Wake Transit board
 #"   nc_agencies_below_2019                    - North Carolina agencies still short of 2019 ridership, largest gap first
 #"   goraleigh_138_percent_check               - why GoRaleigh's "138% of 2019" can't be compared with 2019
-#" For MICROTRANSIT or on-demand prospects use the `ondemand_annual` source, not this one: here "Demand response"
-#" lumps ADA paratransit together with microtransit.
-#" Known data breaks: (1) GoRaleigh's fixed-route boardings double in July 2024 on 5.5% more service hours (likely a
-#" counting change; not documented), so its recovery and the Triangle's can't be compared with 2019; quote
-#" recovery_vs_2019_comparable, which leaves GoRaleigh out (Triangle 86%, not 98%).
-#" (2) VIA (San Antonio) reports about a quarter of its usual demand-response hours for July and August 2026 (late
-#" filing), which understates its latest 12 months. (3) Agencies that file late understate the latest 12 months.
-#" (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
-#" Narrow a saved view by refining it: run: transit -> nc_agencies_below_2019 + { where: agency_label ~ '%Chapel%' }.
+#(agent) For MICROTRANSIT or on-demand prospects use the `ondemand_annual` source: here "Demand response" lumps ADA
+#(agent) paratransit together with microtransit.
+#(agent) Known data breaks: (1) GoRaleigh can't be compared with 2019 (see counting_changed_since_2019); recovery_vs_2019
+#(agent) leaves it out, recovery_vs_2019_as_reported does not. (2) VIA (San Antonio) reports about a quarter of its usual
+#(agent) demand-response hours for July and August 2026 (late filing). (3) Late filers understate the latest 12 months.
+#(agent) (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
+#(agent) Narrow a saved view by refining it: run: transit -> nc_agencies_below_2019 + { where: agency_label ~ '%Chapel%' }.
 source: transit is ntd_rows extend {
   join_one: uza is urbanized_areas on uace_code = uza.uace_code
 
@@ -88,10 +86,8 @@ source: transit is ntd_rows extend {
     is_demand_response is mode = 'Demand response'
     #" Agency name with its state, for chart labels (trailing spaces in eight NTD names trimmed).
     agency_label is concat(trim(agency_name), ' (', state, ')')
-    #" True for agencies whose way of counting boardings changed between 2019 and the latest 12 months, so their
-    #" totals can't be compared with 2019: GoRaleigh (NTD 40007), whose fixed-route boardings doubled in July 2024
-    #" on 5.5% more service hours (inferred counting change; no agency or FTA document found). The whole agency is
-    #" flagged, in every month, because its total mixes the two ways of counting.
+    #" Agencies whose boarding counts can't be compared with 2019: GoRaleigh (NTD 40007), whose bus boardings doubled
+    #" in July 2024 on 5.5% more service hours, likely a counting change (inferred; no document found).
     counting_changed_since_2019 is ntd_id = '40007'
 
   measure:
@@ -120,18 +116,15 @@ source: transit is ntd_rows extend {
     #" Year-over-year change: latest 12 months vs the 12 before.
     # percent
     yoy_change is trips_latest_12m / nullif(trips_prior_12m, 0) - 1
-    #" Recovery: latest 12 months as a share of 2019 ridership (100% = back to pre-pandemic). GoRaleigh's (and so the
-    #" Triangle's) is overstated by a July 2024 counting change; see goraleigh_138_percent_check.
+    #" Recovery: latest 12 months as a share of 2019 ridership (100% = back to pre-pandemic), leaving out agencies
+    #" flagged counting_changed_since_2019. Blank for GoRaleigh; for an area that includes it, covers the rest.
     # percent
-    recovery_vs_2019 is trips_latest_12m / nullif(trips_2019, 0)
-    #" Recovery on consistent counting: recovery_vs_2019 leaving out agencies flagged counting_changed_since_2019 in
-    #" both years. Quote this one for a metro, a state or a region, and say GoRaleigh is left out: for the Triangle
-    #" it is the rest of the Triangle (GoRaleigh was about a quarter of its 2019 trips; see trips_2019_left_out).
-    #" Blank for GoRaleigh itself, whose latest figure can't be compared with 2019 (see goraleigh_old_basis_range).
-    #" 2019 trips of agencies left out of recovery_vs_2019_comparable (counting changed since 2019).
+    recovery_vs_2019 is trips_latest_12m { where: not counting_changed_since_2019 } / nullif(trips_2019 { where: not counting_changed_since_2019 }, 0)
+    #" Recovery as reported, every agency included (GoRaleigh too). Only for showing the difference.
+    # percent
+    recovery_vs_2019_as_reported is trips_latest_12m / nullif(trips_2019, 0)
+    #" 2019 trips of agencies left out of recovery_vs_2019.
     trips_2019_left_out is trips_2019 { where: counting_changed_since_2019 }
-    # percent
-    recovery_vs_2019_comparable is trips_latest_12m { where: not counting_changed_since_2019 } / nullif(trips_2019 { where: not counting_changed_since_2019 }, 0)
     #" Boardings per vehicle revenue hour over the latest 12 months.
     trips_per_hour_12m is trips_per_revenue_hour { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
     #" Boardings per vehicle revenue hour in calendar 2019.
@@ -179,7 +172,7 @@ source: transit is ntd_rows extend {
   # bar_chart { x=agency_name y=trips_latest_12m }
   view: top_agencies is {
     group_by: agency_name, city
-    aggregate: trips_latest_12m, yoy_change, recovery_vs_2019, recovery_vs_2019_comparable, trips_per_hour_12m
+    aggregate: trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
     having: trips_latest_12m > 0
     order_by: trips_latest_12m desc
     limit: 15
@@ -189,24 +182,24 @@ source: transit is ntd_rows extend {
   # bar_chart { x=mode y=trips_latest_12m }
   view: by_mode is {
     group_by: mode
-    aggregate: trips_latest_12m, yoy_change, recovery_vs_2019, recovery_vs_2019_comparable, trips_per_hour_12m
+    aggregate: trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
     having: trips_latest_12m > 0
     order_by: trips_latest_12m desc
   }
 
-  #" Recovery ranking: agencies with at least 100,000 trips in 2019, furthest past their 2019 ridership first, on
-  #" consistent counting (agencies whose counting changed, GoRaleigh, have a blank comparable figure and rank last).
+  #" Recovery ranking: agencies with at least 100,000 trips in 2019, furthest past their 2019 ridership first
+  #" (GoRaleigh left out: see counting_changed_since_2019).
   view: beyond_2019 is {
     group_by: agency_name, city, state
-    aggregate: recovery_vs_2019_comparable, trips_2019, trips_latest_12m, recovery_vs_2019
-    having: trips_2019 >= 100000
-    order_by: recovery_vs_2019_comparable desc
+    aggregate: recovery_vs_2019, trips_2019, trips_latest_12m
+    having: trips_2019 >= 100000 and recovery_vs_2019 is not null
+    order_by: recovery_vs_2019 desc
     limit: 15
   }
 
   view: by_state is {
     group_by: state
-    aggregate: agencies, trips_latest_12m, yoy_change, recovery_vs_2019, recovery_vs_2019_comparable, trips_per_hour_12m
+    aggregate: agencies, trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
     having: trips_latest_12m > 0
     order_by: trips_latest_12m desc
   }
@@ -219,16 +212,16 @@ source: transit is ntd_rows extend {
     group_by: peer_metro
     aggregate:
       residents, trips_latest_12m, trips_per_resident_12m, trips_per_resident_2019,
-      recovery_vs_2019, recovery_vs_2019_comparable, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m, yoy_change
+      recovery_vs_2019, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m, yoy_change
     order_by: trips_per_resident_12m desc
   }
 
   #" North Carolina as the Triangle, Charlotte and the rest.
-  # bar_chart { x=nc_region y=recovery_vs_2019_comparable }
+  # bar_chart { x=nc_region y=recovery_vs_2019 }
   view: nc_regions is {
     where: state = 'NC'
     group_by: nc_region
-    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019, recovery_vs_2019_comparable, service_vs_2019, yoy_change, trips_per_hour_12m
+    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019, service_vs_2019, yoy_change, trips_per_hour_12m
     order_by: trips_latest_12m desc
   }
 
@@ -238,7 +231,7 @@ source: transit is ntd_rows extend {
     where: peer_metro = 'Triangle (Raleigh + Durham)'
     group_by: agency_name, ntd_id, urban_area
     aggregate:
-      trips_2019, trips_latest_12m, recovery_vs_2019, recovery_vs_2019_comparable, yoy_change,
+      trips_2019, trips_latest_12m, recovery_vs_2019, yoy_change,
       revenue_hours_2019, revenue_hours_12m, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
     having: trips_latest_12m > 0
     order_by: trips_latest_12m desc
@@ -258,7 +251,7 @@ source: transit is ntd_rows extend {
   view: peer_productivity is {
     where: peer_metro is not null and is_fixed_route
     group_by: peer_metro
-    aggregate: recovery_vs_2019, recovery_vs_2019_comparable, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
+    aggregate: recovery_vs_2019, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
     order_by: trips_per_hour_12m desc
   }
 
@@ -267,7 +260,7 @@ source: transit is ntd_rows extend {
   view: by_size_band is {
     group_by: size_band
     aggregate:
-      agencies, trips_2019, trips_latest_12m, recovery_vs_2019, recovery_vs_2019_comparable, yoy_change,
+      agencies, trips_2019, trips_latest_12m, recovery_vs_2019, yoy_change,
       service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
     order_by: size_band
   }
@@ -308,7 +301,7 @@ source: transit is ntd_rows extend {
   #" The largest agencies by 2019 trips, with recovery, service and productivity.
   view: largest_agencies is {
     group_by: agency_name, city, state
-    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019, recovery_vs_2019_comparable, yoy_change, service_vs_2019, trips_per_hour_12m
+    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019, yoy_change, service_vs_2019, trips_per_hour_12m
     order_by: trips_2019 desc
     limit: 10
   }
@@ -319,9 +312,9 @@ source: transit is ntd_rows extend {
   #" DOES RESTORING SERVICE BRING RIDERS BACK? Yes, in every size band. Agencies are split by whether they run at
   #" least their 2019 service hours (restored) or not, and compared on average recovery (latest 12 months of trips as
   #" a share of 2019). Agency-by-agency average, all modes, agencies with 2019 trips; agencies above 2x of 2019 left
-  #" out as reporting outliers, and agencies whose counting changed (GoRaleigh) left out. WHO ACTS: a transit board or city budget office weighing service cuts or restorations;
-  #" the gap between the two columns is the ridership at stake. Correlation, not proof: agencies that restored
-  #" service may also have had stronger demand.
+  #" out as reporting outliers, and agencies flagged counting_changed_since_2019 left out. WHO ACTS: a transit board
+  #" or city budget office weighing service cuts or restorations; the gap between the two columns is the ridership at
+  #" stake. Correlation, not proof: agencies that restored service may also have had stronger demand.
   view: does_restoring_service_bring_riders_back is {
     where: not counting_changed_since_2019
     group_by: ntd_id, size_band
@@ -342,33 +335,29 @@ source: transit is ntd_rows extend {
 
   #" HOW IS THE TRIANGLE DOING AGAINST SIMILAR METROS? The Triangle (Raleigh + Durham urbanized areas) against Sun
   #" Belt metros of 1.0 to 1.9 million people: trips per resident, recovery, service restored, riders per service
-  #" hour. The Triangle leads on trips per resident and recovery largely because of GoRaleigh's July 2024 counting
-  #" change; without GoRaleigh it is at 86% of 2019 (still ahead of Charlotte at 61%). WHO ACTS: Triangle planners and
-  #" the GoTriangle / Wake Transit boards (where to add service), and Charlotte (CATS), which has restored only about
-  #" 81% of its 2019 service and recovered the fewest riders. Population is 2020 Census, so per-resident figures
-  #" overstate use in metros that have grown since. recovery_vs_2019_comparable equals recovery_vs_2019 for every
-  #" other metro; quote it for the Triangle. Ranked by that comparable recovery.
-  # bar_chart { x=peer_metro y=recovery_vs_2019_comparable }
+  #" hour. Recovery leaves GoRaleigh out (see counting_changed_since_2019): the rest of the Triangle is at 86% of 2019,
+  #" still ahead of Charlotte at 61%; as reported, with GoRaleigh, it reads 98%. WHO ACTS: Triangle planners and the
+  #" GoTriangle / Wake Transit boards (where to add service), and Charlotte (CATS), which has restored only about 81%
+  #" of its 2019 service and recovered the fewest riders. Population is 2020 Census, so per-resident figures overstate
+  #" use in metros that have grown since; trips per resident include GoRaleigh as reported.
+  # bar_chart { x=peer_metro y=recovery_vs_2019 }
   view: triangle_vs_peer_metros is {
     where: peer_metro is not null
     group_by: peer_metro
     aggregate:
       recovery_vs_2019
-      recovery_vs_2019_comparable
+      recovery_vs_2019_as_reported
       trips_2019_left_out
       residents, trips_latest_12m, trips_per_resident_12m, trips_per_resident_2019,
       service_vs_2019, trips_per_hour_12m, yoy_change
-    // Ranked on the comparable recovery (GoRaleigh left out), so the counting break does not lift the Triangle.
-    order_by: recovery_vs_2019_comparable desc
+    order_by: recovery_vs_2019 desc
   }
 
   #" WHICH NORTH CAROLINA AGENCIES ARE STILL BELOW 2019? NC agencies with at least 100,000 trips in 2019, below
   #" their 2019 ridership in the latest 12 months, largest number of lost trips first, with service restored for
   #" comparison (an agency below 2019 on service is usually below on riders too). WHO ACTS: each agency's board and
-  #" NCDOT's Integrated Mobility Division (state transit funding). GoRaleigh is not on this list because of its July
-  #" 2024 counting change: it was at about 80% of 2019 in the year to June 2024, and its latest figure can't be
-  #" compared with 2019 (see goraleigh_138_percent_check). Only two NC agencies of that size read at or above 2019:
-  #" GoDurham (103%) and GoRaleigh (138%, not comparable).
+  #" NCDOT's Integrated Mobility Division (state transit funding). GoRaleigh reads 138% as reported and can't be
+  #" compared with 2019 (see goraleigh_138_percent_check), so it is not on this list. GoDurham reads 103%.
   view: nc_agencies_below_2019 is {
     where: state = 'NC'
     group_by: agency_label, ntd_id
@@ -379,63 +368,31 @@ source: transit is ntd_rows extend {
     order_by: trips_lost_vs_2019 desc
   }
 
-  #" IS GORALEIGH REALLY AT 138% OF 2019? That figure can't be compared with 2019. GoRaleigh's fixed-route boardings
-  #" doubled from June to July 2024 (334,075 to 689,105) while service hours rose about 5.5%, and boardings per hour
-  #" stayed at the new level: likely a change in how boardings are counted (inferred; no agency or FTA document
-  #" found). In the last full year before it (July 2023 to June 2024) GoRaleigh carried about 80% of its 2019
-  #" fixed-route riders on about 99% of its 2019 service; that is a year that ended June 2024, not today's figure.
-  #" Since then fixed-route service has grown to about 149% of 2019, so part of the later growth is real. If the jump
-  #" was a counting change, the latest 12 months on the old counting are about 74% to 93% of 2019; above 100% only if
-  #" most of the jump was real riders (goraleigh_old_basis_range).
-  #" Fares resumed after the break (City of Raleigh notices give 1 August and 1 September 2024), so this data cannot
-  #" show the effect of fare-free service. WHO ACTS: anyone quoting Triangle or GoRaleigh recovery (use
-  #" recovery_vs_2019_comparable, or these scenarios for GoRaleigh), and GoRaleigh, which could publish a bridged series.
-  #" The "138%" people quote is GoRaleigh's whole-agency figure (bus plus GoRaleigh Access paratransit); this view is
-  #" fixed-route only, so its latest row reads about 145%. Both rest on the new counting.
+  #" IS GORALEIGH REALLY AT 138% OF 2019? That figure can't be compared with 2019 (see counting_changed_since_2019).
+  #" Fixed-route only, one row. As reported the latest 12 months read about 145% of 2019. In the year to June 2024,
+  #" before the jump, GoRaleigh carried about 80% of its 2019 riders on about 99% of its 2019 service; service is now
+  #" about 149%, so part of the later growth is real. Three scenarios for the latest 12 months on the old counting: if
+  #" the July 2024 jump in boardings per hour was a counting change, divide today's boardings by its size, measured
+  #" against June 2024 (about 1.95x, gives about 74%) or against the year to June 2024 (about 1.56x, about 93%; June
+  #" was a low month); if most of the jump was real riders, the pre-break rate on today's hours gives about 120%.
+  #" Scenarios, not bounds; the data can't say which holds. The whole-agency "138%" includes GoRaleigh Access.
+  #" Fares resumed after the jump (City of Raleigh notices give 1 August or 1 September 2024), so this data can't
+  #" show the effect of fare-free service. WHO ACTS: anyone quoting Triangle or GoRaleigh recovery, and GoRaleigh,
+  #" which could publish a bridged series.
   view: goraleigh_138_percent_check is {
-    // Periods filtered in `where:`, not `having:` -- a `having:` on a dimension empties all() (friction log).
-    where:
-      ntd_id = '40007' and is_fixed_route,
-      (report_month ? @2019) or (report_month >= @2023-07-01 and report_month < @2024-07-01)
-        or (report_month >= @2025-09-01 and report_month < @2026-09-01)
-    group_by:
-      period is
-        pick '1. Calendar 2019' when report_month ? @2019
-        pick '2. Jul 2023 - Jun 2024 (old counting)' when report_month < @2024-07-01
-        else '3. Sep 2025 - Aug 2026 (new counting)'
-    aggregate:
-      trips_total, revenue_hours, trips_per_revenue_hour
-      # percent
-      trips_vs_2019 is trips_total / all(trips_2019)
-      # percent
-      service_vs_2019_hours is revenue_hours / all(revenue_hours_2019)
-    order_by: period
-  }
-
-  #" GoRaleigh fixed-route boardings, service hours and boardings per hour by month, March to October 2024: the
-  #" counting break in July 2024 is visible as a one-month doubling of boardings per hour.
-  # line_chart { x=report_month y=trips_total }
-  view: goraleigh_counting_break is {
-    where: ntd_id = '40007' and is_fixed_route and report_month >= @2024-03-01 and report_month < @2024-11-01
-    group_by: report_month
-    aggregate: trips_total, revenue_hours, trips_per_revenue_hour
-    order_by: report_month
-  }
-
-  #" WHERE WOULD GORALEIGH BE ON THE OLD COUNTING? Fixed-route only, one row: the latest 12 months against 2019 as
-  #" reported (about 145%) and three scenarios for the same months on the pre-July-2024 counting. If the July 2024
-  #" jump in boardings per hour was a counting change, divide today's boardings by its size: measured against June
-  #" 2024 (1.95x) that gives about 74% (if_counting_jump_vs_june); June was a low month (service rose 17.5% in May
-  #" with no more riders), so measured against the year before (July 2023 to June 2024, 1.56x) it gives about 93%
-  #" (if_counting_jump_vs_prior_year). if_riders_per_hour_held (about 120%) keeps the pre-break rate on today's hours,
-  #" which is only true if most of the jump was real riders. These are scenarios, not bounds: the real figure can lie
-  #" outside them, and the data can't say which holds.
-  view: goraleigh_old_basis_range is {
     where: ntd_id = '40007' and is_fixed_route
     aggregate:
-      trips_2019, trips_latest_12m, revenue_hours_12m
+      trips_2019, trips_latest_12m
       # percent
       reported_vs_2019 is trips_latest_12m / nullif(trips_2019, 0)
+      # percent
+      year_to_june_2024_vs_2019 is
+        trips_total { where: report_month >= @2023-07-01 and report_month < @2024-07-01 } / nullif(trips_2019, 0)
+      # percent
+      service_year_to_june_2024_vs_2019 is
+        revenue_hours { where: report_month >= @2023-07-01 and report_month < @2024-07-01 } / nullif(revenue_hours_2019, 0)
+      # percent
+      service_now_vs_2019 is revenue_hours_12m / nullif(revenue_hours_2019, 0)
       jump_vs_june_2024 is
         trips_per_revenue_hour { where: report_month ? @2024-07 }
           / nullif(trips_per_revenue_hour { where: report_month ? @2024-06 }, 0)
@@ -459,5 +416,15 @@ source: transit is ntd_rows extend {
         revenue_hours_12m
           * trips_per_revenue_hour { where: report_month >= @2023-07-01 and report_month < @2024-07-01 }
           / nullif(trips_2019, 0)
+  }
+
+  #" GoRaleigh fixed-route boardings, service hours and boardings per hour by month, March to October 2024: the July
+  #" 2024 jump shows as a one-month doubling of boardings per hour.
+  # line_chart { x=report_month y=trips_total }
+  view: goraleigh_counting_break is {
+    where: ntd_id = '40007' and is_fixed_route and report_month >= @2024-03-01 and report_month < @2024-11-01
+    group_by: report_month
+    aggregate: trips_total, revenue_hours, trips_per_revenue_hour
+    order_by: report_month
   }
 }
