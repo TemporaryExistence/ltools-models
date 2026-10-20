@@ -41,8 +41,9 @@ source: urbanized_areas is ntd_rows -> {
 #(agent) paratransit together with microtransit.
 #(agent) Known data breaks: (1) GoRaleigh can't be compared with 2019 (see counting_changed_since_2019); recovery_vs_2019
 #(agent) leaves it out, recovery_vs_2019_as_reported does not. service_vs_2019 leaves it out too; trip counts,
-#(agent) yoy_change, per-resident and per-hour figures in the same row count it as reported. (2) VIA (San Antonio) reports about a quarter of its usual
-#(agent) demand-response hours for July and August 2026 (late filing). (3) Late filers understate the latest 12 months.
+#(agent) yoy_change, per-resident and per-hour figures in the same row count it as reported.
+#(agent) (2) VIA (San Antonio) reports about a quarter of its usual demand-response hours for July and August 2026
+#(agent) (late filing). (3) Late filers understate the latest 12 months.
 #(agent) (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
 #(agent) Narrow a saved view by refining it: run: transit -> nc_agencies_below_2019 + { where: agency_label ~ '%Chapel%' }.
 source: transit is ntd_rows extend {
@@ -208,25 +209,34 @@ source: transit is ntd_rows extend {
   }
 
   #" The Triangle against Sun Belt peers of similar size: how much transit each metro uses, how much service it
-  #" runs, and how far each has come since 2019. Trips per resident and per hour count GoRaleigh as reported (see
-  #" counting_changed_since_2019).
-  # bar_chart { x=peer_metro y=trips_per_resident_12m }
+  #" runs, and how far each has come since 2019. Columns ending _as_reported count GoRaleigh as reported (see
+  #" counting_changed_since_2019), so the Triangle's ranking on trips per resident may not hold.
+  # bar_chart { x=peer_metro y=trips_per_resident_12m_as_reported }
   view: peer_metros is {
     where: peer_metro is not null
     group_by: peer_metro
     aggregate:
-      residents, trips_latest_12m, trips_per_resident_12m, trips_per_resident_2019,
-      recovery_vs_2019, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m, yoy_change
-    order_by: trips_per_resident_12m desc
+      residents, trips_latest_12m
+      trips_per_resident_12m_as_reported is trips_per_resident_12m
+      trips_per_resident_2019
+      recovery_vs_2019, service_vs_2019, trips_per_hour_2019
+      trips_per_hour_12m_as_reported is trips_per_hour_12m
+      # percent
+      yoy_change_as_reported is yoy_change
+    order_by: trips_per_resident_12m_as_reported desc
   }
 
-  #" North Carolina as the Triangle, Charlotte and the rest. Trip counts are as reported; recovery and service leave
-  #" GoRaleigh out (see counting_changed_since_2019).
+  #" North Carolina as the Triangle, Charlotte and the rest. Trip counts and _as_reported columns count GoRaleigh as
+  #" reported; recovery and service leave it out (see counting_changed_since_2019).
   # bar_chart { x=nc_region y=recovery_vs_2019 }
   view: nc_regions is {
     where: state = 'NC'
     group_by: nc_region
-    aggregate: trips_2019, trips_latest_12m, recovery_vs_2019, service_vs_2019, yoy_change, trips_per_hour_12m
+    aggregate:
+      trips_2019, trips_latest_12m, recovery_vs_2019, service_vs_2019
+      # percent
+      yoy_change_as_reported is yoy_change
+      trips_per_hour_12m_as_reported is trips_per_hour_12m
     order_by: trips_latest_12m desc
   }
 
@@ -253,13 +263,15 @@ source: transit is ntd_rows extend {
   }
 
   #" Fixed-route productivity for the Triangle and its peers: trips per vehicle revenue hour then and now. Recovery
-  #" and service leave GoRaleigh out; trips per hour count it as reported (see counting_changed_since_2019).
-  # bar_chart { x=peer_metro y=trips_per_hour_12m }
+  #" and service leave GoRaleigh out; trips_per_hour_12m_as_reported counts it (see counting_changed_since_2019).
+  # bar_chart { x=peer_metro y=trips_per_hour_12m_as_reported }
   view: peer_productivity is {
     where: peer_metro is not null and is_fixed_route
     group_by: peer_metro
-    aggregate: recovery_vs_2019, service_vs_2019, trips_per_hour_2019, trips_per_hour_12m
-    order_by: trips_per_hour_12m desc
+    aggregate:
+      recovery_vs_2019, service_vs_2019, trips_per_hour_2019
+      trips_per_hour_12m_as_reported is trips_per_hour_12m
+    order_by: trips_per_hour_12m_as_reported desc
   }
 
   #" Big systems vs small: recovery, growth, service restored and productivity by agency size band.
@@ -316,7 +328,8 @@ source: transit is ntd_rows extend {
   // ---------------------------------------------------------------------------------------------------------------
   // Playbook views: named for the question a buyer asks. Each #" says who acts and what the answer means.
 
-  #" DOES RESTORING SERVICE BRING RIDERS BACK? Yes, in every size band. Agencies are split by whether they run at
+  #" DOES RESTORING SERVICE BRING RIDERS BACK? Agencies that restored service recovered more riders, in every size
+  #" band. Agencies are split by whether they run at
   #" least their 2019 service hours (restored) or not, and compared on average recovery (latest 12 months of trips as
   #" a share of 2019). Agency-by-agency average, all modes, agencies with 2019 trips; agencies above 2x of 2019 left
   #" out as reporting outliers, and agencies flagged counting_changed_since_2019 left out. WHO ACTS: a transit board
@@ -344,7 +357,7 @@ source: transit is ntd_rows extend {
   #" Belt metros of 1.0 to 1.9 million people: trips per resident, recovery, service restored, riders per service
   #" hour. Recovery leaves GoRaleigh out (see counting_changed_since_2019): the rest of the Triangle is at 86% of 2019,
   #" still ahead of Charlotte at 61%; as reported, with GoRaleigh, it reads 98%. Service leaves GoRaleigh out too;
-  #" trips per resident, riders per hour and yoy_change count it as reported. WHO ACTS: Triangle planners and the GoTriangle / Wake Transit boards (where to add service),
+  #" columns ending _as_reported count it, so the Triangle's ranking on trips per resident may not hold. WHO ACTS: Triangle planners and the GoTriangle / Wake Transit boards (where to add service),
   #" and Charlotte, whose metro has restored only about 81% of its 2019 service and recovered the fewest riders.
   #" Population is 2020 Census, so per-resident figures overstate use in metros that have grown since.
   # bar_chart { x=peer_metro y=recovery_vs_2019 }
@@ -355,8 +368,12 @@ source: transit is ntd_rows extend {
       recovery_vs_2019
       recovery_vs_2019_as_reported
       trips_2019_left_out
-      residents, trips_latest_12m, trips_per_resident_12m, trips_per_resident_2019,
-      service_vs_2019, trips_per_hour_12m, yoy_change
+      residents, trips_latest_12m
+      trips_per_resident_12m_as_reported is trips_per_resident_12m
+      trips_per_resident_2019, service_vs_2019
+      trips_per_hour_12m_as_reported is trips_per_hour_12m
+      # percent
+      yoy_change_as_reported is yoy_change
     order_by: recovery_vs_2019 desc
   }
 

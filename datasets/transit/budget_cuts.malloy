@@ -201,7 +201,8 @@ source: relief_robustness is motherduck.table('transit.relief_robustness') exten
 #" Sharp service changes (hours 15%+ below / above the same month a year earlier for 3 months running), local bus and
 #" rail, 2003 - 2026, each against the 10 best-matched same-size peers whose hours held steady. *_vs_peers = change in
 #" mean log riders / hours over the year after (y1: months 0-11, y2: months 12-23) vs the year before, minus the peers'.
-#" dropped = counting break (riders moved 0.5+ log away from hours) or poor pre-match (pre_gap beyond 0.15).
+#" dropped = counting break (riders moved 0.5+ log away from hours), poor pre-match (pre_gap beyond 0.15), or a
+#" GoRaleigh (40007) event from August 2022 on, whose two-year after-window spans its July 2024 boardings jump.
 source: service_change_events is motherduck.table('transit.service_change_events') extend {
   dimension:
     agency_label is concat(agency_name, ' (', state, ')')

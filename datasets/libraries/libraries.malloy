@@ -191,7 +191,8 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
     systems_not_reporting_borrowing is count() { where: circulation is null }
     #" Physical items borrowed per person served (systems that reported physical circulation). Nearly complete in
     #" every year, so it is the series to compare FY2024 with earlier years, on comparable systems (size_band !=
-    #" '6 Not comparable'): flat at about 4.27 in FY2023 and FY2024.
+    #" '6 Not comparable'): flat at about 4.27 in FY2023 and FY2024. Across all entries it reads 4.25 to 4.18, because
+    #" of new FY2024 entries in the not-comparable band with large service areas and few loans.
     physical_per_capita is physical_circulation.sum() / nullif(population_served.sum() { where: physical_circulation is not null }, 0)
     #" Digital items borrowed per person served (systems that reported digital circulation). FY2024 is not comparable
     #" with earlier years: the survey split digital circulation into e-book / e-serial / e-audio / e-video questions
@@ -272,13 +273,13 @@ source: library_years is library_years_base extend {
   # line_chart { x=fiscal_year y=visits_per_capita }
   view: visits_by_year is {
     group_by: fiscal_year
-    aggregate: visits_per_capita, circulation_per_capita, physical_per_capita, spend_per_capita, digital_share, total_visits, systems
+    aggregate: visits_per_capita, circulation_per_capita, spend_per_capita, digital_share, total_visits, systems
     order_by: fiscal_year
   }
 
   #" PLAYBOOK. Has library use recovered since the pandemic? One row per fiscal year FY2018 – FY2024: visits,
   #" visits per person, borrowing per person and the digital share. Answer: visits are still about 30% below FY2019
-  #" and digital borrowing grew every year to FY2023. FY2024 borrowing: read physical_per_capita (total and digital
+  #" and digital loans per person grew every year to FY2023. FY2024 borrowing: read physical_per_capita (total and digital
   #" are blank for many systems and the digital questions changed). Who acts: library directors and boards planning
   #" hours and branches.
   # line_chart { x=fiscal_year y=visits_per_capita }
