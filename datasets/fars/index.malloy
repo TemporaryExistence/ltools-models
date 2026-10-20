@@ -936,14 +936,14 @@ source: fast_vehicles_by_state_year is vehicles -> {
 
 #" One row per person in a fatal crash (occupants, pedestrians, cyclists): who died by role, age, belt use, pedestrian location and light, with chance intervals.
 #(agent) `deaths` counts people killed; `people_involved` counts everyone (2.25x more). Motorcyclist is a vehicle type: use `road_user`. Pedalcyclists before and after 2022 are not comparable (motorized bicycles moved).
-#(agent) `restraint` exists only for passenger-vehicle occupants (REST_USE 20 also covers motorcyclists; treating it as unbelted gives 74% too many in 2024). `unbelted_share` divides by known use, as NHTSA does. Dark = all three dark codes.
+#(agent) `restraint` exists only for passenger-vehicle occupants (REST_USE 20 also covers motorcyclists; treating it as unbelted gives 74% too many in 2024). `unbelted_share` divides by known use, as NHTSA does. Dark = all three dark codes. Unknown codes jump in some state-years: restraint (Hawaii 2020 40%), pedestrian location (Utah 2024 19%), light (North Dakota 2021 and 2023 17-20%); see `restraint_unknown_share` and `pedestrian_location_unknown_share`.
 #(agent) State or county vs the rest: `persons_by_state_year`, `pedestrians_by_county_year` (rows carry the rest, so any filter is safe). Chance: Wilson intervals and two-proportion tests treat people as independent; pedestrian counts use Poisson (pedestrians killed per crash vary little, 1.03x).
 source: persons is motherduck.table('fars.persons') extend {
   primary_key: person_key
   join_one: crashes on crash_key = crashes.crash_key
 
   dimension:
-    #" True when the crash happened in the dark (lighted, not lighted or unknown lighting).
+    #" True when the crash happened in the dark (lighted, not lighted or unknown lighting); light itself unknown for 17-20% of North Dakota deaths in 2021 and 2023, 10% of Alaska's in 2019.
     in_dark is crashes.light_condition ~ 'Dark%'
 
   measure:
