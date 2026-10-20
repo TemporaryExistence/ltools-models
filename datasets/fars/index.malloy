@@ -162,6 +162,9 @@ source: persons is motherduck.table('fars.persons') extend {
     #" Share of killed drivers with a known (tested and reported) BAC result.
     # percent
     killed_driver_bac_known_share is count() { where: is_killed and person_type = 'Driver' and bac_test_status = 'Tested, result known' } / nullif(count() { where: is_killed and person_type = 'Driver' }, 0)
+    #" Of killed drivers with a known BAC result, the share at .08 or higher.
+    # percent
+    killed_driver_tested_positive_share is count() { where: is_killed and person_type = 'Driver' and tested_bac >= 0.08 } / nullif(count() { where: is_killed and person_type = 'Driver' and bac_test_status = 'Tested, result known' }, 0)
     #" People killed whose imputed BAC was .08+ (NHTSA imputation; drivers and nonoccupants only).
     deaths_own_bac_08_imputed is imputed_bac08_share.sum() { where: is_killed }
 
@@ -183,10 +186,10 @@ source: persons is motherduck.table('fars.persons') extend {
     order_by: `year`
   }
 
-  #" F2. Share of killed drivers with a known BAC result, by year, North Carolina vs rest of US.
+  #" F2. Killed drivers by year, North Carolina vs rest of US: share with a known BAC result and, of those, share at .08+. In NC coverage in 2023-24 matched 2019-20 but the positive share fell (why is not known).
   view: nc_vs_rest_bac_known_killed_drivers is {
     group_by: crashes.`year`, crashes.nc_or_rest_of_us
-    aggregate: killed_drivers is deaths { where: person_type = 'Driver' }, killed_driver_bac_known_share
+    aggregate: killed_drivers is deaths { where: person_type = 'Driver' }, killed_driver_bac_known_share, killed_driver_tested_positive_share
     order_by: `year`, nc_or_rest_of_us
   }
 
@@ -261,7 +264,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
   #" US 2024 (not final): deaths per 100 million vehicle-miles by road class.
   view: us_2024_deaths_per_mile_by_road_class is deaths_per_mile_by_road_class + { where: `year` = 2024 }
 
-  #" F1. North Carolina vs US deaths per 100 million vehicle-miles by road class, 2024 (not final) and pooled 2022-2024, with NC's ratio to its interstates and freeways.
+  #" F1. North Carolina vs US and rest of US deaths per 100 million vehicle-miles by road class, 2024 (not final) and pooled 2022-2024, with ratios to interstates and freeways. NC local-road miles jump 25% in 2024, so NC's 2024 local rate is unstable.
   view: nc_vs_us_deaths_per_mile_by_road_class is {
     group_by: road_class
     aggregate:
@@ -270,6 +273,8 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
       nc_rate_2022_2024 is deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / (vmt_millions.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / 100)
       us_rate_2024 is deaths.sum() { where: `year` = 2024 } / (vmt_millions.sum() { where: `year` = 2024 } / 100)
       us_rate_2022_2024 is deaths.sum() { where: `year` >= 2022 } / (vmt_millions.sum() { where: `year` >= 2022 } / 100)
+      rest_of_us_rate_2022_2024 is deaths.sum() { where: state_name != 'North Carolina' and `year` >= 2022 } / (vmt_millions.sum() { where: state_name != 'North Carolina' and `year` >= 2022 } / 100)
+      rest_of_us_ratio_vs_freeway_2022_2024 is (deaths.sum() { where: state_name != 'North Carolina' and `year` >= 2022 } / vmt_millions.sum() { where: state_name != 'North Carolina' and `year` >= 2022 }) / (all(deaths.sum() { where: state_name != 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: state_name != 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway' }))
       nc_ratio_vs_freeway_2024 is (deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / vmt_millions.sum() { where: state_name = 'North Carolina' and `year` = 2024 }) / (all(deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 and road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: state_name = 'North Carolina' and `year` = 2024 and road_class = 'Interstate or freeway' }))
       nc_ratio_vs_freeway_2022_2024 is (deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / vmt_millions.sum() { where: state_name = 'North Carolina' and `year` >= 2022 }) / (all(deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: state_name = 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway' }))
       # currency
@@ -350,7 +355,7 @@ source: county_population is motherduck.table('fars.county_population') extend {
 }
 
 #" North Carolina speeding-related deaths by year under two official definitions: FARS (NHTSA) and NCDOT's published state crash data, beside deaths in crashes with a vehicle recorded 10+ mph over the limit.
-#(agent) FARS's NC count has swung before (566 in 2016, 327 in 2018 per NC's highway safety plan chart). NC's plan's 2019-2023 average (412.6) splices FARS 2019-2021 (ARF editions) with NCDOT 2022-2023.
+#(agent) FARS's NC count has swung before (566 in 2016, 327 in 2018 per NC's highway safety plan chart). NC's plan's 2019-2023 average (412.6) splices FARS 2019-2021 (2021 is the ARF value 478; Final File 487) with NCDOT 2022 (426) and an extrapolated 2023 (340, from the first three months).
 #(agent) NC's highway safety plan names FARS as the source of its speeding target (C-6) but sets the baseline from NCDOT data. FARS rose 517 -> 676 (2022-2024) while NCDOT fell 426 -> 378 and deaths with a vehicle 10+ mph over the limit fell 634 -> 598: the FARS rise appears to be in how crashes are flagged (inferred; who changed what is not documented), not in recorded speeds.
 source: nc_speeding_definitions is motherduck.table('fars.nc_speeding_definitions') extend {
   #" F4. NC speeding-related deaths by year: FARS flag vs NCDOT's published count vs crashes with a vehicle 10+ mph over the limit.
