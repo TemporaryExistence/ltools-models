@@ -111,7 +111,7 @@ export default function Dashboard() {
             <Stat value={int(m.riders_lost_10pct_bus)} label={"Riders lost a year by a cut that saves 10% of the bus budget (about " + pct(m.hours_share_cut_10pct_budget) + " of bus hours, " + pct(m.share_of_bus_riders_lost_10pct) + " of bus riders)"} />
           </div>
           <p style={{ maxWidth: 740, fontSize: 14 }}>
-            Based on the agency's 2024 report year (service may have changed since), at the study's central year-two response, with overhead ({pct(1 - m.bus_avoidable_cost_per_hour * m.bus_trips_2024 / m.bus_riders_per_hour / m.bus_opex)} of bus cost) treated as fixed.{String(m.agency_label).startsWith("City of Raleigh") ? " Counted boardings more than doubled in July 2024, likely a counting change; if the new count is right, these figures are higher." : ""} Paratransit (ADA) is {pct(m.ada_share_opex)} of its operating cost.
+            Based on the agency's 2024 report year (service may have changed since), at the study's central year-two response, with overhead ({pct(1 - m.bus_avoidable_cost_per_hour * m.bus_trips_2024 / m.bus_riders_per_hour / m.bus_opex)} of bus cost) treated as fixed.{String(m.agency_label).startsWith("City of Raleigh") ? " Counted boardings more than doubled in July 2024, likely a counting change (unconfirmed); if the new count is right, these figures are higher. Fares resumed in September 2024." : ""} Paratransit (ADA) is {pct(m.ada_share_opex)} of its operating cost.
             It can't be cut on its own: it must cover the area and hours the fixed routes serve, so cutting routes or
             hours can shrink it.
           </p>

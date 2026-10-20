@@ -874,9 +874,9 @@ const ABOUT = {
     "Agency totals cannot pick routes. Which route to cut needs route-level ridership (automatic passenger counters), which is not public here.",
     "The data does not record why a cut was made. Many of the cuts measured are from 2009–12, when agencies cut for budget reasons (inferred from timing); few fall in the 2021–23 driver-shortage years.",
     "Relief accounting differs: relief passed through a regional funder can show up as local money, and new state or local money voted in 2025–26 is not in 2024 data, so a gap here is the 2024 exposure, not a 2026 deficit.",
-    "The tags give the 2024 gap and what each agency's infrequent routes cost. They do not say which hours to cut: that needs route-level passenger counts. Fares, taxes and reserves are other ways to close a gap; this page does not rank them.",
+    "The tags give each agency’s 2024 gap. They do not say which hours to cut: that needs route-level passenger counts. Fares, taxes and reserves are other ways to close a gap; this page does not rank them.",
     "At agencies whose buses carry fewer riders an hour, a dollar of service carries fewer riders; whether a dollar of cuts costs fewer riders there depends on how riders respond, and the study's two methods disagree. Riders on lightly used service may have no other way to travel; the NTD has no rider income or car ownership.",
-    "Boardings, not people. GoRaleigh's boardings doubled in July 2024 on little more service, likely a counting change (no document found); its 2024 report year ends before the jump.",
+    "Boardings, not people. GoRaleigh's boardings doubled in July 2024 on little more service, likely a counting change (unconfirmed; the city ran a "find your fare" month that July before fares resumed in September); its 2024 report year ends before the jump.",
     "Elasticity is linear in logs; cuts bigger than about 30% of service are outside most of the evidence.",
   ],
 };
@@ -885,8 +885,8 @@ const ABOUT = {
 function actionTags(r) {
   if (!r || r.relief_gap == null || !(r.relief_share >= 0.01)) return { none: "no gap" };
   const gap = mBig(r.relief_gap);
-  if (!(r.bus_opex > 0)) return { act: `close ${gap} gap (rail only)` };
-  return { act: `close ${gap} gap` };
+  if (!(r.bus_opex > 0)) return { act: `gap ${gap} (rail only)` };
+  return { act: `gap ${gap}` };
 }
 
 // The first screen: agencies ranked by relief gap as a share of budget (or in dollars), #1 highlighted, the selected agency outlined
