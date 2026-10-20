@@ -27,6 +27,11 @@ given:
 #" trips) is a fixed claim: it is required wherever fixed routes run. cut_needed / riders_lost_if_cut: service that would
 #" have to be cut (bus and rail in proportion to cost, fares lost on the way made up by cutting more) to close the 2024
 #" relief gap with cuts alone, and the riders that would cost, at constant elasticity.
+#(agent) The flag finds agencies still running on relief in 2024. It misses agencies that spent their relief in
+#(agent) 2021-23 and now face deficits: the Boston, Denver, Dallas and Portland systems ran 31-41% on federal money in
+#(agent) 2022 and were near their baseline by 2024, so they are not flagged, though several are in 2025-26 budget news.
+#(agent) Of 306 bus and big agencies, 151 were 10+ points above their baseline in 2022 or 2023 but not flagged in 2024.
+#(agent) NTD funding data ends in 2024, so later deficits are not measured here.
 source: budget_agency is motherduck.table('transit.budget_agency') extend {
   dimension:
     #" Agency name with its state.
@@ -256,6 +261,9 @@ source: service_change_events is motherduck.table('transit.service_change_events
 #(agent) Checks (2026-10-20): placebo dates 24 months earlier show no effect (riders +0.8%, interval -1.4 to 3.4, for
 #(agent) cuts); riders sit within 3% of peers for three years before; the estimate depends on how sharp a change counts
 #(agent) (bus cuts 0.64 at a 10% threshold, 0.67 at 15%, 0.80 at 25%), and only 16 bus cuts since July 2021 qualify.
+#(agent) Additions show smaller responses than cuts in years 1-2 (0.41 and 0.58 against 0.67 and 0.74). Published
+#(agent) research does not settle whether that gap lasts (one study of 99 Canadian agencies finds the reverse), so read
+#(agent) it as riders building up more slowly after service returns, not as riders lost for good.
 source: service_change_summary is motherduck.table('transit.service_change_summary') extend {
   view: headline is {
     where: period = 'All periods except COVID'
