@@ -854,10 +854,10 @@ const ABOUT = {
     },
   ],
   checks:
-    "Relief flag: in 2018, before relief existed, 3–4% of bus agencies and big systems would have crossed 10% against a 2015–17 baseline; 27–30% cross it in 2024. " +
+    "Relief flag: in 2018, before relief existed, it would rarely have fired against a 2015–17 baseline (the chart under More shows the rates). " +
     "Ranking: the default order is the gap as a share of the 2024 operating budget, for agencies with $10M+ budgets only (below that, a few hundred thousand dollars swing the percentage); dollars are the toggle. " +
     "Both orders are re-run with the 2019 federal share alone as the baseline: #1 is marked with its rank there, and rows that move more than two places are marked. By dollars the top 10 is the same ten agencies on either baseline. " +
-    "Service response: sharp bus cuts and additions outside COVID, each against 10 same-size peers whose hours held steady and whose riders tracked it before; 95% bands from 500 bootstrap draws. " +
+    "Service response: sharp bus cuts and additions outside COVID, each against up to 10 same-size peers whose hours held steady and whose riders tracked it before; 95% bands from 500 bootstrap draws. " +
     "An agency-level panel gives a similar first year but a lower second year for cuts. Fake cut dates and fake cutting agencies show no effect, and the cut estimate moves with the cut-size rule (all checks: estimate_checks in the model). Numbers re-run through Malloyyo match the DuckDB build.",
   definitions: [
     ["Relief gap", "Federal operating money in 2024 minus the agency's 2017–19 federal share × its 2024 operating money (never below zero). Agencies without 2017–19 money use their size class's median."],
@@ -872,10 +872,10 @@ const ABOUT = {
   ],
   caveats: [
     "Agency totals cannot pick routes. Which route to cut needs route-level ridership (automatic passenger counters), which is not public here.",
-    "The data does not record why a cut was made. About 40% of the cuts measured are 2009–12, when many agencies cut for budget reasons (inferred from timing); 9 fall in the 2021–23 driver-shortage years.",
+    "The data does not record why a cut was made. Many of the cuts measured are from 2009–12, when agencies cut for budget reasons (inferred from timing); few fall in the 2021–23 driver-shortage years.",
     "Relief accounting differs: relief passed through a regional funder can show up as local money, and new state or local money voted in 2025–26 is not in 2024 data, so a gap here is the 2024 exposure, not a 2026 deficit.",
     "The tags give the 2024 gap and what each agency's infrequent routes cost. They do not say which hours to cut: that needs route-level passenger counts. Fares, taxes and reserves are other ways to close a gap; this page does not rank them.",
-    "Coverage routes lose fewer riders per dollar, but those riders are more likely to have no other way to travel; the NTD has no rider income or car ownership.",
+    "At agencies whose buses carry fewer riders an hour, a dollar of service carries fewer riders; whether a dollar of cuts costs fewer riders there depends on how riders respond, and the study's two methods disagree. Riders on lightly used service may have no other way to travel; the NTD has no rider income or car ownership.",
     "Boardings, not people. GoRaleigh's boardings doubled in July 2024 on little more service, likely a counting change (no document found); its 2024 report year ends before the jump.",
     "Elasticity is linear in logs; cuts bigger than about 30% of service are outside most of the evidence.",
   ],
