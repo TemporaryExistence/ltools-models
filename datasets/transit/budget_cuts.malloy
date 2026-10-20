@@ -124,9 +124,13 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
     order_by: relief_gap_total desc
   }
 
-  #" WHAT EACH CUT COSTS: riders lost a year per $1M of local-bus service cut, by kind of bus system (2024 riders per
-  #" revenue hour), with what the hours cost and the ADA paratransit share of the budget. Bus agencies with 0.5M+ trips.
-  #" WHO ACTS: transit boards choosing what to cut.
+  #" WHAT EACH CUT COSTS: riders lost a year per $1M of local-bus service cut, by kind of bus system (agencies grouped
+  #" by 2024 riders per revenue hour), with what the hours cost and the ADA paratransit share of the budget. Bus
+  #" agencies with 0.5M+ trips. This compares kinds of agency, not routes inside one agency.
+  #(agent) The cut cost scales with the riders per hour of the service cut: within one agency, cutting its emptiest
+  #(agent) hours costs fewer riders than its average, but route-level ridership is not in this data (it needs the
+  #(agent) agency's passenger counts). Uses the year-2 elasticity 0.74 (95% band 0.59-0.86), so figures scale with it.
+  #(agent) WHO ACTS: transit boards choosing what to cut.
   view: cut_menu_by_type is {
     where: bus_trips_2024 >= 500000 and bus_riders_lost_per_1m > 0
     group_by: bus_type
@@ -156,6 +160,18 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
       state_other is sum(state_other_share * ops_2024) / nullif(ops_2024.sum(), 0)
       federal_share_pooled
     order_by: operating_budget desc
+  }
+
+  #" ONE AGENCY'S POSITION (pick it with the agency control; default GoRaleigh): relief exposure, where its operating
+  #" money comes from, and what a bus cut costs it in riders. riders_lost_10pct_bus is linear at the year-2 elasticity.
+  view: agency_cut_menu is {
+    where: agency_name ~ $BUDGET_AGENCY
+    select: agency_label, ops_2024, relief_gap, relief_share, flagged, fed_share_base, fed_share_2024,
+      local_general_fund_share, local_other_share, agency_tax_share, fare_share_2024, ada_share_opex,
+      bus_opex, bus_trips_2024, bus_riders_per_hour, bus_avoidable_cost_per_hour, bus_riders_lost_per_1m
+      riders_lost_10pct_bus is bus_riders_lost_per_1m * 0.1 * bus_opex / 1000000
+      # percent
+      share_of_bus_riders_lost_10pct is bus_riders_lost_per_1m * 0.1 * bus_opex / 1000000 / nullif(bus_trips_2024, 0)
   }
 
   #" North Carolina agencies with $5M+ operating budgets: exposure, funding mix and cut menu.
@@ -237,6 +253,9 @@ source: service_change_events is motherduck.table('transit.service_change_events
 }
 
 #" Pooled results of the event study with 95% bootstrap bands (500 draws over events) on the all-periods-except-COVID rows.
+#(agent) Checks (2026-10-20): placebo dates 24 months earlier show no effect (riders +0.8%, interval -1.4 to 3.4, for
+#(agent) cuts); riders sit within 3% of peers for three years before; the estimate depends on how sharp a change counts
+#(agent) (bus cuts 0.64 at a 10% threshold, 0.67 at 15%, 0.80 at 25%), and only 16 bus cuts since July 2021 qualify.
 source: service_change_summary is motherduck.table('transit.service_change_summary') extend {
   view: headline is {
     where: period = 'All periods except COVID'
