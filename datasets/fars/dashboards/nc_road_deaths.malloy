@@ -1,0 +1,10 @@
+##! experimental { givens }
+import "../index.malloy"
+
+// Drawn by nc_road_deaths.jsx, whose queries are written inline over the published views and measures of
+// index.malloy (the same component is saved as an instance draft). One panel per finding: F1 collectors per mile,
+// F2 alcohol count and imputation, F3 Wake pedestrians, F4 speeding definitions; values at US DOT's VSL.
+
+#" North Carolina road deaths: four findings (collector roads per mile, alcohol counting, Wake pedestrians in the dark, speeding definitions), each valued at US DOT's value of a statistical life.
+# artifact { title="North Carolina road deaths: four findings and what they are worth" } dashboard { columns=6 }
+query: nc_road_deaths is road_exposure -> nc_vs_us_deaths_per_mile_by_road_class
