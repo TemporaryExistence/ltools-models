@@ -17,6 +17,12 @@
 source: crashes is motherduck.table('fars.crashes') extend {
   primary_key: crash_key
 
+  dimension:
+    #" 'North Carolina' or 'Rest of US', for the worked-example comparisons.
+    nc_or_rest_of_us is state_name ? pick 'North Carolina' when 'North Carolina' else 'Rest of US'
+    #" 'Wake County', 'Rest of NC' or 'Outside NC'.
+    wake_or_rest_of_nc is pick 'Wake County' when county_fips = '37183' pick 'Rest of NC' when state_name = 'North Carolina' else 'Outside NC'
+
   measure:
     #" Fatal crashes (not deaths).
     fatal_crashes is count()
@@ -50,6 +56,9 @@ source: crashes is motherduck.table('fars.crashes') extend {
     #" Deaths valued at the high end of DOT's VSL range ($19.88M, 2025 dollars); sums over the years in the query.
     # currency
     deaths_valued_at_vsl_high is fatalities.sum() * 19880000
+    #" Share of alcohol-impaired-driving deaths (imputed) NOT backed by a crash with a tested driver at .08+: how much of the count rests on NHTSA's imputation.
+    # percent
+    alcohol_share_resting_on_imputation is 1 - fatalities.sum() { where: tested_driver_bac_08 } / nullif(sum(fatalities * ai_share), 0)
     #" Deaths in hit-and-run crashes.
     hit_and_run_deaths is fatalities.sum() { where: hit_and_run }
 
@@ -58,6 +67,13 @@ source: crashes is motherduck.table('fars.crashes') extend {
     group_by: `year`, file_status
     aggregate: deaths, alcohol_impaired_deaths, alcohol_impaired_share, alcohol_deaths_tested_only, alcohol_deaths_police_reported, alcohol_impaired_deaths_valued_at_vsl
     order_by: `year`
+  }
+
+  #" F2. North Carolina vs rest of US by year: alcohol-impaired-driving deaths (imputed), deaths backed by a tested .08+ driver, and the share resting on imputation.
+  view: nc_vs_rest_alcohol_testing is {
+    group_by: `year`, nc_or_rest_of_us
+    aggregate: alcohol_impaired_deaths, alcohol_deaths_tested_only, alcohol_share_resting_on_imputation
+    order_by: `year`, nc_or_rest_of_us
   }
 
   #" Deaths by year with NHTSA's headline categories (alcohol imputed, speeding, night, rural/urban), for checking against NHTSA's publications.
@@ -91,10 +107,20 @@ source: vehicles is motherduck.table('fars.vehicles') extend {
     #" Of the vehicles recorded 10+ mph over the limit, the share FARS flags as speeding-related.
     # percent
     flagged_share_of_10_over is count() { where: over_limit_by_10 and speeding_related } / nullif(count() { where: over_limit_by_10 }, 0)
+    #" Of the vehicles with recorded travel speed over the posted limit (by any amount), the share FARS flags as speeding-related.
+    # percent
+    flagged_share_of_over_limit is count() { where: travel_speed_mph > posted_speed_limit_mph and speeding_related } / nullif(count() { where: travel_speed_mph > posted_speed_limit_mph }, 0)
     #" Occupants of these vehicles who died (excludes pedestrians and cyclists).
     occupant_deaths_total is occupant_deaths.sum()
 
-  #" F4 check. By year: vehicles recorded 10+ mph over the limit and the share of them flagged speeding-related. Add `where: crashes.state_name = 'North Carolina'` (NC records travel speed for ~95% of vehicles; most states far less).
+  #" F4. By year, North Carolina vs rest of US: share of vehicles recorded 10+ mph over the limit (and any amount over) that FARS flags as speeding-related, like for like. NC records travel speed for ~95% of vehicles; the rest of the US for ~35-38%.
+  view: nc_vs_rest_speeding_flag_on_fast_vehicles is {
+    group_by: crashes.`year`, crashes.nc_or_rest_of_us
+    aggregate: vehicles_10_over, flagged_share_of_10_over, flagged_share_of_over_limit
+    order_by: `year`, nc_or_rest_of_us
+  }
+
+  #" By year: vehicles recorded 10+ mph over the limit and the share flagged speeding-related. Add `where: crashes.state_name = 'X'` for one state.
   view: speeding_flag_on_fast_vehicles is {
     group_by: crashes.`year`
     aggregate: vehicles_10_over, flagged_share_of_10_over
@@ -133,6 +159,9 @@ source: persons is motherduck.table('fars.persons') extend {
     pedestrian_deaths_dark_arterial is count() { where: is_killed and road_user = 'Pedestrian' and in_dark and crashes.road_class = 'Arterial (not freeway)' }
     #" Pedestrians killed.
     pedestrian_deaths is count() { where: is_killed and road_user = 'Pedestrian' }
+    #" Share of killed drivers with a known (tested and reported) BAC result.
+    # percent
+    killed_driver_bac_known_share is count() { where: is_killed and person_type = 'Driver' and bac_test_status = 'Tested, result known' } / nullif(count() { where: is_killed and person_type = 'Driver' }, 0)
     #" People killed whose imputed BAC was .08+ (NHTSA imputation; drivers and nonoccupants only).
     deaths_own_bac_08_imputed is imputed_bac08_share.sum() { where: is_killed }
 
@@ -152,6 +181,28 @@ source: persons is motherduck.table('fars.persons') extend {
       # currency
       dark_arterial_valued_at_vsl is pedestrian_deaths_dark_arterial * 14200000
     order_by: `year`
+  }
+
+  #" F2. Share of killed drivers with a known BAC result, by year, North Carolina vs rest of US.
+  view: nc_vs_rest_bac_known_killed_drivers is {
+    group_by: crashes.`year`, crashes.nc_or_rest_of_us
+    aggregate: killed_drivers is deaths { where: person_type = 'Driver' }, killed_driver_bac_known_share
+    order_by: `year`, nc_or_rest_of_us
+  }
+
+  #" F3. Wake County vs rest of NC, all years in the query (2019-2024 unless filtered): pedestrians as a share of deaths, and the share of pedestrian deaths in the dark on non-freeway arterials or at intersections.
+  view: wake_vs_rest_of_nc_pedestrians is {
+    where: crashes.state_name = 'North Carolina'
+    group_by: crashes.wake_or_rest_of_nc
+    aggregate:
+      deaths, pedestrian_deaths
+      # percent
+      pedestrian_share_of_deaths is pedestrian_deaths / nullif(deaths, 0)
+      pedestrian_deaths_dark_arterial
+      # percent
+      dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0)
+      # percent
+      at_intersection_share_of_pedestrian_deaths is deaths { where: road_user = 'Pedestrian' and nonoccupant_location = 'At intersection' } / nullif(pedestrian_deaths, 0)
   }
 
   #" Unrestrained share of passenger-vehicle occupants killed, by year and day vs night (known use only). Add `where: crashes.state_name = 'North Carolina'`; nationally the split matches NHTSA's published 56% night / 41% day (2024).
@@ -176,10 +227,12 @@ source: persons is motherduck.table('fars.persons') extend {
   }
 }
 
-#" Deaths and vehicle-miles (FHWA VM-2, millions) on the same grain: year x state x rural/urban x road function. Rows with state_name 'United States' are national sums.
-#(agent) Use for deaths per 100 million vehicle-miles by road type. No county or city miles exist here: never divide county deaths by state miles. Rates include pedestrians, who do not drive the miles; they describe risk per mile, not the effect of any treatment. Always filter `state_name` to one value (a state or 'United States'), or national deaths are counted twice. Deaths with unknown road type or rural/urban (490 in 2024) are not in this table.
-#(agent) A few state cells report deaths but no miles (FHWA shows '-'): 2-4 deaths a year since 2022, 115 in 2021. Rates are per mile driven, not per mile of road. FHWA 2024 mileage is FHWA's October 2025 table.
+#" Deaths and vehicle-miles (FHWA VM-2, millions) by year x state x rural/urban x road function; national figures are sums over states.
+#(agent) Use for deaths per 100 million vehicle-miles by road type. Unfiltered queries pool every state and every year: filter `year` (and `state_name`) for a single-year or state rate. No county or city miles exist here: never divide county deaths by state miles. Rates include pedestrians, who do not drive the miles; they describe risk per mile, not the effect of any treatment. Always filter `state_name` to one value (a state or 'United States'), or national deaths are counted twice. Deaths with unknown road type or rural/urban (490 in 2024) are not in this table.
+#(agent) A few state cells report deaths but no miles (FHWA shows '-'): 2-4 deaths a year since 2022, 115 in 2021. Rates are per mile driven, not per mile of road. FHWA 2024 mileage is FHWA's October 2025 table. State sums of miles differ from FHWA's US total row by under 0.001%.
 source: road_exposure is motherduck.table('fars.road_exposure') extend {
+  where: state_name != 'United States'
+
   measure:
     #" People killed (crashes with known road type and rural/urban only).
     deaths_with_road_type is deaths.sum()
@@ -191,9 +244,8 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
     # currency
     deaths_valued_at_vsl is deaths.sum() * 14200000
 
-  #" F1. Deaths per 100 million vehicle-miles by road class, with each class's share of deaths and of miles and its rate relative to interstates and freeways. Defaults to the US in 2024; change the filters for a state or year.
+  #" Deaths per 100 million vehicle-miles by road class, with shares of deaths and miles and the rate relative to interstates and freeways. Refine with `+ { where: `year` = 2024 and state_name = 'North Carolina' }`; unfiltered it pools all states and years.
   view: deaths_per_mile_by_road_class is {
-    where: state_name = 'United States' and `year` = 2024
     group_by: road_class
     aggregate:
       deaths_with_road_type, vmt_millions_total, deaths_per_100m_vmt
@@ -204,6 +256,37 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
       rate_vs_interstate_freeway is (deaths.sum() / vmt_millions.sum()) / (all(deaths.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: road_class = 'Interstate or freeway' }))
       deaths_valued_at_vsl
     order_by: deaths_per_100m_vmt desc
+  }
+
+  #" US 2024 (not final): deaths per 100 million vehicle-miles by road class.
+  view: us_2024_deaths_per_mile_by_road_class is deaths_per_mile_by_road_class + { where: `year` = 2024 }
+
+  #" F1. North Carolina vs US deaths per 100 million vehicle-miles by road class, 2024 (not final) and pooled 2022-2024, with NC's ratio to its interstates and freeways.
+  view: nc_vs_us_deaths_per_mile_by_road_class is {
+    group_by: road_class
+    aggregate:
+      nc_deaths_2024 is deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 }
+      nc_rate_2024 is deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / (vmt_millions.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / 100)
+      nc_rate_2022_2024 is deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / (vmt_millions.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / 100)
+      us_rate_2024 is deaths.sum() { where: `year` = 2024 } / (vmt_millions.sum() { where: `year` = 2024 } / 100)
+      us_rate_2022_2024 is deaths.sum() { where: `year` >= 2022 } / (vmt_millions.sum() { where: `year` >= 2022 } / 100)
+      nc_ratio_vs_freeway_2024 is (deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / vmt_millions.sum() { where: state_name = 'North Carolina' and `year` = 2024 }) / (all(deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 and road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: state_name = 'North Carolina' and `year` = 2024 and road_class = 'Interstate or freeway' }))
+      nc_ratio_vs_freeway_2022_2024 is (deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / vmt_millions.sum() { where: state_name = 'North Carolina' and `year` >= 2022 }) / (all(deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: state_name = 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway' }))
+      # currency
+      nc_deaths_2024_valued_at_vsl is deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 } * 14200000
+    order_by: nc_rate_2024 desc
+  }
+
+  #" F1 detail. North Carolina deaths per 100 million vehicle-miles by road function (major and minor collectors separate), 2024 and pooled 2022-2024. Minor-collector and local miles are state estimates.
+  view: nc_deaths_per_mile_by_road_function is {
+    where: state_name = 'North Carolina'
+    group_by: road_function
+    aggregate:
+      deaths_2024 is deaths.sum() { where: `year` = 2024 }
+      rate_2024 is deaths.sum() { where: `year` = 2024 } / (vmt_millions.sum() { where: `year` = 2024 } / 100)
+      deaths_2022_2024 is deaths.sum() { where: `year` >= 2022 }
+      rate_2022_2024 is deaths.sum() { where: `year` >= 2022 } / (vmt_millions.sum() { where: `year` >= 2022 } / 100)
+    order_by: road_function
   }
 }
 
@@ -267,7 +350,8 @@ source: county_population is motherduck.table('fars.county_population') extend {
 }
 
 #" North Carolina speeding-related deaths by year under two official definitions: FARS (NHTSA) and NCDOT's published state crash data, beside deaths in crashes with a vehicle recorded 10+ mph over the limit.
-#(agent) NC's highway safety plan names FARS as the source of its speeding target (C-6) but sets the baseline from NCDOT data. FARS rose 517 -> 676 (2022-2024) while NCDOT fell 426 -> 378 and deaths with a vehicle 10+ mph over the limit fell 634 -> 598: the FARS rise is in how crashes are flagged (inferred cause: recording practice), not in recorded speeds.
+#(agent) FARS's NC count has swung before (566 in 2016, 327 in 2018 per NC's highway safety plan chart). NC's plan's 2019-2023 average (412.6) splices FARS 2019-2021 (ARF editions) with NCDOT 2022-2023.
+#(agent) NC's highway safety plan names FARS as the source of its speeding target (C-6) but sets the baseline from NCDOT data. FARS rose 517 -> 676 (2022-2024) while NCDOT fell 426 -> 378 and deaths with a vehicle 10+ mph over the limit fell 634 -> 598: the FARS rise appears to be in how crashes are flagged (inferred; who changed what is not documented), not in recorded speeds.
 source: nc_speeding_definitions is motherduck.table('fars.nc_speeding_definitions') extend {
   #" F4. NC speeding-related deaths by year: FARS flag vs NCDOT's published count vs crashes with a vehicle 10+ mph over the limit.
   view: nc_speeding_two_definitions is {
