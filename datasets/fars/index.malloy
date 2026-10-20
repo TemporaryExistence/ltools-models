@@ -1,0 +1,238 @@
+##" Every fatal US road crash 2019-2024 (NHTSA FARS): who died, where, when, alcohol (NHTSA's imputed blood alcohol), speeding, belts, road type, with vehicle-miles (FHWA) and population for rates, and deaths valued at US DOT's $14.2M value of a statistical life. 2019-2023 Final Files; 2024 is the Annual Report File (not final). Totals match NHTSA's published counts.
+## dataset { title="US Fatal Road Crashes (FARS 2019 - 2024)" }
+
+// Loaded by load_fars.sql into MotherDuck ltools.fars (222,695 crashes, 544,030 persons, 343,261 vehicles, 2019-2024).
+// Sources: NHTSA FARS national CSVs (downloaded 2026-10-20); FHWA Highway Statistics VM-2 2019-2024; Census county
+// population estimates (via ltools.libraries.county_population). VSL: US DOT departmental guidance, $14.2M for base
+// year 2025 (page effective 2026-03-20).
+
+#" One row per fatal crash, 2019-2024: deaths, place, road type, light, time, and crash-level flags for alcohol, speeding and hit-and-run.
+#(agent) Count deaths with `deaths` (sum of fatalities), never with a count of crashes (7.5% low) or of people involved. ST_CASE repeats every year; `crash_key` includes the year.
+#(agent) Alcohol: use `alcohol_impaired_deaths` (NHTSA's method: average over 10 imputed blood-alcohol values of the highest driver BAC, .08+). Tested results only (`alcohol_deaths_tested_only`) are 45% low in 2024 and fall when fewer results are reported, so they make false trends (NC 2021-2023: -53% tested-only, -12% imputed).
+#(agent) Speeding is a crash flag (any driver speeding); count `speeding_related_deaths`, not deaths per speeding vehicle (23% low). Night = 6pm-5:59am; weekend = Fri 6pm-Mon 5:59am (NHTSA definitions).
+#(agent) `year` 2024 is NHTSA's Annual Report File (`file_status`): its counts will be revised, and 2024 BAC results are more often missing. Road type labels changed in 2023 in the raw files; `road_class`/`road_function` here are built from codes and are consistent. Unknown codes are null or 'Unknown'.
+#(agent) Values: `deaths_valued_at_vsl` = deaths x $14.2M (US DOT VSL, 2025 dollars). For a per-mile or per-resident rate use the `road_exposure` or `state_years` sources; crashes has no denominator.
+source: crashes is motherduck.table('fars.crashes') extend {
+  primary_key: crash_key
+
+  measure:
+    #" Fatal crashes (not deaths).
+    fatal_crashes is count()
+    #" People killed within 30 days of the crash.
+    deaths is fatalities.sum()
+    #" Deaths valued at US DOT's value of a statistical life, $14.2 million (2025 dollars) per death.
+    # currency
+    deaths_valued_at_vsl is fatalities.sum() * 14200000
+    #" Alcohol-impaired-driving deaths, NHTSA's definition and method: deaths in crashes where a driver had BAC .08+, averaged over NHTSA's 10 imputations (reproduces NHTSA's published counts).
+    alcohol_impaired_deaths is sum(fatalities * ai_share)
+    #" Share of deaths that were alcohol-impaired-driving deaths (imputed, NHTSA method).
+    # percent
+    alcohol_impaired_share is sum(fatalities * ai_share) / nullif(fatalities.sum(), 0)
+    #" Alcohol-impaired-driving deaths valued at $14.2M each (2025 dollars).
+    # currency
+    alcohol_impaired_deaths_valued_at_vsl is sum(fatalities * ai_share) * 14200000
+    #" For comparison only, undercounts: deaths in crashes where a driver's TESTED BAC was .08+ (untested drivers count as sober).
+    alcohol_deaths_tested_only is fatalities.sum() { where: tested_driver_bac_08 }
+    #" For comparison only: deaths in crashes where police reported a drinking driver.
+    alcohol_deaths_police_reported is fatalities.sum() { where: police_reported_drinking_driver }
+    #" Deaths in speeding-related crashes (any driver speeding, racing or too fast for conditions; NHTSA definition).
+    speeding_related_deaths is fatalities.sum() { where: speeding_related }
+    #" Deaths in hit-and-run crashes.
+    hit_and_run_deaths is fatalities.sum() { where: hit_and_run }
+
+  #" F2. Alcohol-impaired-driving deaths by year, counted three ways: NHTSA's imputed method (the right one), tested results only, and police-reported drinking. Add `where: state_name = 'North Carolina'` for a state.
+  view: alcohol_counting_methods is {
+    group_by: `year`, file_status
+    aggregate: deaths, alcohol_impaired_deaths, alcohol_impaired_share, alcohol_deaths_tested_only, alcohol_deaths_police_reported, alcohol_impaired_deaths_valued_at_vsl
+    order_by: `year`
+  }
+
+  #" Deaths by year with NHTSA's headline categories (alcohol imputed, speeding, night, rural/urban), for checking against NHTSA's publications.
+  view: deaths_by_year is {
+    group_by: `year`, file_status
+    aggregate:
+      deaths, fatal_crashes, alcohol_impaired_deaths, speeding_related_deaths, deaths_valued_at_vsl
+      night_deaths is fatalities.sum() { where: day_night = 'Nighttime (6pm-5:59am)' }
+      rural_deaths is fatalities.sum() { where: rural_urban = 'Rural' }
+      urban_deaths is fatalities.sum() { where: rural_urban = 'Urban' }
+    order_by: `year`
+  }
+}
+
+#" One row per motor vehicle in transport in a fatal crash: vehicle type (from body type), speeding, travel speed, posted limit, drinking driver.
+#(agent) `occupant_deaths` counts only this vehicle's occupants (no pedestrians); for deaths use `crashes.deaths` or `persons.deaths`. `travel_speed_mph` is unknown for about 60% of vehicles.
+#(agent) `vehicle_type` comes from FARS body type; NHTSA's reports since 2020 use VIN decoding, so car vs SUV counts differ from NHTSA's by about 1,000 a year. Passenger-vehicle, motorcycle and large-truck totals agree within 0.2%.
+source: vehicles is motherduck.table('fars.vehicles') extend {
+  primary_key: vehicle_key
+  join_one: crashes on crash_key = crashes.crash_key
+
+  measure:
+    #" Vehicles in fatal crashes.
+    vehicle_count is count()
+    #" Occupants of these vehicles who died (excludes pedestrians and cyclists).
+    occupant_deaths_total is occupant_deaths.sum()
+}
+
+#" One row per person in a fatal crash (occupants, pedestrians, cyclists): role, age, sex, injury, belt or helmet use, location of nonoccupants, alcohol test and NHTSA's imputed BAC.
+#(agent) `deaths` counts people killed; `people_involved` counts everyone (2.25x more). Motorcyclist is a vehicle type, not a person type: use `road_user`. Pedalcyclist counts before and after 2022 are not comparable (motorized bicycles moved from motorcyclists to pedalcyclists).
+#(agent) `restraint` exists only for passenger-vehicle occupants. In the raw file the code for 'none used / not applicable' also covers motorcyclists; counting it as unbelted gives 74% too many in 2024. `unbelted_share` divides by known use (11% unknown), as NHTSA does.
+#(agent) Dark = all three dark codes (lighted, not lighted, unknown lighting). `nonoccupant_location` is grouped from codes whose labels changed across years.
+source: persons is motherduck.table('fars.persons') extend {
+  primary_key: person_key
+  join_one: crashes on crash_key = crashes.crash_key
+
+  dimension:
+    #" True when the crash happened in the dark (lighted, not lighted or unknown lighting).
+    in_dark is crashes.light_condition ~ 'Dark%'
+
+  measure:
+    #" People killed.
+    deaths is count() { where: is_killed }
+    #" Everyone involved (killed, injured and uninjured). Not a death count.
+    people_involved is count()
+    #" People killed, valued at US DOT's VSL of $14.2 million each (2025 dollars).
+    # currency
+    deaths_valued_at_vsl is count() { where: is_killed } * 14200000
+    #" Passenger-vehicle occupants killed who were unrestrained.
+    unbelted_deaths is count() { where: is_killed and restraint = 'Unrestrained' }
+    #" Passenger-vehicle occupants killed whose restraint use is known.
+    belt_known_deaths is count() { where: is_killed and restraint = ('Restrained' | 'Unrestrained') }
+    #" Share of passenger-vehicle occupants killed who were unrestrained, of those with known use (NHTSA basis).
+    # percent
+    unbelted_share is count() { where: is_killed and restraint = 'Unrestrained' } / nullif(count() { where: is_killed and restraint = ('Restrained' | 'Unrestrained') }, 0)
+    #" Pedestrians killed in the dark on non-freeway arterials.
+    pedestrian_deaths_dark_arterial is count() { where: is_killed and road_user = 'Pedestrian' and in_dark and crashes.road_class = 'Arterial (not freeway)' }
+    #" Pedestrians killed.
+    pedestrian_deaths is count() { where: is_killed and road_user = 'Pedestrian' }
+    #" People killed whose imputed BAC was .08+ (NHTSA imputation; drivers and nonoccupants only).
+    deaths_own_bac_08_imputed is imputed_bac08_share.sum() { where: is_killed }
+
+  #" F3. Pedestrian deaths by year: in the dark, on non-freeway arterials, at intersections. Add `where: crashes.county_fips = '37183'` for Wake County.
+  view: pedestrian_deaths_dark_arterial_by_year is {
+    where: road_user = 'Pedestrian'
+    group_by: crashes.`year`
+    aggregate:
+      pedestrian_deaths
+      dark_deaths is deaths { where: in_dark }
+      pedestrian_deaths_dark_arterial
+      # percent
+      dark_arterial_share is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0)
+      at_intersection_deaths is deaths { where: nonoccupant_location = 'At intersection' }
+      # percent
+      at_intersection_share is deaths { where: nonoccupant_location = 'At intersection' } / nullif(pedestrian_deaths, 0)
+      # currency
+      dark_arterial_valued_at_vsl is pedestrian_deaths_dark_arterial * 14200000
+    order_by: `year`
+  }
+
+  #" F4. Unrestrained share of passenger-vehicle occupants killed, day vs night (known use only). Add `where: crashes.state_name = 'North Carolina'`.
+  view: unbelted_by_day_night is {
+    where: road_user = 'Passenger vehicle occupant'
+    group_by: crashes.day_night
+    aggregate: deaths, belt_known_deaths, unbelted_deaths, unbelted_share
+  }
+
+  #" F5. Deaths by road user, 2019 vs 2024: occupant deaths are back near 2019 while motorcyclist and pedestrian deaths stay higher. Pedalcyclists cross the 2022 definition change.
+  view: deaths_by_road_user_since_2019 is {
+    group_by: road_user
+    aggregate:
+      deaths_2019 is deaths { where: `year` = 2019 }
+      deaths_2024 is deaths { where: `year` = 2024 }
+      change_since_2019 is deaths { where: `year` = 2024 } - deaths { where: `year` = 2019 }
+      # percent
+      pct_change_since_2019 is deaths { where: `year` = 2024 } / nullif(deaths { where: `year` = 2019 }, 0) - 1
+      # currency
+      change_valued_at_vsl is (deaths { where: `year` = 2024 } - deaths { where: `year` = 2019 }) * 14200000
+    order_by: change_since_2019 desc
+  }
+}
+
+#" Deaths and vehicle-miles (FHWA VM-2, millions) on the same grain: year x state x rural/urban x road function. Rows with state_name 'United States' are national sums.
+#(agent) Use for deaths per 100 million vehicle-miles by road type. Always filter `state_name` to one value (a state or 'United States'), or national deaths are counted twice. Deaths with unknown road type or rural/urban (490 in 2024) are not in this table.
+#(agent) A few state cells report deaths but no miles (FHWA shows '-'): 2-4 deaths a year since 2022, 115 in 2021. Rates are per mile driven, not per mile of road. FHWA 2024 mileage is FHWA's October 2025 table.
+source: road_exposure is motherduck.table('fars.road_exposure') extend {
+  measure:
+    #" People killed (crashes with known road type and rural/urban only).
+    deaths_with_road_type is deaths.sum()
+    #" Vehicle-miles travelled, millions.
+    vmt_millions_total is vmt_millions.sum()
+    #" Deaths per 100 million vehicle-miles.
+    deaths_per_100m_vmt is deaths.sum() / nullif(vmt_millions.sum() / 100, 0)
+    #" Deaths valued at US DOT's VSL ($14.2M, 2025 dollars).
+    # currency
+    deaths_valued_at_vsl is deaths.sum() * 14200000
+
+  #" F1. Deaths per 100 million vehicle-miles by road class, with each class's share of deaths and of miles and its rate relative to interstates and freeways. Defaults to the US in 2024; change the filters for a state or year.
+  view: deaths_per_mile_by_road_class is {
+    where: state_name = 'United States' and `year` = 2024
+    group_by: road_class
+    aggregate:
+      deaths_with_road_type, vmt_millions_total, deaths_per_100m_vmt
+      # percent
+      share_of_deaths is deaths.sum() / all(deaths.sum())
+      # percent
+      share_of_miles is vmt_millions.sum() / all(vmt_millions.sum())
+      rate_vs_interstate_freeway is (deaths.sum() / vmt_millions.sum()) / (all(deaths.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: road_class = 'Interstate or freeway' }))
+      deaths_valued_at_vsl
+    order_by: deaths_per_100m_vmt desc
+  }
+}
+
+#" One row per state (and 'United States') per year: deaths, alcohol-impaired-driving deaths three ways, vehicle-miles and population.
+#(agent) Filter `state_name` to one value or exclude 'United States', or national totals are counted twice. The federal impaired-driving tier (23 CFR 1300.23) uses three final years: 2021-2023 until the 2024 Final File exists.
+source: state_years is motherduck.table('fars.state_years') extend {
+  measure:
+    #" People killed.
+    total_deaths is deaths.sum()
+    #" Deaths per 100 million vehicle-miles.
+    deaths_per_100m_vmt is deaths.sum() / nullif(vmt_millions.sum() / 100, 0)
+    #" Deaths per 100,000 residents.
+    deaths_per_100k_residents is deaths.sum() / nullif(population.sum() / 100000, 0)
+    #" Alcohol-impaired-driving deaths per 100 million vehicle-miles (NHTSA imputed method): the rate in 23 CFR 1300.23.
+    impaired_rate_per_100m_vmt is alcohol_impaired_deaths.sum() / nullif(vmt_millions.sum() / 100, 0)
+    #" For comparison only: the same rate from tested BAC results only (undercounts).
+    impaired_rate_tested_only is alcohol_deaths_tested_only.sum() / nullif(vmt_millions.sum() / 100, 0)
+
+  #" F2. Federal impaired-driving tier per 23 CFR 1300.23 on 2021-2023 (low 0.30 or less, high 0.60 or more), computed with NHTSA's imputed counts and, for contrast, with tested results only. Our computation of the rule, not NHTSA's list.
+  view: impaired_driving_tier_by_state is {
+    where: `year` >= 2021 and `year` <= 2023 and state_name != 'United States'
+    group_by: state_name
+    aggregate: impaired_rate_per_100m_vmt, impaired_rate_tested_only
+  } -> {
+    select:
+      state_name, impaired_rate_per_100m_vmt, impaired_rate_tested_only
+      tier is impaired_rate_per_100m_vmt ? pick 'High' when >= 0.60 pick 'Mid' when > 0.30 else 'Low'
+      tier_if_tested_only is impaired_rate_tested_only ? pick 'High' when >= 0.60 pick 'Mid' when > 0.30 else 'Low'
+    order_by: impaired_rate_per_100m_vmt desc
+  }
+
+  #" Deaths per resident and per mile by year; add `where: state_name = 'North Carolina'`.
+  view: rates_by_year is {
+    group_by: `year`
+    aggregate: total_deaths, deaths_per_100m_vmt, deaths_per_100k_residents
+    order_by: `year`
+  }
+}
+
+#" NHTSA's 10 imputed blood-alcohol values per crash: highest driver BAC and highest BAC among drivers and nonoccupants (g/dL).
+#(agent) Do not average BACs; NHTSA's count averages the 10 results of the .08 test (that is `crashes.alcohol_impaired_deaths`). Use this source to see the imputation spread.
+source: alcohol_imputations is motherduck.table('fars.alcohol_imputations') extend {
+  join_one: crashes on crash_key = crashes.crash_key
+  measure:
+    #" Deaths in crashes whose highest driver BAC is .08+ in this imputation.
+    impaired_deaths_in_imputation is crashes.fatalities.sum() { where: max_driver_bac >= 0.08 }
+
+  #" Alcohol-impaired-driving deaths under each of the 10 imputations, by year (the spread is the imputation uncertainty).
+  view: imputation_spread is {
+    group_by: `year`, imputation
+    aggregate: impaired_deaths_in_imputation
+    order_by: `year`, imputation
+  }
+}
+
+#" US Census county population estimates, 2019-2024 (Vintage 2020 for 2019, Vintage 2025 for 2020-2024).
+source: county_population is motherduck.table('fars.county_population') extend {
+  measure:
+    #" Residents.
+    residents is population.sum()
+}
