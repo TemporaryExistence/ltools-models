@@ -601,7 +601,8 @@ source: econtent_band_typical is econtent_band_ranks -> {
 #" target (some communities prefer print). E-content spend includes databases, and some states buy databases for
 #" their libraries (NC LIVE, GALILEO in GA, TexShare in TX), so libraries there look lower on e-content share. The
 #" incumbent (OverDrive) already sees each library's own spend; the list is most useful to challengers and to
-#" library boards benchmarking themselves.
+#" library boards benchmarking themselves. The digital share of borrowing pools FY2022-FY2024, and FY2024's digital
+#" questions changed (whole states left digital blank), so FY2024 digital figures are not comparable with earlier years.
 source: econtent_prospects is econtent_systems extend {
   join_one: band_typical is econtent_band_typical with size_band
   dimension:
