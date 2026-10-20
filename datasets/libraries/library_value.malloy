@@ -123,6 +123,8 @@ source: library_value_peers is motherduck.table('libraries.library_value_peers')
 #" '2 Five years (FY2019 to FY2024)' compares each system's FY2024 with its own FY2019. 95% intervals from a 200-draw
 #" bootstrap by library. Answer: 10% fewer hours goes with 2.6% fewer visits the same year (4.5% over five years); 10%
 #" less operating spend with 1.1% fewer visits the same year (2.6% over five). Association, not proven cause.
+#" Borrowing elasticities include FY2023->24 and FY2019->24, which span FY2024's changed digital questions and its
+#" blank borrowing figures, so they mix definitions; the visits elasticities do not.
 source: library_cut_effects is motherduck.table('libraries.library_cut_effects') extend {
   measure:
     #" Number of rows (horizon x lever).

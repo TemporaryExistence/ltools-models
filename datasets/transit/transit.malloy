@@ -41,8 +41,9 @@ source: urbanized_areas is ntd_rows -> {
 #(agent) paratransit together with microtransit.
 #(agent) Known data breaks: (1) GoRaleigh can't be compared with 2019 (see counts_not_comparable_with_2019); recovery_vs_2019
 #(agent) leaves it out, recovery_vs_2019_as_reported does not. service_vs_2019 leaves it out too; trip counts,
-#(agent) yoy_change, per-resident and per-hour figures in the same row count it as reported, so for an area that
-#(agent) includes GoRaleigh their latest values can't be compared with their 2019 values.
+#(agent) yoy_change, per-resident and per-hour figures in the same row count it as reported. For an area that includes
+#(agent) GoRaleigh, latest per-resident and per-hour values can't be compared with 2019 values, and any trend that
+#(agent) crosses July 2024 (by year, by month) steps up there. yoy_change compares two windows after the jump.
 #(agent) (2) VIA (San Antonio) reports about a quarter of its usual demand-response hours for July and August 2026
 #(agent) (late filing). (3) Late filers understate the latest 12 months.
 #(agent) (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
@@ -158,7 +159,8 @@ source: transit is ntd_rows extend {
     #" Trips per resident in 2019.
     trips_per_resident_2019 is trips_2019 / nullif(residents, 0)
 
-  #" Ridership every month since 2002; the 2020 drop and the climb back are the story.
+  #" Ridership every month since 2002; the 2020 drop and the climb back are the story. GoRaleigh (in NC, the Triangle and any filter that includes it)
+  #" steps up from July 2024, likely a counting change (see counts_not_comparable_with_2019).
   # line_chart { x=report_month y=trips_total }
   view: monthly_trips is {
     group_by: report_month
@@ -166,6 +168,8 @@ source: transit is ntd_rows extend {
     order_by: report_month
   }
 
+  #" Ridership by calendar year. GoRaleigh (in NC, the Triangle and any filter that includes it)
+  #" steps up from July 2024, likely a counting change (see counts_not_comparable_with_2019).
   # bar_chart { x=report_year y=trips_total }
   view: by_year is {
     group_by: report_year
@@ -260,7 +264,8 @@ source: transit is ntd_rows extend {
   }
 
   #" Each year's trips and service hours side by side: does ridership follow the service? 2026 is January to August
-  #" only, so its row is not a full year.
+  #" only, so its row is not a full year. GoRaleigh (in NC, the Triangle and any filter that includes it)
+  #" steps up from July 2024, likely a counting change (see counts_not_comparable_with_2019).
   # line_chart { x=report_year y=trips_total }
   view: service_and_trips_by_year is {
     group_by: report_year
