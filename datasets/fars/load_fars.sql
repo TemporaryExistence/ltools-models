@@ -262,19 +262,21 @@ SELECT county_fips, state AS state_abbr, state_name, county_name, pop_year AS ye
 FROM ltools.libraries.county_population
 WHERE pop_year BETWEEN 2019 AND 2024;
 
+-- deaths_sq (sections 7, 8, 10) = sum over crashes of fatalities squared: the variance of a death count when crashes
+--   occur at random and each kills one or more people (multi-death crashes make it larger than the count).
 -- 7. Deaths and vehicle-miles on the same grain (year x state x rural/urban x road function), so a per-mile rate never
 --    divides deaths by the wrong miles. 'United States' rows are the national sums. Deaths with unknown road function
 --    or unknown rural/urban (490 in 2024) cannot be matched to miles and are left out of this table (they stay in crashes).
 CREATE OR REPLACE TABLE ltools.fars.road_exposure AS
 WITH d AS (
-  SELECT year, state_name, rural_urban, road_function_code, sum(fatalities) AS deaths
+  SELECT year, state_name, rural_urban, road_function_code, sum(fatalities) AS deaths, sum(fatalities * fatalities) AS deaths_sq
   FROM ltools.fars.crashes
   WHERE rural_urban IN ('Rural', 'Urban') AND road_function_code BETWEEN 1 AND 7
   GROUP BY ALL
 ), d_all AS (
   SELECT * FROM d
   UNION ALL
-  SELECT year, 'United States', rural_urban, road_function_code, sum(deaths) FROM d GROUP BY ALL
+  SELECT year, 'United States', rural_urban, road_function_code, sum(deaths), sum(deaths_sq) FROM d GROUP BY ALL
 )
 SELECT
   coalesce(v.year, d_all.year) AS year,
@@ -289,6 +291,7 @@ SELECT
        WHEN coalesce(v.road_function_code, d_all.road_function_code) IN (5, 6) THEN 'Collector'
        ELSE 'Local road' END AS road_class,
   coalesce(d_all.deaths, 0) AS deaths,
+  coalesce(d_all.deaths_sq, 0) AS deaths_sq,
   coalesce(v.vmt_millions, 0) AS vmt_millions
 FROM ltools.fars.vmt v
 FULL JOIN d_all ON d_all.year = v.year AND d_all.state_name = v.state_name AND d_all.rural_urban = v.rural_urban
@@ -298,7 +301,7 @@ FULL JOIN d_all ON d_all.year = v.year AND d_all.state_name = v.state_name AND d
 --    residents, for per-mile and per-resident rates and the 23 CFR 1300.23 impaired-driving tier.
 CREATE OR REPLACE TABLE ltools.fars.state_years AS
 WITH d AS (
-  SELECT year, state_name, sum(fatalities) AS deaths,
+  SELECT year, state_name, sum(fatalities) AS deaths, sum(fatalities * fatalities) AS deaths_sq,
     sum(fatalities * ai_share) AS alcohol_impaired_deaths,
     sum(fatalities) FILTER (WHERE tested_driver_bac_08) AS alcohol_deaths_tested_only,
     sum(fatalities) FILTER (WHERE police_reported_drinking_driver) AS alcohol_deaths_police_reported
@@ -306,7 +309,7 @@ WITH d AS (
 ), d_all AS (
   SELECT * FROM d
   UNION ALL
-  SELECT year, 'United States', sum(deaths), sum(alcohol_impaired_deaths), sum(alcohol_deaths_tested_only), sum(alcohol_deaths_police_reported) FROM d GROUP BY ALL
+  SELECT year, 'United States', sum(deaths), sum(deaths_sq), sum(alcohol_impaired_deaths), sum(alcohol_deaths_tested_only), sum(alcohol_deaths_police_reported) FROM d GROUP BY ALL
 ), v AS (
   SELECT year, state_name, sum(vmt_millions) AS vmt_millions FROM ltools.fars.vmt GROUP BY ALL
 ), p AS (
@@ -314,7 +317,7 @@ WITH d AS (
   UNION ALL
   SELECT year, 'United States', sum(population) FROM ltools.fars.county_population GROUP BY ALL
 )
-SELECT d_all.year, d_all.state_name, d_all.deaths, d_all.alcohol_impaired_deaths, coalesce(d_all.alcohol_deaths_tested_only, 0) AS alcohol_deaths_tested_only,
+SELECT d_all.year, d_all.state_name, d_all.deaths, d_all.deaths_sq, d_all.alcohol_impaired_deaths, coalesce(d_all.alcohol_deaths_tested_only, 0) AS alcohol_deaths_tested_only,
   coalesce(d_all.alcohol_deaths_police_reported, 0) AS alcohol_deaths_police_reported, v.vmt_millions, p.population
 FROM d_all
 LEFT JOIN v ON v.year = d_all.year AND v.state_name = d_all.state_name
@@ -350,6 +353,7 @@ WITH c AS (
     CASE WHEN county_fips = '46113' THEN '46102' ELSE county_fips END AS county_fips,
     any_value(county_name) AS fars_county_name,
     sum(fatalities) AS deaths,
+    sum(fatalities * fatalities) AS deaths_sq,
     sum(fatalities * ai_share) AS alcohol_impaired_deaths
   FROM ltools.fars.crashes WHERE county_name IS NOT NULL GROUP BY ALL
 ), p AS (
@@ -368,6 +372,7 @@ SELECT
   coalesce(pop.county_name, c.fars_county_name) AS county_name,
   pop.population,
   coalesce(c.deaths, 0) AS deaths,
+  coalesce(c.deaths_sq, 0) AS deaths_sq,
   coalesce(p.pedestrian_deaths, 0) AS pedestrian_deaths,
   coalesce(p.pedestrian_deaths_dark, 0) AS pedestrian_deaths_dark,
   coalesce(p.pedestrian_deaths_dark_arterial, 0) AS pedestrian_deaths_dark_arterial,
