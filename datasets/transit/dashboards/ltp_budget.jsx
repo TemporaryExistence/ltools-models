@@ -33,6 +33,8 @@ export default function Dashboard() {
   const head = useQuery({ malloy: `run: service_change_summary -> headline` });
   const path = useQuery({ malloy: `run: service_change_path -> path` });
   const mine = useQuery({ malloy: `run: budget_agency -> agency_cut_menu` });
+  const checks = useQuery({ malloy: `run: estimate_checks -> all_checks` });
+  const panel = useQuery({ malloy: `run: service_elasticity_panel -> by_group` });
   const years = cliff.rows ?? [];
   const y22 = years.find((r) => Number(r.report_year) === 2022);
   const y23 = years.find((r) => Number(r.report_year) === 2023);
@@ -41,6 +43,11 @@ export default function Dashboard() {
   const busAdd = (head.rows ?? []).find((r) => r.mode_family === "bus" && r.direction === "add");
   const m = (mine.rows ?? [])[0];
   const typRow = (t) => (typ.rows ?? []).find((r) => r.bus_type === t) || {};
+  // The spread of the study's own second-year estimates: the agency panel's bus cuts (low) to the highest check (high).
+  const pCut = (panel.rows ?? []).find((r) => r.breakdown === "direction" && r.mode_family === "bus" && String(r.group_name).startsWith("Cuts"));
+  const hiY2 = Math.max(...(checks.rows ?? []).map((r) => Number(r.elasticity_y2) || 0));
+  const eUsed = m && m.bus_riders_per_hour ? m.bus_riders_lost_per_1m * m.bus_avoidable_cost_per_hour / 1e6 / m.bus_riders_per_hour : null;
+  const range = (v) => (pCut && hiY2 > 0 && eUsed ? int(v * pCut.elasticity_2yr / eUsed) + "-" + int(v * hiY2 / eUsed) : null);
   return (
     <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 980 }}>
       <h1 style={{ fontSize: 22, fontWeight: 600 }}>Transit budget cuts: what each choice costs in riders</h1>
@@ -100,7 +107,7 @@ export default function Dashboard() {
           <div style={{ display: "flex", gap: 28, flexWrap: "wrap", margin: "12px 0" }}>
             <Stat value={pct(m.local_general_fund_share)} label="Operating money from the city or county general fund (estimated split)" />
             <Stat value={(Number(m.relief_share) < 0.001 ? "under 0.1%" : pct(m.relief_share, 1)) + " / " + pct(m.relief_share_2019base, 1)} label="Relief money still in its 2024 budget, against its 2017-19 / 2019-only federal share (share of operating money)" />
-            <Stat value={int(m.bus_riders_lost_per_1m)} label="Bus riders lost a year per $1M cut, by year two" />
+            <Stat value={int(m.bus_riders_lost_per_1m)} label={"Bus riders lost a year per $1M cut, by year two" + (range(m.bus_riders_lost_per_1m) ? " (" + range(m.bus_riders_lost_per_1m) + " across the study's estimates)" : "")} />
             <Stat value={int(m.riders_lost_10pct_bus)} label={"Riders lost a year by a cut that saves 10% of the bus budget (about " + pct(m.hours_share_cut_10pct_budget) + " of bus hours, " + pct(m.share_of_bus_riders_lost_10pct) + " of bus riders)"} />
           </div>
           <p style={{ maxWidth: 740, fontSize: 14 }}>
