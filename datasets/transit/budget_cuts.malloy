@@ -223,12 +223,16 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
   }
 }
 
-#" The typical agency per kind of bus system: median riders lost a year per $1M of bus service cut, with quartiles.
+#" Riders lost per $1M of bus cuts at the typical agency of each kind, if riders respond alike everywhere (unsettled).
+#(agent) The gap between kinds is NOT a finding about where to cut: it assumes the same response to a cut at every
+#(agent) kind of agency, and the study's two methods disagree (service_elasticity_panel.by_group finds about the same
+#(agent) first-year response; service_change_events.by_bus_type finds smaller responses at busier agencies, which would
+#(agent) erase most of the gap). Say so whenever you quote these figures.
 #(agent) Unweighted over bus agencies and big systems (not small, rural or specialty systems, whose campus and resort
 #(agent) shuttles would make the busy group look busier) with 0.5M+ bus trips, 2024; year-2 elasticity (_y1 at year 1). Use this, not cut_menu_by_type's cost-weighted pooled figure, for "a typical agency like mine". In the busiest group
 #(agent) the typical cost per hour (cost_per_hour_median) is far below the pooled one, which the largest systems drive.
 source: cut_menu_typical is motherduck.table('transit.cut_menu_typical') extend {
-  #" What $1M of bus cuts costs at the typical agency of each kind (median and quartiles).
+  #" What $1M of bus cuts costs at the typical agency of each kind, if riders respond alike (median and quartiles).
   view: typical is {
     select: bus_type, agencies, riders_lost_per_1m_median, riders_lost_per_1m_p25, riders_lost_per_1m_p75,
       riders_lost_per_1m_y1_median, riders_per_hour_median, cost_per_hour_median
