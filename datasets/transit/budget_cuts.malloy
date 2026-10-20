@@ -90,6 +90,9 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
 
   #" VALIDATION: the systems in the 2025-26 news for budget crises, with their national rank on the relief gap.
   #" WHO ACTS: anyone deciding whether to trust the ranking (bond analysts, state budget offices).
+  #(agent) Also in 2025-26 budget news but not flagged (they spent relief by 2023, or the cause is local): MBTA (Boston),
+  #(agent) TriMet (Portland), Denver RTD, DART (Dallas, a sales-tax dispute). Metrolink (Los Angeles) is flagged and has
+  #(agent) cut service but is not on this list. Checked against news reports 2026-10-20.
   view: in_the_news_check is {
     where: in_the_news
     select: news_name, news, agency_label, ops_2024, fed_share_base, fed_share_2022, fed_share_2023, fed_share_2024,
