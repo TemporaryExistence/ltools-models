@@ -61,10 +61,10 @@ source: hospitals is motherduck.table('hospital_readmissions.hospitals') extend 
 
 #" One row per hospital per measure (AMI, HF, PN, COPD, CABG, HIP-KNEE): discharges, readmission rates, excess readmission ratio and penalty inputs, discharges July 2021 to June 2024.
 #(agent) Counts cover three years of Medicare fee-for-service discharges. Use the `_per_year` measures for annual figures; never quote a three-year sum as a year.
-#(agent) "Too Few to Report" means 1 to 10 readmissions, suppressed for privacy, and CMS also blanks the discharges on those rows; it is not zero. It hides 83% of hip/knee hospital rows and 47% of hip/knee discharges. Use `eligible_discharges` (from the CMS payment file, never suppressed), not `discharges_published`, and the predicted/expected measures, not `readmissions_published`.
-#(agent) Every count built from predicted rates (`excess_readmissions`, `readmissions_above_median`, `net_excess_readmissions`, `predicted_readmissions`) is CMS's shrunken risk-adjusted ESTIMATE, not readmissions that happened. On rows with a published count, one actual readmission moves the estimate by about 0.18 (under 100 discharges), 0.31 (100-249), 0.49 (250-499) and 0.72 (500+). Always call these "CMS's estimate"; for the actual-readmission scale use the `observed_` measures (published rows only) and say which scale you quote.
+#(agent) "Too Few to Report" means 10 or fewer readmissions (zero included: no published count is below 11), suppressed for privacy, and CMS also blanks the discharges on those rows; it is not zero. It hides 83% of hip/knee hospital rows and 47% of hip/knee discharges. Use `eligible_discharges` (from the CMS payment file, never suppressed), not `discharges_published`, and the predicted/expected measures, not `readmissions_published`.
+#(agent) Every count built from predicted rates (`excess_readmissions`, `readmissions_above_median`, `net_excess_readmissions`, `predicted_readmissions`) is CMS's shrunken risk-adjusted ESTIMATE, not readmissions that happened. Across hospitals with a published count, one actual readmission goes with about 0.18 of the estimate under 100 discharges, 0.31 at 100-249, 0.49 at 250-499 and 0.72 at 500+ (views `reliability_by_volume`, `reliability_table`; constants in `reliability_slope`). Always say "CMS's estimate". For actual readmissions use the `actual_*_min` / `actual_*_max` bounds (suppressed rows at 0 and at 10, no assumption) or `observed_*` (published rows only), and give the range; `actual_readmissions_to_avoid` shows per hospital and measure how many actual readmissions move the estimate by one. Slopes are FY 2026 three-year fee-for-service figures; the two-year, Medicare Advantage-inclusive periods from FY 2027 will differ.
 #(agent) `discharges` are eligible stays per measure; one patient can appear in several measures, so a sum across measures counts stays, not people.
-#(agent) `excess_readmission_ratio` (ERR) = predicted rate / expected rate. CMS shrinks small hospitals toward 1, so a small hospital's ERR near 1 means "not enough data", and an ERR of 1.12 on 176 hip/knee cases is about 1.2 readmissions on CMS's estimate (2.5 on the observed count). Quote excess readmissions (a count), not ERR alone; average ERRs only through `weighted_err`.
+#(agent) `excess_readmission_ratio` (ERR) = predicted rate / expected rate. CMS shrinks small hospitals toward 1, so a small hospital's ERR near 1 means "not enough data", and an ERR of 1.12 on 176 hip/knee cases is 1.2 readmissions above the peer median on CMS's estimate and 2.5 on the actual count (Rex Hospital). Quote excess readmissions (a count), not ERR alone; average ERRs only through `weighted_err`.
 #(agent) The penalty threshold is the peer group median ERR, not 1.0: 342 measure rows are penalized with ERR at or below 1 and 127 with ERR above 1 are not. Use `penalty_indicator`. Summing excess over all hospitals nets to near zero by design; `excess_readmissions` counts only hospitals above expected.
 #(agent) To shorten a view, filter it but do not add a bare `+ { limit: N }`: that refinement dropped the view's ordering in testing (malloyyo 0.2.72). Predicted rates differ by measure because the patients differ (hip/knee about 5%, heart failure about 20%); never rank measures by rate. Maryland is in this file but outside the payment program; its rows have an ERR but no `eligible_discharges`, so counts leave them out.
 source: measure_results is motherduck.table('hospital_readmissions.measure_results') extend {
@@ -95,6 +95,51 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     excess_readmissions_row is eligible_discharges * (predicted_rate_pct - expected_rate_pct) / 100
     #" CMS's estimate of readmissions above the peer group median for this row, three years: eligible discharges x expected rate x (ERR - peer median) / 100. Shrunken scale, not actual readmissions.
     readmissions_above_median_row is eligible_discharges * expected_rate_pct * (excess_readmission_ratio - peer_group_median_err) / 100
+    #" Lowest possible actual readmissions for the row: the published count, or 0 where CMS shows "Too Few to Report" (10 or fewer; no published count is below 11 and none is 0, so zeros sit inside the suppression).
+    readmissions_min is readmissions_published ?? (pick 0 when readmissions_status = 'Too Few to Report' else null)
+    #" Highest possible actual readmissions for the row: the published count, or 10 where suppressed.
+    readmissions_max is readmissions_published ?? (pick 10 when readmissions_status = 'Too Few to Report' else null)
+    #" Actual readmissions minus expected, lower bound (suppressed rows at 0), three years.
+    actual_excess_row_min is readmissions_min - eligible_discharges * expected_rate_pct / 100
+    #" Actual readmissions minus expected, upper bound (suppressed rows at 10), three years.
+    actual_excess_row_max is readmissions_max - eligible_discharges * expected_rate_pct / 100
+    #" Actual readmissions minus a peer-median hospital's count, lower bound (suppressed rows at 0), three years.
+    actual_above_median_row_min is readmissions_min - eligible_discharges * expected_rate_pct * peer_group_median_err / 100
+    #" Actual readmissions minus a peer-median hospital's count, upper bound (suppressed rows at 10), three years.
+    actual_above_median_row_max is readmissions_max - eligible_discharges * expected_rate_pct * peer_group_median_err / 100
+    #" Volume band used in the reliability table (eligible discharges, three years).
+    reliability_band is
+      pick null when eligible_discharges is null or eligible_discharges < 25
+      pick '1: 25-99' when eligible_discharges < 100
+      pick '2: 100-249' when eligible_discharges < 250
+      pick '3: 250-499' when eligible_discharges < 500
+      else '4: 500+'
+    #" How far CMS's estimate moves per actual readmission at this measure and volume (FY 2026 slope of the estimate on the actual excess across hospitals with a published count; view `reliability_table` recomputes it). Cells under 20 published rows use the all-measure slope for the band (hip/knee 25-99, CABG 500+, COPD 500+).
+    reliability_slope is
+      pick 0.18 when reliability_band = '1: 25-99' and measure = 'HIP-KNEE'
+      pick 0.16 when reliability_band = '1: 25-99' and measure = ('PN' | 'COPD')
+      pick 0.17 when reliability_band = '1: 25-99' and measure = 'HF'
+      pick 0.19 when reliability_band = '1: 25-99' and measure = 'AMI'
+      pick 0.27 when reliability_band = '1: 25-99' and measure = 'CABG'
+      pick 0.31 when reliability_band = '2: 100-249' and measure = 'AMI'
+      pick 0.42 when reliability_band = '2: 100-249' and measure = 'CABG'
+      pick 0.29 when reliability_band = '2: 100-249' and measure = 'COPD'
+      pick 0.33 when reliability_band = '2: 100-249' and measure = 'HF'
+      pick 0.47 when reliability_band = '2: 100-249' and measure = 'HIP-KNEE'
+      pick 0.30 when reliability_band = '2: 100-249' and measure = 'PN'
+      pick 0.47 when reliability_band = '3: 250-499' and measure = ('AMI' | 'PN')
+      pick 0.60 when reliability_band = '3: 250-499' and measure = 'CABG'
+      pick 0.45 when reliability_band = '3: 250-499' and measure = 'COPD'
+      pick 0.50 when reliability_band = '3: 250-499' and measure = 'HF'
+      pick 0.62 when reliability_band = '3: 250-499' and measure = 'HIP-KNEE'
+      pick 0.63 when reliability_band = '4: 500+' and measure = 'AMI'
+      pick 0.72 when reliability_band = '4: 500+' and measure = ('CABG' | 'COPD')
+      pick 0.73 when reliability_band = '4: 500+' and measure = 'HF'
+      pick 0.86 when reliability_band = '4: 500+' and measure = 'HIP-KNEE'
+      pick 0.71 when reliability_band = '4: 500+' and measure = 'PN'
+      else null
+    #" Actual readmissions it takes to move CMS's estimate by one at this measure and volume (1 / reliability_slope; an approximation from a cross-hospital slope, measured on FY 2026's three-year fee-for-service cohort).
+    actual_per_estimated is 1 / reliability_slope
     #" Actual readmissions minus expected for this row, three years: published readmissions - eligible discharges x expected rate / 100. Null where the count is suppressed. Includes chance variation.
     observed_excess_row is readmissions_published - eligible_discharges * expected_rate_pct / 100
     #" Actual readmissions minus the count a peer-median hospital would have, three years: published readmissions - eligible discharges x expected rate x peer median / 100. Null where suppressed.
@@ -131,7 +176,35 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     observed_excess_readmissions is sum(greatest(observed_excess_row, 0)) { where: has_err and readmissions_published is not null }
     #" Actual readmissions above what a peer-median hospital would have, on penalized rows with a published count, three years.
     observed_above_median is observed_above_median_row.sum() { where: penalty_indicator and readmissions_published is not null }
-    #" Penalized rows whose readmission count is suppressed (no actual-scale figure).
+    #" Actual excess readmissions, three years, lower bound: positive (actual - expected) with suppressed rows at 0. Includes chance variation.
+    actual_excess_min is sum(greatest(actual_excess_row_min, 0)) { where: has_err and eligible_discharges is not null }
+    #" Actual excess readmissions, three years, upper bound: suppressed rows at 10.
+    actual_excess_max is sum(greatest(actual_excess_row_max, 0)) { where: has_err and eligible_discharges is not null }
+    #" Actual excess readmissions per year, lower bound.
+    actual_excess_per_year_min is actual_excess_min / 3
+    #" Actual excess readmissions per year, upper bound.
+    actual_excess_per_year_max is actual_excess_max / 3
+    #" Actual net readmissions against expected, three years, lower bound (suppressed rows at 0).
+    actual_net_excess_min is actual_excess_row_min.sum() { where: has_err and eligible_discharges is not null }
+    #" Actual net readmissions against expected, three years, upper bound (suppressed rows at 10).
+    actual_net_excess_max is actual_excess_row_max.sum() { where: has_err and eligible_discharges is not null }
+    #" Actual readmissions above a peer-median hospital's count on penalized rows, three years, lower bound.
+    actual_above_median_min is actual_above_median_row_min.sum() { where: penalty_indicator }
+    #" Actual readmissions above a peer-median hospital's count on penalized rows, three years, upper bound.
+    actual_above_median_max is actual_above_median_row_max.sum() { where: penalty_indicator }
+    #" Published rows used for the reliability slope.
+    reliability_rows is count() { where: has_err and readmissions_published is not null and eligible_discharges is not null }
+    #" Reliability sums over published rows (x = actual excess, y = CMS's estimate of excess).
+    rel_sx is observed_excess_row.sum() { where: has_err and readmissions_published is not null and eligible_discharges is not null }
+    #" Reliability sum of y.
+    rel_sy is excess_readmissions_row.sum() { where: has_err and readmissions_published is not null and eligible_discharges is not null }
+    #" Reliability sum of x*y.
+    rel_sxy is sum(observed_excess_row * excess_readmissions_row) { where: has_err and readmissions_published is not null and eligible_discharges is not null }
+    #" Reliability sum of x*x.
+    rel_sxx is sum(observed_excess_row * observed_excess_row) { where: has_err and readmissions_published is not null and eligible_discharges is not null }
+    #" Live slope of CMS's estimate on the actual excess, published rows: (n*Sxy - Sx*Sy) / (n*Sxx - Sx^2).
+    reliability_slope_live is (reliability_rows * rel_sxy - rel_sx * rel_sy) / nullif(reliability_rows * rel_sxx - rel_sx * rel_sx, 0)
+    #" Penalized rows whose readmission count is suppressed (no actual-scale figure), counted on every row with the penalty flag (21 such rows sit at hospitals whose cut rounds to 0).
     penalized_rows_suppressed is count() { where: penalty_indicator and readmissions_published is null }
     #" Hospital cost of CMS's estimated excess readmissions per year, US dollars of 2020 (a floor: actual counts are larger): excess readmissions per year x $18,100, the average hospital cost of a Medicare readmission in 2020 (AHRQ HCUP Statistical Brief #307; a cost, not a Medicare payment; same figure for every condition).
     # currency
@@ -140,7 +213,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     net_excess_per_1000 is 1000 * net_excess_readmissions / nullif(discharges, 0)
     #" Measure rows that count toward the payment cut (25+ discharges and ERR above the peer group median).
     penalized_rows is count() { where: penalty_indicator }
-    #" CMS's estimate of readmissions above the peer group median on penalized rows, three years (shrunken; actual counts are about 1.4 to 6 times larger, see `observed_above_median`).
+    #" CMS's estimate of readmissions above the peer group median on penalized rows, three years (shrunken; an actual readmission moves it by 0.16 to 0.86 depending on measure and volume, so actual counts are about 1.2 to 6 times larger; see `actual_above_median_min`/`_max`).
     readmissions_above_median is readmissions_above_median_row.sum() { where: penalty_indicator }
     #" Predicted readmission rate weighted by discharges, percent (CMS risk-adjusted, this hospital's patients).
     predicted_rate is 100 * predicted_readmissions / nullif(discharges, 0)
@@ -196,6 +269,30 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     order_by: facility_name, condition
   }
 
+  #" Reliability table: how far CMS's estimate moves per actual readmission, by measure and volume band (recomputed live; compare `reliability_slope`, the constants the model uses).
+  view: reliability_table is {
+    where: reliability_band is not null
+    group_by: measure, reliability_band, reliability_slope
+    aggregate: reliability_rows, reliability_slope_live
+    order_by: measure, reliability_band
+  }
+
+  #" Reliability by volume band, all measures pooled.
+  view: reliability_by_volume is {
+    where: reliability_band is not null
+    group_by: reliability_band
+    aggregate: reliability_rows, reliability_slope_live
+    order_by: reliability_band
+  }
+
+  #" Actual readmissions to avoid: for each penalized hospital and measure, CMS's estimate above the peer median, the actual count above it (exact where published, bounds where suppressed), and how many actual readmissions move the estimate by one.
+  view: actual_readmissions_to_avoid is {
+    where: penalty_indicator
+    group_by: facility_id, facility_name, state, condition, eligible_discharges, readmissions_status, reliability_slope, actual_per_estimated
+    aggregate: readmissions_above_median, actual_above_median_min, actual_above_median_max
+    order_by: facility_name, condition
+  }
+
   #" Hospital rows for one place: each measure's discharges, ERR, peer median, penalty flag and excess readmissions.
   view: hospital_detail is {
     group_by: facility_id, facility_name, state, condition, eligible_discharges, readmissions_status, excess_readmission_ratio, peer_group_median_err, penalty_indicator, predicted_rate_pct, expected_rate_pct
@@ -205,11 +302,11 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
 }
 
 #" One row per penalized hospital: its FY 2026 payment cut beside CMS's estimate of readmissions above its peer median on the measures that produced it (three years).
-#(agent) `readmissions_above_median` and `basis_band` are CMS's shrunken estimate, not readmissions that happened. Actual counts above the peer median are about 2.2 times larger in total on published rows (27,201 vs 12,608), and the median penalized hospital is about 7.6 actual readmissions above median, not 2.1. Quote `basis_band` as "CMS's estimate"; use `observed_above_median` (hospitals with every penalized count published, `penalized_rows_suppressed` = 0) for actual readmissions. FY 2026 cuts are finished; FY 2027 cuts are already set.
+#(agent) `readmissions_above_median` and `basis_band` are CMS's shrunken estimate, not readmissions that happened: on published penalized rows the actual count above the peer median is 27,201 against CMS's 12,608. For actual readmissions give the bounds: `actual_under_one_fewest` to `actual_under_one_most` (88 to 722 hospitals under one), `below_expected_actual_fewest` to `_most` (525 to 1,416). Penalized rows were picked on CMS's estimate, which tracks the actual count closely, so actual counts on them carry upward chance. As a group, penalized hospitals are above expected (`penalized_above_expected` 1,353 of 2,302). FY 2026 cuts are finished; FY 2027 cuts are in effect on different rules.
 source: penalty_basis is measure_results -> {
   where: hospital.payment_reduction_pct > 0
   group_by: facility_id, facility_name, state, hospital.peer_group, hospital.payment_reduction_pct
-  aggregate: readmissions_above_median, penalized_rows, excess_readmissions, net_excess_readmissions, observed_above_median, penalized_rows_suppressed
+  aggregate: readmissions_above_median, penalized_rows, excess_readmissions, net_excess_readmissions, observed_above_median, penalized_rows_suppressed, actual_above_median_min, actual_above_median_max, actual_net_excess_min, actual_net_excess_max, expected_readmissions
 } extend {
   dimension:
     #" Band of CMS's estimate of readmissions above the peer median that produced the cut (three years; shrunken scale).
@@ -230,6 +327,21 @@ source: penalty_basis is measure_results -> {
     hospitals_all_published is count() { where: penalized_rows_suppressed = 0 }
     #" Of those, hospitals under one actual readmission above the peer median (three years).
     actual_under_one is count() { where: penalized_rows_suppressed = 0 and observed_above_median < 1 }
+    #" Fewest penalized hospitals that can be under one actual readmission above the peer median (suppressed rows at 10).
+    actual_under_one_fewest is count() { where: actual_above_median_max < 1 }
+    #" Most penalized hospitals that can be under one actual readmission above the peer median (suppressed rows at 0).
+    actual_under_one_most is count() { where: actual_above_median_min < 1 }
+    #" Fewest penalized hospitals that can be below expected on actual counts (suppressed rows at 10).
+    below_expected_actual_fewest is count() { where: actual_net_excess_max < 0 }
+    #" Most penalized hospitals that can be below expected on actual counts (suppressed rows at 0).
+    below_expected_actual_most is count() { where: actual_net_excess_min < 0 }
+    #" Penalized hospitals as a group: CMS's estimate of net readmissions above expected, three years.
+    group_net_excess is net_excess_readmissions.sum()
+    #" Penalized hospitals as a group: net above expected as a share of their expected readmissions (CMS's estimate).
+    # percent
+    group_net_excess_share is net_excess_readmissions.sum() / nullif(expected_readmissions.sum(), 0)
+    #" Penalized hospitals above expected overall on CMS's estimate.
+    penalized_above_expected is count() { where: net_excess_readmissions > 0 }
 
   #" Penalized hospitals by actual readmissions above the peer median, for hospitals with every penalized count published.
   view: by_actual_band is {
