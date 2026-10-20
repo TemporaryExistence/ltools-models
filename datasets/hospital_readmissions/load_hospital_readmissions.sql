@@ -78,10 +78,68 @@ SELECT facility_id, measure,
     - sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE greatest(10 - lam, 0) END) ^ 2 AS chance_excess_ceiling_var
 FROM pk GROUP BY facility_id, measure;
 
+-- Same with binomial noise (a readmission is yes/no per stay): count ~ Binomial(eligible discharges, expected rate).
+CREATE OR REPLACE TEMP TABLE chance_b AS
+WITH r AS (
+  SELECT facility_id, measure, eligible_discharges AS n, expected_rate_pct / 100 AS p,
+         eligible_discharges * expected_rate_pct / 100 AS lam,
+         sqrt(eligible_discharges * (expected_rate_pct / 100) * (1 - expected_rate_pct / 100)) AS sd
+  FROM mr_base WHERE excess_readmission_ratio IS NOT NULL AND eligible_discharges IS NOT NULL
+), pk AS (
+  SELECT r.facility_id, r.measure, r.lam, t.k,
+         exp(lgamma(r.n + 1) - lgamma(t.k + 1) - lgamma(r.n - t.k + 1) + t.k * ln(r.p) + (r.n - t.k) * ln(1 - r.p)) AS pmf
+  FROM r, range(0, 4000) t(k)
+  WHERE t.k <= r.n AND t.k >= greatest(0, floor(r.lam - 12 * r.sd - 5)) AND t.k <= r.lam + 12 * r.sd + 25
+)
+SELECT facility_id, measure,
+  sum(pmf * greatest(k - lam, 0)) AS chance_excess_b,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE 0 END) AS chance_excess_b_floor,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ^ 2 ELSE 0 END)
+    - sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE 0 END) ^ 2 AS chance_excess_b_floor_var,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE greatest(10 - lam, 0) END) AS chance_excess_b_ceiling,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ^ 2 ELSE greatest(10 - lam, 0) ^ 2 END)
+    - sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE greatest(10 - lam, 0) END) ^ 2 AS chance_excess_b_ceiling_var
+FROM pk GROUP BY facility_id, measure;
+
 CREATE OR REPLACE TABLE ltools.hospital_readmissions.measure_results AS
 SELECT b.*, c.chance_excess, c.chance_excess_var, c.chance_excess_floor, c.chance_excess_floor_var,
-  c.chance_excess_ceiling, c.chance_excess_ceiling_var
-FROM mr_base b LEFT JOIN chance c USING (facility_id, measure);
+  c.chance_excess_ceiling, c.chance_excess_ceiling_var,
+  cb.chance_excess_b, cb.chance_excess_b_floor, cb.chance_excess_b_floor_var, cb.chance_excess_b_ceiling, cb.chance_excess_b_ceiling_var
+FROM mr_base b LEFT JOIN chance c USING (facility_id, measure) LEFT JOIN chance_b cb USING (facility_id, measure);
+
+-- Null simulation for the selection effect (Monte Carlo, 200 replicates; results vary by about 1% between runs).
+-- Every program hospital sits exactly at its peer-median rate on every scored measure: count ~ Binomial(eligible
+-- discharges, expected rate x peer median ERR), drawn by inverse CDF. A measure counts as "penalized" when its count
+-- lands above the median count (a proxy for CMS's rule on the shrunken ratio). Per hospital and replicate: gap = sum
+-- over those measures of (count - median count); chance SD = sqrt of the summed binomial variances on those measures.
+SELECT setseed(0.20261020);
+CREATE OR REPLACE TEMP TABLE nr AS
+SELECT row_number() OVER () AS rid, m.facility_id, m.eligible_discharges AS n,
+       m.expected_rate_pct / 100 * m.peer_group_median_err AS q
+FROM mr_base m JOIN (SELECT trim("Hospital CCN") AS facility_id FROM supp_raw) s USING (facility_id)
+WHERE m.excess_readmission_ratio IS NOT NULL AND m.eligible_discharges IS NOT NULL;
+CREATE OR REPLACE TEMP TABLE ncdf AS
+WITH b AS (SELECT rid, n, q, n * q AS mu, sqrt(n * q * (1 - q)) AS sd FROM nr),
+pk AS (
+  SELECT rid, k, exp(lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1) + k * ln(q) + (n - k) * ln(1 - q)) AS pmf
+  FROM b, range(0, 4000) t(k)
+  WHERE k <= n AND k >= greatest(0, floor(mu - 12 * sd - 5)) AND k <= mu + 12 * sd + 25
+)
+SELECT rid, k, sum(pmf) OVER (PARTITION BY rid ORDER BY k) AS c FROM pk;
+CREATE OR REPLACE TEMP TABLE ndraws AS SELECT nr.rid, t.r AS rep, random() AS u FROM nr, range(200) t(r);
+CREATE OR REPLACE TEMP TABLE nsim AS
+SELECT nr.facility_id, d.rep, c.k AS cnt, nr.n * nr.q AS mu, nr.n * nr.q * (1 - nr.q) AS v
+FROM ndraws d ASOF JOIN ncdf c ON d.rid = c.rid AND d.u <= c.c JOIN nr ON nr.rid = d.rid;
+CREATE OR REPLACE TABLE ltools.hospital_readmissions.null_selection AS
+WITH h AS (
+  SELECT facility_id, rep, sum(cnt - mu) FILTER (WHERE cnt > mu) AS gap, sqrt(sum(v) FILTER (WHERE cnt > mu)) AS sd
+  FROM nsim GROUP BY facility_id, rep
+)
+SELECT facility_id,
+  avg(CASE WHEN gap IS NOT NULL THEN 1.0 ELSE 0.0 END) AS null_prob_selected,
+  avg(CASE WHEN gap > 2 * sd THEN 1.0 ELSE 0.0 END) AS null_prob_beyond_two,
+  avg(coalesce(greatest(gap - 2 * sd, 0), 0)) AS null_beyond_two_part
+FROM h GROUP BY facility_id;
 
 -- One row per hospital in the hospital file (3,055), with its FY 2026 payment result where CMS published one (2,937).
 CREATE OR REPLACE TABLE ltools.hospital_readmissions.hospitals AS
