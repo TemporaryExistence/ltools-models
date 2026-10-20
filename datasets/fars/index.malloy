@@ -264,7 +264,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
   #" US 2024 (not final): deaths per 100 million vehicle-miles by road class.
   view: us_2024_deaths_per_mile_by_road_class is deaths_per_mile_by_road_class + { where: `year` = 2024 }
 
-  #" F1. North Carolina vs US and rest of US deaths per 100 million vehicle-miles by road class, 2024 (not final) and pooled 2022-2024, with ratios to interstates and freeways. NC local-road miles jump 25% in 2024, so NC's 2024 local rate is unstable.
+  #" F1. North Carolina vs US and rest of US deaths per 100 million vehicle-miles by road class, 2024 (not final) and pooled 2022-2024, with ratios to interstates and freeways. NC local-road miles jump 25% in 2024, so NC's 2024 local rate is unstable. Do not filter road_class: the ratio columns need the freeway row and return null without it.
   view: nc_vs_us_deaths_per_mile_by_road_class is {
     group_by: road_class
     aggregate:
