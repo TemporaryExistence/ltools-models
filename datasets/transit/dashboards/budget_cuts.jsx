@@ -375,8 +375,8 @@ function AboutData({ about, live }) {
 // ---- Transit: budget gap and what a cut costs. First screen: agencies ranked by the 2024 relief gap as a share of
 // their operating budget (federal operating money above their own pre-COVID share; $10M+ budgets only, so small
 // agencies with noisy percentages do not top it), with dollars as the toggle, #1 highlighted, each row tagged with the action the data supports
-// (cut the least-used hours first, with that agency's infrequent-route pool where its public schedule is in the sample;
-// protect frequent routes) or "no gap". The selected agency ($BUDGET_AGENCY, default GoRaleigh, picked by full name or by
+// (cut the least-used hours first, with what that agency's infrequent routes cost where its public schedule is in the
+// sample) or "no gap". The selected agency ($BUDGET_AGENCY, default GoRaleigh, picked by full name or by
 // clicking a row) is highlighted inside the ranking. Below: the proof (its hours by frequency, riders lost per $1M by
 // kind of system, riders after a cut or an addition), a collapsed "More", and About this data. No route names: route ridership is
 // not public, so the data names a pool of hours, never a route. ----
@@ -881,8 +881,8 @@ const ABOUT = {
 };
 
 // The cut order the data suggests for one agency: close its 2024 gap by cutting its least-used hours first (likely its
-// infrequent routes; the pool, when its public schedule is in the sample) and protecting frequent routes. Inferred from
-// the between-agency menu, not measured within the agency; rail-only systems have no bus pool.
+// infrequent routes, whose cost is shown when its public schedule is in the sample; which hours carry the fewest riders
+// needs its passenger counts). Inferred from the between-agency menu, not measured within the agency.
 function actionTags(r, g) {
   if (!r || r.relief_gap == null || !(r.relief_share >= 0.01)) return { none: "no gap" };
   const gap = mBig(r.relief_gap);
@@ -892,8 +892,8 @@ function actionTags(r, g) {
     pool = ((g.share_31_to_60 || 0) + (g.share_over60_or_peak_only || 0)) * r.bus_vrh_2024 * r.bus_avoidable_cost_per_hour;
   }
   const poolTxt = pool == null ? ""
-    : ` (pool ${g.hours_check_flag ? "≈" : ""}${mBig(pool)}${pool < r.relief_gap ? `, ${pc0(pool / r.relief_gap)} of gap` : ""})`;
-  return { act: `close ${gap} gap: cut least-used hours first${poolTxt}`, keep: "protect frequent routes" };
+    : `infrequent routes cost ${g.hours_check_flag ? "≈" : ""}${mBig(pool)} a year`;
+  return { act: `close ${gap} gap: cut the least-used hours first`, keep: poolTxt || "find them with passenger counts" };
 }
 
 // The first screen: agencies ranked by relief gap as a share of budget (or in dollars), #1 highlighted, the selected agency outlined
@@ -939,7 +939,7 @@ function GapRanking({ rows, selId, by, setBy, onPick, topN, flaggedCount, univer
         {pinned && row(pinned)}
       </ol>
       <div className="rk-foot">
-        <Chips items={[`${universe} bus agencies and big systems · ${flaggedCount} at 10%+ (red)`, floorChip, "Gap = federal money above own 2017–19 share", "Pool shown where the public schedule is in the 43-agency sample", "Agency totals, not routes", ...(extraChips || []), "Click a row to select it"]} />
+        <Chips items={[`${universe} bus agencies and big systems · ${flaggedCount} at 10%+ (red)`, floorChip, "Gap = federal money above own 2017–19 share", "Infrequent-route cost shown where the public schedule is in the 43-agency sample", "Agency totals, not routes", ...(extraChips || []), "Click a row to select it"]} />
       </div>
     </section>
   );
@@ -1029,7 +1029,7 @@ export default function Dashboard({ givens }) {
     return rows;
   }, [busCut, busAdd, mine, narrow]);
 
-  // Proof 3: the selected agency's weekday bus hours by midday frequency (its coverage pool)
+  // Proof 3: the selected agency's weekday bus hours by midday frequency (what its infrequent routes cost)
   const mineG = mine ? gtById.get(mine.ntd_id) || null : null;
   const hourCost = mine && mine.bus_vrh_2024 && mine.bus_avoidable_cost_per_hour ? mine.bus_vrh_2024 * mine.bus_avoidable_cost_per_hour : null;
   const hoursRows = React.useMemo(() => {
@@ -1077,7 +1077,7 @@ export default function Dashboard({ givens }) {
             {mineG ? (
               <>
                 <div className="bc-tiles">
-                  <div><div className="v good">{pc0(freqShare)}</div><div className="l"><b>Protect</b> · hours every 15 min or better</div></div>
+                  <div><div className="v good">{pc0(freqShare)}</div><div className="l"><b>Frequent</b> · hours every 15 min or better</div></div>
                   <div><div className="v bad">{mBig(coverageDollars)}</div><div className="l"><b>Infrequent hours</b> · {pc0(coverageShare)} of hours, every 31+ min{mineRanked && mineRanked.relief_gap > 0 ? ` · gap ${mBig(mineRanked.relief_gap)}` : ""}</div></div>
                 </div>
                 <div className="cr-legend">{HW.map((k, i) => <span key={k}><i style={{ background: hwColors(t)[i] }} />{k}</span>)}</div>
