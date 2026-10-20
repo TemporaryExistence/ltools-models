@@ -55,6 +55,8 @@ WITH v AS (
     bool_or(HIT_RUN = 1) AS hit_and_run,
     bool_or(BODY_TYP BETWEEN 60 AND 79) AS large_truck_involved,
     bool_or(BODY_TYP BETWEEN 80 AND 89) AS motorcycle_involved,
+    bool_or(TRAV_SP BETWEEN 0 AND 151 AND VSPD_LIM BETWEEN 5 AND 95 AND TRAV_SP >= VSPD_LIM + 10) AS vehicle_10_over_limit,
+    count(*) FILTER (WHERE TRAV_SP BETWEEN 0 AND 151 AND VSPD_LIM BETWEEN 5 AND 95) AS vehicles_speed_known,
     count(*) AS vehicles_in_transport
   FROM veh_raw GROUP BY ALL
 ), drv AS (
@@ -134,6 +136,9 @@ SELECT
   coalesce(v.hit_and_run, false) AS hit_and_run,
   coalesce(v.large_truck_involved, false) AS large_truck_involved,
   coalesce(v.motorcycle_involved, false) AS motorcycle_involved,
+  coalesce(v.vehicle_10_over_limit, false) AS vehicle_10_over_limit,
+  coalesce(v.vehicles_speed_known, 0) AS vehicles_speed_known,
+  coalesce(v.vehicles_in_transport, 0) AS vehicles_in_transport,
   coalesce(drv.tested_driver_bac_08, false) AS tested_driver_bac_08,
   coalesce(drv.drivers, 0) AS drivers,
   coalesce(drv.drivers_with_bac_result, 0) AS drivers_with_bac_result,
@@ -314,3 +319,21 @@ SELECT d_all.year, d_all.state_name, d_all.deaths, d_all.alcohol_impaired_deaths
 FROM d_all
 LEFT JOIN v ON v.year = d_all.year AND v.state_name = d_all.state_name
 LEFT JOIN p ON p.year = d_all.year AND p.state_name = d_all.state_name;
+
+-- 9. North Carolina speeding-related deaths as NCDOT publishes them (state crash data, officer-reported speeding as a
+--    contributing circumstance), read from NCDOT's annual "Speeding in N.C." fact sheets
+--    (https://connect.ncdot.gov/resources/safety/Documents/Crash%20Data%20and%20Information/<year>%20Speeding%20Fact%20Sheet.pdf,
+--    read 2026-10-20), beside FARS's speeding-related deaths and deaths in crashes with a vehicle recorded 10+ mph over the limit.
+CREATE OR REPLACE TABLE ltools.fars.nc_speeding_definitions AS
+WITH ncdot(year, ncdot_speed_related_deaths, ncdot_sheet_updated) AS (VALUES
+  (2019, 377, DATE '2020-06-03'), (2020, 416, DATE '2021-07-07'), (2021, 428, DATE '2022-05-27'),
+  (2022, 426, DATE '2023-06-02'), (2023, 391, DATE '2024-07-24'), (2024, 378, DATE '2025-07-23'))
+SELECT c.year,
+  sum(c.fatalities) AS deaths,
+  sum(c.fatalities) FILTER (WHERE c.speeding_related) AS fars_speeding_related_deaths,
+  sum(c.fatalities) FILTER (WHERE c.vehicle_10_over_limit) AS deaths_vehicle_10_over_limit,
+  any_value(n.ncdot_speed_related_deaths) AS ncdot_speed_related_deaths,
+  any_value(n.ncdot_sheet_updated) AS ncdot_sheet_updated
+FROM ltools.fars.crashes c JOIN ncdot n ON n.year = c.year
+WHERE c.state_name = 'North Carolina'
+GROUP BY c.year;
