@@ -876,7 +876,7 @@ const ABOUT = {
     "Relief accounting differs: relief passed through a regional funder can show up as local money, and new state or local money voted in 2025–26 is not in 2024 data, so a gap here is the 2024 exposure, not a 2026 deficit.",
     "The tags give each agency’s 2024 gap. They do not say which hours to cut: that needs route-level passenger counts. Fares, taxes and reserves are other ways to close a gap; this page does not rank them.",
     "At agencies whose buses carry fewer riders an hour, a dollar of service carries fewer riders; whether a dollar of cuts costs fewer riders there depends on how riders respond, and the study's two methods disagree. Riders on lightly used service may have no other way to travel; the NTD has no rider income or car ownership.",
-    "Boardings, not people. GoRaleigh's boardings doubled in July 2024 on little more service, likely a counting change (unconfirmed; the city ran a "find your fare" month that July before fares resumed in September); its 2024 report year ends before the jump.",
+    "Boardings, not people. GoRaleigh's boardings doubled in July 2024 on little more service, likely a counting change (unconfirmed; the city ran a ‘find your fare’ month that July before fares resumed in September); its 2024 report year ends before the jump.",
     "Elasticity is linear in logs; cuts bigger than about 30% of service are outside most of the evidence.",
   ],
 };
