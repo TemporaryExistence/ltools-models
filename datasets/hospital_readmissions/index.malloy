@@ -62,7 +62,7 @@ source: hospitals is motherduck.table('hospital_readmissions.hospitals') extend 
 #" One row per hospital per measure (AMI, HF, PN, COPD, CABG, HIP-KNEE): discharges, readmission rates, excess readmission ratio and penalty inputs, discharges July 2021 to June 2024.
 #(agent) Counts cover three years of Medicare fee-for-service discharges. Use the `_per_year` measures for annual figures; never quote a three-year sum as a year.
 #(agent) "Too Few to Report" means 10 or fewer readmissions (zero included: no published count is below 11), suppressed for privacy, and CMS also blanks the discharges on those rows; it is not zero. It hides 83% of hip/knee hospital rows and 47% of hip/knee discharges. Use `eligible_discharges` (from the CMS payment file, never suppressed), not `discharges_published`, and the predicted/expected measures, not `readmissions_published`.
-#(agent) Chance: if every hospital sat exactly at its expected rate, the positive (actual - expected) sum would still be about 7,800 a year (`chance_excess_per_year`; 7,212 to 11,900 under the file's suppression rule, `chance_excess_per_year_min`/`_max`). Actual minus chance is a FLOOR on the true excess, not an estimate (with binomial noise, `beyond_chance_binomial_per_year_min`/`_max`, about 2,340 to 2,370 a year); the estimate of true excess is `true_excess_per_year` (about 5,760, inferred from the spread of hospital rates, view `true_excess_by_condition`). For low-volume, mostly suppressed conditions (hip/knee, CABG) the floor has almost no power: say the file cannot show excess, not that none exists. A hospital's gap above the peer median is inside chance until about two binomial SDs (`chance_sd_binomial`); because penalized measures were selected for coming out above the median, chance plus selection alone puts about 11.5% of hospitals beyond two (`null_selection`). Poisson SDs slightly overstate sampling noise for a yes/no outcome; patient mix the risk model misses would add noise; the net direction is not measured.
+#(agent) Chance: if every hospital sat exactly at its expected rate, the positive (actual - expected) sum would still be about 7,800 a year (`chance_excess_per_year`; 7,212 to 11,900 under the file's suppression rule, `chance_excess_per_year_min`/`_max`). Actual minus chance is a FLOOR on the true excess, not an estimate (with binomial noise, `beyond_chance_binomial_per_year_min`/`_max`, about 2,340 to 2,370 a year); the estimate of true excess is `true_excess_per_year` (about 5,440, inferred from the centred spread of hospital rates; about 5,000 for HF, PN, AMI and COPD; hip/knee and CABG weak; view `true_excess_by_condition`). For low-volume, mostly suppressed conditions (hip/knee, CABG) the floor has almost no power: say the file cannot show excess, not that none exists. A hospital's gap above the peer median is inside chance until about two binomial SDs (`chance_sd_binomial`); because penalized measures were selected for coming out above the median, chance plus selection alone puts about 11.5% of hospitals beyond two (`null_selection`). Poisson SDs slightly overstate sampling noise for a yes/no outcome; patient mix the risk model misses would add noise; the net direction is not measured.
 #(agent) Every count built from predicted rates (`excess_readmissions`, `readmissions_above_median`, `net_excess_readmissions`, `predicted_readmissions`) is CMS's shrunken risk-adjusted ESTIMATE, not readmissions that happened. Across hospitals with a published count, one actual readmission goes with about 0.18 of the estimate under 100 discharges, 0.31 at 100-249, 0.49 at 250-499 and 0.72 at 500+ (views `reliability_by_volume`, `reliability_table`; constants in `reliability_slope`). Always say "CMS's estimate". For actual readmissions use the `actual_*_min` / `actual_*_max` bounds (suppressed rows at 0 and at 10, no assumption) or `observed_*` (published rows only), and give the range; `actual_readmissions_to_avoid` shows per hospital and measure how many actual readmissions move the estimate by one. Slopes are FY 2026 three-year fee-for-service figures; the two-year, Medicare Advantage-inclusive periods from FY 2027 will differ.
 #(agent) `discharges` are eligible stays per measure; one patient can appear in several measures, so a sum across measures counts stays, not people.
 #(agent) `excess_readmission_ratio` (ERR) = predicted rate / expected rate. CMS shrinks small hospitals toward 1, so a small hospital's ERR near 1 means "not enough data", and an ERR of 1.12 on 176 hip/knee cases is 1.2 readmissions above the peer median on CMS's estimate and 2.5 on the actual count (Rex Hospital). Quote excess readmissions (a count), not ERR alone; average ERRs only through `weighted_err`.
@@ -114,32 +114,32 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     median_var_row is eligible_discharges * (expected_rate_pct / 100 * peer_group_median_err) * (1 - expected_rate_pct / 100 * peer_group_median_err)
     #" Expected readmissions at an average hospital for this row (eligible discharges x expected rate / 100).
     expected_count_row is eligible_discharges * expected_rate_pct / 100
-    #" Spread of true hospital performance (relative SD of the hospital's rate around its expected rate) for this measure: method-of-moments estimate with binomial noise on rows with an expected count of 25 or more (none suppressed), FY 2026; `spread_tau_live` recomputes it. Includes patient mix the risk model misses, which this file cannot separate from care.
+    #" Spread of true hospital performance (relative SD of the hospital's rate around the measure's mean ratio, centred) for this measure: method-of-moments estimate with binomial noise on rows with an expected count of 25 or more (none suppressed), FY 2026; `spread_tau_live` recomputes it. Hip/knee and CABG rest on 66 and 71 large hospitals and are weak: 73-75% of their expected readmissions sit at hospitals where no spread is measured. Includes patient mix the risk model misses, which this file cannot separate from care.
     spread_tau is measure ?
-      pick 0.1208 when 'AMI'
-      pick 0.1861 when 'CABG'
-      pick 0.0818 when 'COPD'
-      pick 0.0949 when 'HF'
-      pick 0.3324 when 'HIP-KNEE'
-      pick 0.1057 when 'PN'
+      pick 0.1200 when 'AMI'
+      pick 0.1702 when 'CABG'
+      pick 0.0780 when 'COPD'
+      pick 0.0947 when 'HF'
+      pick 0.1559 when 'HIP-KNEE'
+      pick 0.1043 when 'PN'
       else null
     #" Low end of the 95% bootstrap interval for `spread_tau` (2,000 resamples of hospitals, queries/r4/vc.py).
     spread_tau_low is measure ?
-      pick 0.0985 when 'AMI'
-      pick 0.1271 when 'CABG'
-      pick 0.0638 when 'COPD'
-      pick 0.0867 when 'HF'
-      pick 0.2723 when 'HIP-KNEE'
-      pick 0.0947 when 'PN'
+      pick 0.0971 when 'AMI'
+      pick 0.0899 when 'CABG'
+      pick 0.0599 when 'COPD'
+      pick 0.0862 when 'HF'
+      pick 0.0863 when 'HIP-KNEE'
+      pick 0.0933 when 'PN'
       else null
     #" High end of the 95% bootstrap interval for `spread_tau`.
     spread_tau_high is measure ?
-      pick 0.1408 when 'AMI'
-      pick 0.2406 when 'CABG'
-      pick 0.0977 when 'COPD'
-      pick 0.1029 when 'HF'
-      pick 0.3842 when 'HIP-KNEE'
-      pick 0.1161 when 'PN'
+      pick 0.1393 when 'AMI'
+      pick 0.2347 when 'CABG'
+      pick 0.0934 when 'COPD'
+      pick 0.1025 when 'HF'
+      pick 0.2179 when 'HIP-KNEE'
+      pick 0.1145 when 'PN'
       else null
     #" Volume band used in the reliability table (eligible discharges, three years).
     reliability_band is
@@ -263,16 +263,33 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" Rows used for the spread estimate: published count and expected count of 25 or more.
     spread_rows is count() { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 }
     #" Live method-of-moments spread (relative SD of true rates) on those rows: sqrt((sum (O - E)^2 - sum n p (1 - p)) / sum E^2). Group by measure.
-    spread_tau_live is sqrt(greatest((sum(observed_excess_row * observed_excess_row) { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 } - sum(eligible_discharges * (expected_rate_pct / 100) * (1 - expected_rate_pct / 100)) { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 }) / nullif(sum(expected_count_row * expected_count_row) { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 }, 0), 0))
+    #" Spread sums on those rows: sum (O - E)^2.
+    spread_sxx is sum(observed_excess_row * observed_excess_row) { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 }
+    #" Spread sums: sum of binomial noise n p (1 - p).
+    spread_noise is sum(eligible_discharges * (expected_rate_pct / 100) * (1 - expected_rate_pct / 100)) { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 }
+    #" Spread sums: sum E^2.
+    spread_see is sum(expected_count_row * expected_count_row) { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 }
+    #" Spread sums: sum E (O - E).
+    spread_seo is sum(expected_count_row * observed_excess_row) { where: has_err and readmissions_published is not null and eligible_discharges is not null and expected_count_row >= 25 }
+    #" Weighted mean offset of (O - E) / E on those rows: sum E (O - E) / sum E^2 (hip/knee about -0.29: the big centres run below expected).
+    spread_mean_offset is spread_seo / nullif(spread_see, 0)
+    #" Live centred method-of-moments spread: sqrt((sum (O - E)^2 - sum n p (1 - p) - offset^2 x sum E^2) / sum E^2). Group by measure; matches `spread_tau`.
+    spread_tau_live is sqrt(greatest((spread_sxx - spread_noise - spread_mean_offset * spread_mean_offset * spread_see) / nullif(spread_see, 0), 0))
     #" Estimated true excess readmissions per year at hospitals whose true rate is above expected: sum of expected count x spread_tau x 0.3989 / 3 (assumes true rates spread normally around expected with the measure's national relative SD at every volume). Inferred; the binomial floor is a lower bound on it. For a state or hospital subset it gives the national pattern applied to those patients, not a measurement of the subset.
     true_excess_per_year is sum(expected_count_row * spread_tau * 0.3989) { where: has_err and eligible_discharges is not null } / 3
-    #" Low end, using each measure's low spread (per-measure 95% ends; the joint national interval is narrower: 5,424 to 6,048).
+    #" Low end, using each measure's low spread (per-measure 95% ends; the joint national sampling interval from queries/r4/vc.py is narrower: 5,077 to 5,720). Covers hospital sampling only, not the normal-shape or same-spread-at-every-volume assumptions.
     true_excess_per_year_low is sum(expected_count_row * spread_tau_low * 0.3989) { where: has_err and eligible_discharges is not null } / 3
     #" High end, using each measure's high spread.
     true_excess_per_year_high is sum(expected_count_row * spread_tau_high * 0.3989) { where: has_err and eligible_discharges is not null } / 3
     #" Hospital cost per year of the estimated true excess, 2020 dollars at $18,100.
     # currency
     true_excess_cost_per_year is true_excess_per_year * 18100
+    #" Low end of the cost, same per-measure ends as `true_excess_per_year_low`.
+    # currency
+    true_excess_cost_per_year_low is true_excess_per_year_low * 18100
+    #" High end of the cost, same per-measure ends as `true_excess_per_year_high`.
+    # currency
+    true_excess_cost_per_year_high is true_excess_per_year_high * 18100
     #" Binomial variance of a peer-median hospital's count summed over penalized rows, three years.
     median_var_penalized is median_var_row.sum() { where: penalty_indicator }
     #" Readmissions a peer-median hospital would have on penalized rows, three years.
@@ -355,7 +372,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
   #" True excess by condition: the binomial floor (actual beyond chance on what the file shows) beside the variance-components estimate and the spread it uses.
   view: true_excess_by_condition is {
     group_by: condition, spread_tau, spread_tau_low, spread_tau_high
-    aggregate: spread_rows, spread_tau_live, excess_readmissions_per_year, beyond_chance_binomial_per_year_min, beyond_chance_binomial_per_year_max, true_excess_per_year, true_excess_per_year_low, true_excess_per_year_high, true_excess_cost_per_year
+    aggregate: spread_rows, spread_mean_offset, spread_tau_live, excess_readmissions_per_year, beyond_chance_binomial_per_year_min, beyond_chance_binomial_per_year_max, true_excess_per_year, true_excess_per_year_low, true_excess_per_year_high, true_excess_cost_per_year
     order_by: true_excess_per_year desc
   }
 
@@ -452,9 +469,17 @@ source: penalty_basis is measure_results -> {
     within_two_sd_binomial_published is count() { where: penalized_rows_suppressed = 0 and observed_above_median < 2 * chance_sd_binomial }
     #" All penalized hospitals: fewest beyond two binomial SDs (suppressed rows at 0).
     beyond_two_sd_binomial_fewest is count() { where: actual_above_median_min >= 2 * chance_sd_binomial }
+    #" All penalized hospitals: fewest beyond one binomial SD (suppressed rows at 0).
+    beyond_one_sd_binomial_fewest is count() { where: actual_above_median_min >= chance_sd_binomial }
+    #" All penalized hospitals: most beyond one binomial SD (suppressed rows at 10).
+    beyond_one_sd_binomial_most is count() { where: actual_above_median_max >= chance_sd_binomial }
+    #" All penalized hospitals: fewest beyond three binomial SDs (suppressed rows at 0).
+    beyond_three_sd_binomial_fewest is count() { where: actual_above_median_min >= 3 * chance_sd_binomial }
+    #" All penalized hospitals: most beyond three binomial SDs (suppressed rows at 10).
+    beyond_three_sd_binomial_most is count() { where: actual_above_median_max >= 3 * chance_sd_binomial }
     #" All penalized hospitals: most beyond two binomial SDs (suppressed rows at 10).
     beyond_two_sd_binomial_most is count() { where: actual_above_median_max >= 2 * chance_sd_binomial }
-    #" Actual readmissions above the peer-median count beyond two binomial SDs, summed over penalized hospitals, three years, lower bound. Compare with `null_selection.null_beyond_two_part` (what selection alone produces).
+    #" Actual readmissions above the peer-median count beyond two binomial SDs, summed over penalized hospitals, three years, lower bound. A threshold statistic: it moves a lot with the cut-off and is not an estimate of real gaps; do not value it.
     beyond_two_part_binomial_min is sum(greatest(actual_above_median_min - 2 * chance_sd_binomial, 0))
     #" Same, upper bound.
     beyond_two_part_binomial_max is sum(greatest(actual_above_median_max - 2 * chance_sd_binomial, 0))
@@ -521,14 +546,20 @@ source: penalty_basis is measure_results -> {
 }
 
 #" Null simulation per program hospital: how often chance plus selecting above-median measures puts a hospital beyond two chance SDs, and the beyond-two gap that alone produces (200 replicates).
-#(agent) Use with `penalty_basis`: the observed beyond-two part (`beyond_two_part_binomial_min`/`_max`, 4,589 to 8,007 over three years) minus `null_beyond_two_part` (about 1,010) is the part not explained by chance and selection. The observed share beyond two SDs (425 to 992 of 2,302, 18% to 43%) compares with `null_share_beyond_two` (about 11.5%), not with 2.3%. Selection is simulated on the count (proxy for CMS's rule on the shrunken ratio). Monte Carlo figures vary by about 1% between loads.
+#(agent) Use with `penalty_basis` counts: the observed share of penalized hospitals beyond k binomial SDs (`beyond_one/two/three_sd_binomial_fewest`/`_most`) compares with `null_share_beyond_one/two/three` (chance plus selection alone), not with the textbook normal tail. The beyond-two gap totals are threshold statistics that move with the cut-off; they are not an estimate of real gaps and carry no dollar value (the null total sums over about 2,479 simulated-penalized hospitals, against 2,302 observed). Selection is simulated on the count (proxy for CMS's rule on the shrunken ratio). Means of 200 replicates differ by about 2% between implementations.
 source: null_selection is motherduck.table('hospital_readmissions.null_selection') extend {
   primary_key: facility_id
   measure:
+    #" Share of hospitals with any simulated penalized measure that land beyond one binomial SD under the null.
+    # percent
+    null_share_beyond_one is null_prob_beyond_one.sum() / nullif(null_prob_selected.sum(), 0)
+    #" Share beyond three binomial SDs under the null.
+    # percent
+    null_share_beyond_three is null_prob_beyond_three.sum() / nullif(null_prob_selected.sum(), 0)
     #" Share of hospitals with any simulated penalized measure that land beyond two binomial SDs under the null.
     # percent
     null_share_beyond_two is null_prob_beyond_two.sum() / nullif(null_prob_selected.sum(), 0)
-    #" Beyond-two part produced by chance and selection alone, summed over program hospitals, three years.
+    #" Beyond-two gap produced by chance and selection alone, summed over program hospitals, three years (threshold statistic; not for valuation).
     null_beyond_two_part_total is null_beyond_two_part.sum()
     #" Hospitals simulated.
     hospitals_simulated is count()

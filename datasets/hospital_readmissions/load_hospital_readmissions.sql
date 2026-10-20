@@ -137,7 +137,9 @@ WITH h AS (
 )
 SELECT facility_id,
   avg(CASE WHEN gap IS NOT NULL THEN 1.0 ELSE 0.0 END) AS null_prob_selected,
+  avg(CASE WHEN gap > sd THEN 1.0 ELSE 0.0 END) AS null_prob_beyond_one,
   avg(CASE WHEN gap > 2 * sd THEN 1.0 ELSE 0.0 END) AS null_prob_beyond_two,
+  avg(CASE WHEN gap > 3 * sd THEN 1.0 ELSE 0.0 END) AS null_prob_beyond_three,
   avg(coalesce(greatest(gap - 2 * sd, 0), 0)) AS null_beyond_two_part
 FROM h GROUP BY facility_id;
 
