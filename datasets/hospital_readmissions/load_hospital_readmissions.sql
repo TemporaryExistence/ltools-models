@@ -28,7 +28,7 @@ UNION ALL SELECT facility_id, 'CABG', "Number of eligible discharges for CABG", 
 UNION ALL SELECT facility_id, 'HIP-KNEE', "Number of eligible discharges for THA/TKA", "ERR for THA/TKA", "Peer group median ERR for THA/TKA", "Penalty indicator for THA/TKA", "DRG payment ratio for THA/TKA" FROM s;
 
 -- One row per hospital per measure (18,330 rows: 3,055 hospitals x 6 measures).
-CREATE OR REPLACE TABLE ltools.hospital_readmissions.measure_results AS
+CREATE OR REPLACE TEMP TABLE mr_base AS
 SELECT
   trim(h."Facility ID") AS facility_id,
   trim(h."Facility Name") AS facility_name,
@@ -54,6 +54,34 @@ FROM hrrp_file h
 LEFT JOIN supp_long s
   ON s.facility_id = trim(h."Facility ID")
  AND s.measure = replace(replace(h."Measure Name", 'READM-30-', ''), '-HRRP', '');
+
+-- Chance-only expectation per row: if the hospital sat exactly at its expected rate, its readmissions would be
+-- Poisson(lambda = eligible discharges x expected rate / 100). Exact sums over the Poisson distribution give the
+-- expected positive excess, and the same under the file's suppression rule (counts of 10 or fewer read as 0 or as 10),
+-- with second moments for intervals.
+CREATE OR REPLACE TEMP TABLE chance AS
+WITH r AS (
+  SELECT facility_id, measure, eligible_discharges * expected_rate_pct / 100 AS lam
+  FROM mr_base WHERE excess_readmission_ratio IS NOT NULL AND eligible_discharges IS NOT NULL
+), pk AS (
+  SELECT r.facility_id, r.measure, r.lam, t.k, exp(t.k * ln(r.lam) - r.lam - lgamma(t.k + 1)) AS pmf
+  FROM r, range(0, 1600) t(k) WHERE t.k <= r.lam + 12 * sqrt(r.lam) + 25
+)
+SELECT facility_id, measure,
+  sum(pmf * greatest(k - lam, 0)) AS chance_excess,
+  sum(pmf * greatest(k - lam, 0) ^ 2) - sum(pmf * greatest(k - lam, 0)) ^ 2 AS chance_excess_var,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE 0 END) AS chance_excess_floor,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ^ 2 ELSE 0 END)
+    - sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE 0 END) ^ 2 AS chance_excess_floor_var,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE greatest(10 - lam, 0) END) AS chance_excess_ceiling,
+  sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ^ 2 ELSE greatest(10 - lam, 0) ^ 2 END)
+    - sum(pmf * CASE WHEN k >= 11 THEN greatest(k - lam, 0) ELSE greatest(10 - lam, 0) END) ^ 2 AS chance_excess_ceiling_var
+FROM pk GROUP BY facility_id, measure;
+
+CREATE OR REPLACE TABLE ltools.hospital_readmissions.measure_results AS
+SELECT b.*, c.chance_excess, c.chance_excess_var, c.chance_excess_floor, c.chance_excess_floor_var,
+  c.chance_excess_ceiling, c.chance_excess_ceiling_var
+FROM mr_base b LEFT JOIN chance c USING (facility_id, measure);
 
 -- One row per hospital in the hospital file (3,055), with its FY 2026 payment result where CMS published one (2,937).
 CREATE OR REPLACE TABLE ltools.hospital_readmissions.hospitals AS
