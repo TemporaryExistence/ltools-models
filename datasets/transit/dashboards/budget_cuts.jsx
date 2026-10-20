@@ -372,7 +372,7 @@ function AboutData({ about, live }) {
   );
 }
 
-// ---- Transit: budget gap and what to cut first. First screen: agencies ranked by the 2024 relief gap as a share of
+// ---- Transit: budget gap and what a cut costs. First screen: agencies ranked by the 2024 relief gap as a share of
 // their operating budget (federal operating money above their own pre-COVID share; $10M+ budgets only, so small
 // agencies with noisy percentages do not top it), with dollars as the toggle, #1 highlighted, each row tagged with the action the data supports
 // (cut the least-used hours first, with that agency's infrequent-route pool where its public schedule is in the sample;
@@ -731,15 +731,16 @@ function More({ t, narrow, givens, mine, mineShort, menuRows, events, allRows })
   })), [allRows, mine]);
 
   const ladder = React.useMemo(() => {
-    if (!mine || !mine.bus_vrh_2024 || !mine.bus_avoidable_cost_per_hour) return [];
+    const e2 = events.cut ? events.cut.elasticity_y2 : null;
+    if (!mine || !mine.bus_vrh_2024 || !mine.bus_avoidable_cost_per_hour || e2 == null) return [];
     const avoid = mine.bus_vrh_2024 * mine.bus_avoidable_cost_per_hour;
     const farePerTrip = mine.bus_riders_lost_per_1m ? (mine.bus_fares_lost_per_1m || 0) / mine.bus_riders_lost_per_1m : 0;
     const cuts = [[1e6, "$1M"], [2.5e6, "$2.5M"], [5e6, "$5M"], [0.1 * mine.bus_opex, "10% of bus budget"], [0.2 * mine.bus_opex, "20% of bus budget"]];
     return cuts.filter(([c]) => c > 0 && c < 0.9 * avoid).sort((a, b) => a[0] - b[0]).map(([c, k]) => {
-      const lost = mine.bus_trips_2024 * (1 - Math.pow(1 - c / avoid, 0.74));
+      const lost = mine.bus_trips_2024 * (1 - Math.pow(1 - c / avoid, e2));
       return { k: k.startsWith("$") ? k + " cut" : `${k} (${mBig(c)})`, v: lost, p: lost / mine.bus_trips_2024, fares: lost * farePerTrip, lab: `${kN(lost)} · ${pc1(lost / mine.bus_trips_2024)}` };
     });
-  }, [mine]);
+  }, [mine, events]);
 
   const pathRows = React.useMemo(() => paQ.rows.flatMap((r) => [
     { panel: r.dir === "cut" ? "Sharp cuts" : "Sharp additions", t: r.t, s: "Service hours", v: r.hours_change },
@@ -780,7 +781,7 @@ function More({ t, narrow, givens, mine, mineShort, menuRows, events, allRows })
         </Card>
         <Card title={mineShort ? `${mineShort}: riders lost a year by size of bus cut` : "Riders lost a year by size of bus cut"}>
           <div className="od-vega"><VegaChart spec={specs.ladder} data={ladder} /></div>
-          <Chips items={[mine ? `${kN(mine.bus_trips_2024)} bus riders in 2024` : null, "Elasticity 0.74, constant", "Fares lost shrink the saving"]} />
+          <Chips items={[mine ? `${kN(mine.bus_trips_2024)} bus riders in 2024` : null, `Elasticity ${one2((events.cut || {}).elasticity_y2)}, constant`, "Overhead treated as fixed", "Fares lost shrink the saving"]} />
         </Card>
       </div>
       <Card title="Relief share of every bus agency and big system, 2024">
@@ -801,7 +802,7 @@ function More({ t, narrow, givens, mine, mineShort, menuRows, events, allRows })
       <Card title="Riders follow service hours, against matched peers">
         <div className="cr-legend"><span><i style={{ background: abNeutral(t) }} />Service hours</span><span><i style={{ background: t.pal.down }} />Riders</span></div>
         <div className="od-vega"><VegaChart spec={specs.path} data={pathRows} /></div>
-        <Chips items={[`${busCut.events || "–"} sharp bus cuts, ${busAdd.events || "–"} additions, 2003–2026 outside COVID`, `Cut ${one2(busCut.elasticity_y2)} (${one2(busCut.e_y2_lo)}–${one2(busCut.e_y2_hi)}) · added ${one2(busAdd.elasticity_y2)} (${one2(busAdd.e_y2_lo)}–${one2(busAdd.e_y2_hi)}), year 2`, "Flat before the change"]} />
+        <Chips items={[`${busCut.events || "–"} sharp bus cuts, ${busAdd.events || "–"} additions, 2004–2025 outside COVID`, `Cut ${one2(busCut.elasticity_y2)} (${one2(busCut.e_y2_lo)}–${one2(busCut.e_y2_hi)}) · added ${one2(busAdd.elasticity_y2)} (${one2(busAdd.e_y2_lo)}–${one2(busAdd.e_y2_hi)}), year 2`, "Flat before the change"]} />
       </Card>
     </div>
   );
@@ -856,21 +857,21 @@ const ABOUT = {
     "Ranking: the default order is the gap as a share of the 2024 operating budget, for agencies with $10M+ budgets only (below that, a few hundred thousand dollars swing the percentage); dollars are the toggle. " +
     "Both orders are re-run with the 2019 federal share alone as the baseline: #1 is marked with its rank there, and rows that move more than two places are marked. By dollars the top 10 is the same ten agencies on either baseline. " +
     "Service response: 126 sharp bus cuts and 158 additions outside COVID, each against 10 same-size peers whose hours held steady and whose riders tracked it before; the gap in the year before is −0.5%; 95% bands from 500 bootstrap draws. " +
-    "An agency-level panel (500 agencies, 2003–2026) gives the same answer: 0.66 for hours below peers, 0.47 above. Numbers re-run through Malloyyo match the DuckDB build.",
+    "An agency-level panel (500 agencies, 2003–2026) gives a similar first year (0.66 for hours below peers, 0.47 above) but a lower second year for cuts (0.55). Fake cut dates and fake cutting agencies show no effect; the cut estimate moves from 0.64 to 0.80 with the cut-size rule. Numbers re-run through Malloyyo match the DuckDB build.",
   definitions: [
     ["Relief gap", "Federal operating money in 2024 minus the agency's 2017–19 federal share × its 2024 operating money (never below zero). Agencies without 2017–19 money use their size class's median."],
     ["Flagged", "Relief gap of 10% or more of the 2024 operating budget."],
     ["No gap", "Relief gap under 1% of the 2024 operating budget."],
     ["Share ranking", "Relief gap ÷ 2024 operating budget, ranked among bus agencies and big systems with a $10M+ operating budget. The default order; the dollar ranking is the toggle."],
-    ["Coverage pool", "The agency's weekday bus hours on routes running every 31 minutes or less often at midday (GTFS), × its 2024 bus revenue hours × hours-driven cost per hour. Shown only for the 43 agencies whose public schedule is in the sample; ≈ where scheduled and reported hours disagree."],
-    ["Riders lost per $1M", "Elasticity (0.74 bus by year 2; 0.30 rail) × riders per revenue hour × $1M ÷ hours-driven cost per revenue hour (operating cost minus general administration)."],
+    ["Infrequent hours", "The share of the agency's weekday bus hours on routes running every 31 minutes or less often at midday (GTFS) × its 2024 bus revenue hours × hours-driven cost per hour: what those hours cost, not what they carry. Shown only for the 43 agencies whose public schedule is in the sample; ≈ where scheduled and reported hours disagree."],
+    ["Riders lost per $1M", "Elasticity × riders per revenue hour × $1M ÷ hours-driven cost per revenue hour (operating cost minus general administration, treated as fixed). Bus uses the event study's year-2 elasticity; rail uses the agency panel's year-1 rail-cut figure (0.30), because only 13 sharp rail cuts exist."],
     ["Kind of bus system", "By 2024 boardings per bus revenue hour: coverage (under 12), mixed (12–20), urban (20–30), busy network (30+)."],
     ["ADA paratransit share", "Demand-response operating cost × the ADA share of its trips, as a share of all operating cost. Required wherever fixed routes run."],
     ["Frequent", "A route with a bus every 15 minutes or better between 10:00 and 15:00 on a weekday, in its busier direction."],
   ],
   caveats: [
     "Agency totals cannot pick routes. Which route to cut needs route-level ridership (automatic passenger counters), which is not public here.",
-    "Many cuts in the data were forced by driver shortages, not budgets; riders may respond differently to a planned cut.",
+    "The data does not record why a cut was made. About 40% of the cuts measured are 2009–12, when many agencies cut for budget reasons (inferred from timing); 9 fall in the 2021–23 driver-shortage years.",
     "Relief accounting differs: relief passed through a regional funder can show up as local money, and new state or local money voted in 2025–26 is not in 2024 data, so a gap here is the 2024 exposure, not a 2026 deficit.",
     "The action tag is the cut order the data supports if the gap is closed by cutting service. Fares, taxes and reserves are other ways to close it; this page does not rank them.",
     "Coverage routes lose fewer riders per dollar, but those riders are more likely to have no other way to travel; the NTD has no rider income or car ownership.",
@@ -885,7 +886,7 @@ const ABOUT = {
 function actionTags(r, g) {
   if (!r || r.relief_gap == null || !(r.relief_share >= 0.01)) return { none: "no gap" };
   const gap = mBig(r.relief_gap);
-  if (!(r.bus_opex > 0)) return { act: `close ${gap} gap: rail only, no bus coverage pool` };
+  if (!(r.bus_opex > 0)) return { act: `close ${gap} gap: rail only, no bus hours pool` };
   let pool = null;
   if (g && r.bus_vrh_2024 && r.bus_avoidable_cost_per_hour) {
     pool = ((g.share_31_to_60 || 0) + (g.share_over60_or_peak_only || 0)) * r.bus_vrh_2024 * r.bus_avoidable_cost_per_hour;
@@ -1058,7 +1059,7 @@ export default function Dashboard({ givens }) {
   return (
     <div className="od">
       <style>{CSS + CSS_ABOUT + BC_CSS}</style>
-      <h1>Transit: budget gap and what to cut first</h1>
+      <h1>Transit: budget gap and what a cut costs</h1>
       <AgencyPicker agencies={pkQ.rows} mine={mine} setState={setPickState} />
       {!narrow && <HeadCaveat items={headChips} />}
       {error && <div className="err">{String(error)}</div>}
@@ -1077,7 +1078,7 @@ export default function Dashboard({ givens }) {
               <>
                 <div className="bc-tiles">
                   <div><div className="v good">{pc0(freqShare)}</div><div className="l"><b>Protect</b> · hours every 15 min or better</div></div>
-                  <div><div className="v bad">{mBig(coverageDollars)}</div><div className="l"><b>Coverage pool</b> · {pc0(coverageShare)} of hours, every 31+ min{mineRanked && mineRanked.relief_gap > 0 ? ` · gap ${mBig(mineRanked.relief_gap)}` : ""}</div></div>
+                  <div><div className="v bad">{mBig(coverageDollars)}</div><div className="l"><b>Infrequent hours</b> · {pc0(coverageShare)} of hours, every 31+ min{mineRanked && mineRanked.relief_gap > 0 ? ` · gap ${mBig(mineRanked.relief_gap)}` : ""}</div></div>
                 </div>
                 <div className="cr-legend">{HW.map((k, i) => <span key={k}><i style={{ background: hwColors(t)[i] }} />{k}</span>)}</div>
                 <div className="od-vega"><VegaChart spec={specs.hours} data={hoursRows} /></div>
@@ -1090,7 +1091,7 @@ export default function Dashboard({ givens }) {
 
           <BcCard n={1} title="Riders lost per $1M cut, by kind of agency">
             <div className="od-vega"><VegaChart spec={specs.menu} data={menuRows} /></div>
-            <Chips items={[menuRatio ? `Busy network ${menuRatio.toFixed(1)}× coverage` : null, `Elasticity ${one2(busCut.elasticity_y2)} by year 2`, "Compares agencies, not routes", "Hours-driven cost only", "2024 riders and costs"]} />
+            <Chips items={[menuRatio ? `Busy network ${menuRatio.toFixed(1)}× coverage, spending-weighted` : null, `Elasticity ${one2(busCut.elasticity_y2)} by year 2`, "Compares agencies, not routes", "Hours-driven cost only", "2024 riders and costs"]} />
           </BcCard>
 
           <BcCard n={2} title="Riders after a 1% change in bus hours">

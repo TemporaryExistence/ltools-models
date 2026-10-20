@@ -4,8 +4,8 @@ import "../budget_cuts.malloy"
 // Drawn by budget_cuts.jsx. Presentation only: the model's own views, plus rows filtered by $BUDGET_AGENCY (the reader's
 // agency, highlighted inside the national ranking; default GoRaleigh, NTD name "City of Raleigh").
 
-#" Transit budget gap: agencies ranked by the 2024 federal relief money above their pre-COVID share, and what to cut first.
-# artifact { title="Transit: budget gap and what to cut first" } dashboard { columns=6 }
+#" Transit budget gap: agencies ranked by 2024 federal money above their own 2017-19 share, and what a cut costs in riders.
+# artifact { title="Transit: budget gap and what a cut costs" } dashboard { columns=6 }
 query: budget_cuts is relief_by_year -> national_cliff
 
 #" The agency picker and step 1's peers: every agency by full name and state, with its size class and relief share.

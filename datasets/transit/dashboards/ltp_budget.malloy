@@ -1,0 +1,9 @@
+##! experimental { givens }
+import "../budget_cuts.malloy"
+
+// Drawn by ltp_budget.jsx: the one-page decision view of the budget study (what a bus cut costs in riders, nationally
+// and for one agency picked with $BUDGET_AGENCY, default GoRaleigh). The ranking and GTFS detail are on budget_cuts.
+
+#" What a bus service cut costs in riders, by kind of agency and for one agency, as federal relief runs out.
+# artifact { title="Transit budget cuts: what each choice costs in riders" }
+query: ltp_budget is budget_agency -> agency_cut_menu
