@@ -171,7 +171,9 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
   }
 
   #" ONE AGENCY'S POSITION (pick it with the agency control; default GoRaleigh): relief exposure, where its operating
-  #" money comes from, and what a bus cut costs it in riders. riders_lost_10pct_bus is linear at the year-2 elasticity.
+  #" money comes from, and what a bus cut costs it in riders. riders_lost_10pct_bus is a cut that saves 10% of the bus
+  #" budget, priced at hours-driven cost (so it removes more than 10% of bus hours: hours_share_cut_10pct_budget), linear
+  #" at the year-2 elasticity.
   view: agency_cut_menu is {
     where: agency_name ~ $BUDGET_AGENCY
     select: agency_label, ops_2024, relief_gap, relief_share, flagged, fed_share_base, fed_share_2024,
@@ -180,6 +182,8 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
       riders_lost_10pct_bus is bus_riders_lost_per_1m * 0.1 * bus_opex / 1000000
       # percent
       share_of_bus_riders_lost_10pct is bus_riders_lost_per_1m * 0.1 * bus_opex / 1000000 / nullif(bus_trips_2024, 0)
+      # percent
+      hours_share_cut_10pct_budget is 0.1 * bus_opex / nullif(bus_avoidable_cost_per_hour, 0) / nullif(bus_trips_2024 / nullif(bus_riders_per_hour, 0), 0)
   }
 
   #" North Carolina agencies with $5M+ operating budgets: exposure, funding mix and cut menu.
