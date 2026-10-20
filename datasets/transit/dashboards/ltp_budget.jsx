@@ -96,7 +96,7 @@ export default function Dashboard() {
       {mine.error ? <p>Could not load: {String(mine.error)}</p> : mine.loading || !m ? <p>Loading…</p> : (
         <>
           <div style={{ display: "flex", gap: 28, flexWrap: "wrap", margin: "12px 0" }}>
-            <Stat value={pct(m.local_general_fund_share)} label="Operating money from the city or county general fund" />
+            <Stat value={pct(m.local_general_fund_share)} label="Operating money from the city or county general fund (estimated split)" />
             <Stat value={Number(m.relief_share) < 0.001 ? "under 0.1%" : pct(m.relief_share, 1)} label="Relief money above its 2017-19 federal share, 2024 (share of operating money)" />
             <Stat value={int(m.bus_riders_lost_per_1m)} label="Bus riders lost a year per $1M cut" />
             <Stat value={int(m.riders_lost_10pct_bus)} label={"Riders lost a year by a cut that saves 10% of the bus budget (about " + pct(m.hours_share_cut_10pct_budget) + " of bus hours, " + pct(m.share_of_bus_riders_lost_10pct) + " of bus riders)"} />

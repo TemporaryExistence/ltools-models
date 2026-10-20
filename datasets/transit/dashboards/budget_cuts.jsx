@@ -731,8 +731,9 @@ function More({ t, narrow, givens, mine, mineShort, menuRows, events, allRows })
   })), [allRows, mine]);
 
   const ladder = React.useMemo(() => {
-    const e2 = events.cut ? events.cut.elasticity_y2 : null;
-    if (!mine || !mine.bus_vrh_2024 || !mine.bus_avoidable_cost_per_hour || e2 == null) return [];
+    // The same elasticity the model's per-$1M column uses, recovered from that column so both agree.
+    const e2 = mine && mine.bus_riders_per_hour ? mine.bus_riders_lost_per_1m * mine.bus_avoidable_cost_per_hour / 1e6 / mine.bus_riders_per_hour : null;
+    if (!mine || !mine.bus_vrh_2024 || !mine.bus_avoidable_cost_per_hour || !e2) return [];
     const avoid = mine.bus_vrh_2024 * mine.bus_avoidable_cost_per_hour;
     const farePerTrip = mine.bus_riders_lost_per_1m ? (mine.bus_fares_lost_per_1m || 0) / mine.bus_riders_lost_per_1m : 0;
     const cuts = [[1e6, "$1M"], [2.5e6, "$2.5M"], [5e6, "$5M"], [0.1 * mine.bus_opex, "10% of bus budget"], [0.2 * mine.bus_opex, "20% of bus budget"]];
@@ -781,7 +782,7 @@ function More({ t, narrow, givens, mine, mineShort, menuRows, events, allRows })
         </Card>
         <Card title={mineShort ? `${mineShort}: riders lost a year by size of bus cut` : "Riders lost a year by size of bus cut"}>
           <div className="od-vega"><VegaChart spec={specs.ladder} data={ladder} /></div>
-          <Chips items={[mine ? `${kN(mine.bus_trips_2024)} bus riders in 2024` : null, `Elasticity ${one2((events.cut || {}).elasticity_y2)}, constant`, "Overhead treated as fixed", "Fares lost shrink the saving"]} />
+          <Chips items={[mine ? `${kN(mine.bus_trips_2024)} bus riders in 2024` : null, "Year-2 elasticity, constant", "Overhead treated as fixed", "Fares lost shrink the saving"]} />
         </Card>
       </div>
       <Card title="Relief share of every bus agency and big system, 2024">
@@ -856,8 +857,8 @@ const ABOUT = {
     "Relief flag: in 2018, before relief existed, 3–4% of bus agencies and big systems would have crossed 10% against a 2015–17 baseline; 27–30% cross it in 2024. " +
     "Ranking: the default order is the gap as a share of the 2024 operating budget, for agencies with $10M+ budgets only (below that, a few hundred thousand dollars swing the percentage); dollars are the toggle. " +
     "Both orders are re-run with the 2019 federal share alone as the baseline: #1 is marked with its rank there, and rows that move more than two places are marked. By dollars the top 10 is the same ten agencies on either baseline. " +
-    "Service response: 126 sharp bus cuts and 158 additions outside COVID, each against 10 same-size peers whose hours held steady and whose riders tracked it before; the gap in the year before is −0.5%; 95% bands from 500 bootstrap draws. " +
-    "An agency-level panel (500 agencies, 2003–2026) gives a similar first year (0.66 for hours below peers, 0.47 above) but a lower second year for cuts (0.55). Fake cut dates and fake cutting agencies show no effect; the cut estimate moves from 0.64 to 0.80 with the cut-size rule. Numbers re-run through Malloyyo match the DuckDB build.",
+    "Service response: sharp bus cuts and additions outside COVID, each against 10 same-size peers whose hours held steady and whose riders tracked it before; 95% bands from 500 bootstrap draws. " +
+    "An agency-level panel gives a similar first year but a lower second year for cuts. Fake cut dates and fake cutting agencies show no effect, and the cut estimate moves with the cut-size rule (all checks: estimate_checks in the model). Numbers re-run through Malloyyo match the DuckDB build.",
   definitions: [
     ["Relief gap", "Federal operating money in 2024 minus the agency's 2017–19 federal share × its 2024 operating money (never below zero). Agencies without 2017–19 money use their size class's median."],
     ["Flagged", "Relief gap of 10% or more of the 2024 operating budget."],
@@ -873,16 +874,15 @@ const ABOUT = {
     "Agency totals cannot pick routes. Which route to cut needs route-level ridership (automatic passenger counters), which is not public here.",
     "The data does not record why a cut was made. About 40% of the cuts measured are 2009–12, when many agencies cut for budget reasons (inferred from timing); 9 fall in the 2021–23 driver-shortage years.",
     "Relief accounting differs: relief passed through a regional funder can show up as local money, and new state or local money voted in 2025–26 is not in 2024 data, so a gap here is the 2024 exposure, not a 2026 deficit.",
-    "The action tag is the cut order the data supports if the gap is closed by cutting service. Fares, taxes and reserves are other ways to close it; this page does not rank them.",
+    "The tags give the 2024 gap and what each agency's infrequent routes cost. They do not say which hours to cut: that needs route-level passenger counts. Fares, taxes and reserves are other ways to close a gap; this page does not rank them.",
     "Coverage routes lose fewer riders per dollar, but those riders are more likely to have no other way to travel; the NTD has no rider income or car ownership.",
     "Boardings, not people. GoRaleigh's boardings doubled in July 2024 on little more service, likely a counting change (no document found); its 2024 report year ends before the jump.",
     "Elasticity is linear in logs; cuts bigger than about 30% of service are outside most of the evidence.",
   ],
 };
 
-// The cut order the data suggests for one agency: close its 2024 gap by cutting its least-used hours first (likely its
-// infrequent routes, whose cost is shown when its public schedule is in the sample; which hours carry the fewest riders
-// needs its passenger counts). Inferred from the between-agency menu, not measured within the agency.
+// One agency's tags: the 2024 gap to close and, where its public schedule is in the sample, what its infrequent routes
+// cost (sized in dollars; which hours carry the fewest riders needs its passenger counts).
 function actionTags(r, g) {
   if (!r || r.relief_gap == null || !(r.relief_share >= 0.01)) return { none: "no gap" };
   const gap = mBig(r.relief_gap);
@@ -893,7 +893,7 @@ function actionTags(r, g) {
   }
   const poolTxt = pool == null ? ""
     : `infrequent routes cost ${g.hours_check_flag ? "≈" : ""}${mBig(pool)} a year`;
-  return { act: `close ${gap} gap: cut the least-used hours first`, keep: poolTxt || "find them with passenger counts" };
+  return { act: `close ${gap} gap`, keep: poolTxt || null };
 }
 
 // The first screen: agencies ranked by relief gap as a share of budget (or in dollars), #1 highlighted, the selected agency outlined
@@ -1054,7 +1054,7 @@ export default function Dashboard({ givens }) {
   }), [t, narrow, menuRows]);
 
   const events = React.useMemo(() => ({ cut: busCut, add: busAdd }), [busCut, busAdd]);
-  const headChips = ["NTD 2024 + monthly to Aug 2026", "Relief is not its own NTD column", "Cut order if cutting; fares and taxes not ranked"];
+  const headChips = ["NTD 2024 + monthly to Aug 2026", "Relief is not its own NTD column", "Service cuts only; fares and taxes not ranked"];
 
   return (
     <div className="od">

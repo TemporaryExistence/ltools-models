@@ -4,7 +4,7 @@
 // gets cut, while losing the fewest riders and keeping the people who depend on the service? Public data only:
 //   budget_agency            one row per agency (2024): operating money by source (FTA TS1.2 2015-2024 via the Wayback
 //                            Machine, and the 2022-24 NTD funding tables qpjk-b3zw / 8tvb-ywj3 / dd43-h6wv / 4tmr-gwuu),
-//                            the federal money above the agency's own 2017-19 level (relief that is running out), and the
+//                            the federal money above the agency's own 2017-19 federal share (relief running out), and the
 //                            cut menu: riders lost a year per $1M of bus or rail service cut (NTD Time Series 2.1, 2024).
 //   service_change_*         matched event study of sharp service cuts and additions, NTD monthly 2002 - Aug 2026.
 //   service_elasticity_panel agency-level 12-month changes, riders vs service hours, demeaned by year x size band.
@@ -148,10 +148,11 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
   }
 
   #" Riders lost a year per $1M of bus service cut, by kind of bus system (2024 riders per hour), weighted by bus spending.
-  #(agent) Bus agencies with 0.5M+ trips. Compares kinds of agency, not routes inside one agency. Assumes one response to cuts for every kind of agency (year-2 elasticity 0.74, band 0.59-0.86; year 1 is 0.67,
-  #(agent) about 10% fewer). The agency panel by type (service_elasticity_panel, breakdown bus_type) supports that; the
-  #(agent) event study by type (9 cuts at busy networks, 0.36) points to smaller responses there, which would narrow the
-  #(agent) gap. The pooled figure is weighted by bus cost (NYC is a third of the busy group); quote cut_menu_typical for a
+  #(agent) Bus agencies with 0.5M+ trips. Compares kinds of agency, not routes inside one agency. Assumes one response to cuts for every kind of agency, the event
+  #(agent) study's year-2 bus elasticity (service_change_summary.headline; year 1 is about 10% lower). The agency panel by
+  #(agent) type (service_elasticity_panel.by_group, breakdown bus_type) roughly supports that; the event study by type
+  #(agent) (service_change_events.by_bus_type, few cuts at busy networks) points to smaller responses there, which would
+  #(agent) narrow the gap. The pooled figure is weighted by bus cost ; quote cut_menu_typical for a
   #(agent) typical agency. The elasticity is measured on cuts agencies actually made, so it already reflects the hours they chose;
   #(agent) which hours inside one agency carry the fewest riders needs its passenger counts, not in this data.
   #(agent) For transit boards choosing what to cut.
@@ -211,8 +212,8 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
 }
 
 #" The typical agency per kind of bus system: median riders lost a year per $1M of bus service cut, with quartiles.
-#(agent) Unweighted over bus agencies with 0.5M+ trips, 2024; year-2 elasticity (_y1 at year 1). Use this, not cut_menu_by_type's cost-weighted pooled figure, for "a typical agency like mine". The busiest group's
-#(agent) typical cost per hour ($108) is far below its pooled $196, which NYC's high costs drive.
+#(agent) Unweighted over bus agencies with 0.5M+ trips, 2024; year-2 elasticity (_y1 at year 1). Use this, not cut_menu_by_type's cost-weighted pooled figure, for "a typical agency like mine". In the busiest group
+#(agent) the typical cost per hour (cost_per_hour_median) is far below the pooled one, which the largest systems drive.
 source: cut_menu_typical is motherduck.table('transit.cut_menu_typical') extend {
   #" What $1M of bus cuts costs at the typical agency of each kind (median and quartiles).
   view: typical is {
