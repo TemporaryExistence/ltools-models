@@ -337,3 +337,41 @@ SELECT c.year,
 FROM ltools.fars.crashes c JOIN ncdot n ON n.year = c.year
 WHERE c.state_name = 'North Carolina'
 GROUP BY c.year;
+
+-- 10. One row per county per year: deaths, pedestrian deaths (all, in the dark, in the dark on non-freeway arterials),
+--     alcohol-impaired-driving deaths (imputed) and residents, for per-resident county rates (there are no county miles).
+--     Built from the shaped tables above, so it can be rebuilt alone. Deaths whose county is unknown (0-4 a year) are left
+--     out. FARS keeps Shannon County SD as 46113; Census renamed it Oglala Lakota (46102) in 2015, same area: mapped here.
+--     Left without residents (population null): Connecticut 2020-2024 (Census uses planning regions, FARS the old
+--     counties; about 300 deaths a year) and Alaska's former Valdez-Cordova area (split in 2019).
+CREATE OR REPLACE TABLE ltools.fars.county_years AS
+WITH c AS (
+  SELECT year, state_name,
+    CASE WHEN county_fips = '46113' THEN '46102' ELSE county_fips END AS county_fips,
+    any_value(county_name) AS fars_county_name,
+    sum(fatalities) AS deaths,
+    sum(fatalities * ai_share) AS alcohol_impaired_deaths
+  FROM ltools.fars.crashes WHERE county_name IS NOT NULL GROUP BY ALL
+), p AS (
+  SELECT cr.year, cr.state_name,
+    CASE WHEN cr.county_fips = '46113' THEN '46102' ELSE cr.county_fips END AS county_fips,
+    count(*) AS pedestrian_deaths,
+    count(*) FILTER (WHERE cr.light_condition LIKE 'Dark%') AS pedestrian_deaths_dark,
+    count(*) FILTER (WHERE cr.light_condition LIKE 'Dark%' AND cr.road_class = 'Arterial (not freeway)') AS pedestrian_deaths_dark_arterial
+  FROM ltools.fars.persons pe JOIN ltools.fars.crashes cr ON cr.crash_key = pe.crash_key
+  WHERE pe.is_killed AND pe.road_user = 'Pedestrian' AND cr.county_name IS NOT NULL GROUP BY ALL
+)
+SELECT
+  coalesce(pop.year, c.year) AS year,
+  coalesce(pop.state_name, c.state_name) AS state_name,
+  coalesce(pop.county_fips, c.county_fips) AS county_fips,
+  coalesce(pop.county_name, c.fars_county_name) AS county_name,
+  pop.population,
+  coalesce(c.deaths, 0) AS deaths,
+  coalesce(p.pedestrian_deaths, 0) AS pedestrian_deaths,
+  coalesce(p.pedestrian_deaths_dark, 0) AS pedestrian_deaths_dark,
+  coalesce(p.pedestrian_deaths_dark_arterial, 0) AS pedestrian_deaths_dark_arterial,
+  coalesce(c.alcohol_impaired_deaths, 0) AS alcohol_impaired_deaths
+FROM ltools.fars.county_population pop
+FULL JOIN c ON c.year = pop.year AND c.county_fips = pop.county_fips
+LEFT JOIN p ON p.year = coalesce(pop.year, c.year) AND p.county_fips = coalesce(pop.county_fips, c.county_fips);
