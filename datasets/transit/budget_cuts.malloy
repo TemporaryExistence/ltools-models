@@ -75,7 +75,7 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
     trips_total is trips_all.sum()
     # percent
     riders_lost_share is riders_lost_if_cut.sum() / nullif(trips_all.sum(), 0)
-    #" Riders lost a year per $1M of local-bus service cut, pooled over agencies weighted by bus cost.
+    #" Riders lost a year per $1M of local-bus service cut, pooled over agencies weighted by bus cost (one response assumed).
     #(agent) The largest agencies dominate; cut_menu_typical gives the median agency.
     bus_riders_lost_per_1m_pooled is sum(bus_riders_lost_per_1m * bus_opex) / nullif(bus_opex.sum() { where: bus_riders_lost_per_1m > 0 }, 0)
     #" Fares those riders paid, per $1M of local-bus service cut (pooled).
@@ -150,7 +150,7 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
     order_by: relief_gap_total desc
   }
 
-  #" Riders lost a year per $1M of bus service cut, by kind of bus system (2024 riders per hour), weighted by bus spending.
+  #" Riders lost per $1M of bus cuts by kind of bus system, weighted by spending, if riders respond alike (unsettled).
   #(agent) Every agency with 0.5M+ bus trips, including small, rural and specialty systems (campus and resort
   #(agent) shuttles), which cut_menu_typical leaves out. Compares kinds of agency, not routes inside one agency. Assumes one response
   #(agent) to cuts at every kind of agency (the event study's year-2 bus elasticity, service_change_summary.headline).
