@@ -40,7 +40,8 @@ source: urbanized_areas is ntd_rows -> {
 #(agent) For MICROTRANSIT or on-demand prospects use the `ondemand_annual` source: here "Demand response" lumps ADA
 #(agent) paratransit together with microtransit.
 #(agent) Known data breaks: (1) GoRaleigh can't be compared with 2019 (see counting_changed_since_2019); recovery_vs_2019
-#(agent) leaves it out, recovery_vs_2019_as_reported does not. (2) VIA (San Antonio) reports about a quarter of its usual
+#(agent) leaves it out, recovery_vs_2019_as_reported does not. service_vs_2019 leaves it out too; trip counts,
+#(agent) yoy_change, per-resident and per-hour figures in the same row count it as reported. (2) VIA (San Antonio) reports about a quarter of its usual
 #(agent) demand-response hours for July and August 2026 (late filing). (3) Late filers understate the latest 12 months.
 #(agent) (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
 #(agent) Narrow a saved view by refining it: run: transit -> nc_agencies_below_2019 + { where: agency_label ~ '%Chapel%' }.
@@ -136,7 +137,8 @@ source: transit is ntd_rows extend {
     #" are understated (VIA San Antonio's demand response for July and August 2026).
     revenue_hours_12m is revenue_hours { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
     #" Service now as a share of 2019 service, on the same agencies as recovery_vs_2019 (flagged agencies left out),
-    #" so the two can be compared: did riders follow the buses?
+    #" so the two can be compared: did riders follow the buses? Blank for GoRaleigh; its service is in
+    #" goraleigh_138_percent_check.
     # percent
     service_vs_2019 is revenue_hours_12m { where: not counting_changed_since_2019 } / nullif(revenue_hours_2019 { where: not counting_changed_since_2019 }, 0)
     #" Vehicle revenue hours added since 2019: latest 12 months minus calendar 2019 (negative = service cut).
@@ -206,8 +208,8 @@ source: transit is ntd_rows extend {
   }
 
   #" The Triangle against Sun Belt peers of similar size: how much transit each metro uses, how much service it
-  #" runs, and how far each has come since 2019. Trips per resident and per hour count GoRaleigh as reported, which
-  #" lifts the Triangle's latest figures (see counting_changed_since_2019).
+  #" runs, and how far each has come since 2019. Trips per resident and per hour count GoRaleigh as reported (see
+  #" counting_changed_since_2019).
   # bar_chart { x=peer_metro y=trips_per_resident_12m }
   view: peer_metros is {
     where: peer_metro is not null
@@ -250,8 +252,8 @@ source: transit is ntd_rows extend {
     order_by: report_year
   }
 
-  #" Fixed-route productivity for the Triangle and its peers: trips per vehicle revenue hour then and now. The
-  #" Triangle's latest figure counts GoRaleigh as reported, which lifts it (see counting_changed_since_2019).
+  #" Fixed-route productivity for the Triangle and its peers: trips per vehicle revenue hour then and now. Recovery
+  #" and service leave GoRaleigh out; trips per hour count it as reported (see counting_changed_since_2019).
   # bar_chart { x=peer_metro y=trips_per_hour_12m }
   view: peer_productivity is {
     where: peer_metro is not null and is_fixed_route
@@ -341,9 +343,8 @@ source: transit is ntd_rows extend {
   #" HOW IS THE TRIANGLE DOING AGAINST SIMILAR METROS? The Triangle (Raleigh + Durham urbanized areas) against Sun
   #" Belt metros of 1.0 to 1.9 million people: trips per resident, recovery, service restored, riders per service
   #" hour. Recovery leaves GoRaleigh out (see counting_changed_since_2019): the rest of the Triangle is at 86% of 2019,
-  #" still ahead of Charlotte at 61%; as reported, with GoRaleigh, it reads 98%. Trips per resident and riders per
-  #" hour count GoRaleigh as reported, which lifts the Triangle's latest figures; on those two the Triangle's lead is
-  #" not established. WHO ACTS: Triangle planners and the GoTriangle / Wake Transit boards (where to add service),
+  #" still ahead of Charlotte at 61%; as reported, with GoRaleigh, it reads 98%. Service leaves GoRaleigh out too;
+  #" trips per resident, riders per hour and yoy_change count it as reported. WHO ACTS: Triangle planners and the GoTriangle / Wake Transit boards (where to add service),
   #" and Charlotte, whose metro has restored only about 81% of its 2019 service and recovered the fewest riders.
   #" Population is 2020 Census, so per-resident figures overstate use in metros that have grown since.
   # bar_chart { x=peer_metro y=recovery_vs_2019 }
@@ -376,14 +377,15 @@ source: transit is ntd_rows extend {
   }
 
   #" IS GORALEIGH REALLY AT 138% OF 2019? That figure can't be compared with 2019 (see counting_changed_since_2019).
-  #" Fixed-route only, one row, all read directly from the data. As reported, the latest 12 months are about 145% of
+  #" Fixed-route only, one row; every figure below is a column. As reported, the latest 12 months are about 145% of
   #" 2019. In the year to June 2024, before the jump, GoRaleigh carried about 80% of its 2019 riders on about 99% of
   #" its 2019 service; service is now about 149% of 2019. On the new counting, bus riders rose about 6% in the latest
   #" 12 months on about 13% more service. Boardings per service hour: about 18 in 2019, about 14.6 in
   #" the year to June 2024 (about 12 in May and June 2024, after service hours rose 17.5% in May with no more riders),
   #" about 22.7 in July 2024, about 17.5 in the latest 12 months. How much of today's figure is real riders can't be
-  #" measured from this data. The whole-agency "138%" includes GoRaleigh Access. Fares resumed after the jump (City
-  #" of Raleigh notices give 1 August or 1 September 2024). WHO ACTS: anyone quoting Triangle or GoRaleigh recovery,
+  #" measured from this data. July 2024 was the City's "find your fare" month before fares resumed (fare_policies),
+  #" a possible lead on the cause, not a confirmed one. The whole-agency "138%" includes GoRaleigh Access. Fares resumed on 1 September
+  #" 2024, after the jump (City of Raleigh; earlier announced dates were postponed). WHO ACTS: anyone quoting Triangle or GoRaleigh recovery,
   #" and GoRaleigh, which could publish a bridged series.
   view: goraleigh_138_percent_check is {
     where: ntd_id = '40007' and is_fixed_route
@@ -405,6 +407,14 @@ source: transit is ntd_rows extend {
       trips_per_hour_june_2024 is trips_per_revenue_hour { where: report_month ? @2024-06 }
       trips_per_hour_july_2024 is trips_per_revenue_hour { where: report_month ? @2024-07 }
       trips_per_hour_12m
+      # percent
+      service_change_may_2024 is
+        revenue_hours { where: report_month ? @2024-05 } / nullif(revenue_hours { where: report_month ? @2024-04 }, 0) - 1
+      # percent
+      riders_change_latest_year is yoy_change
+      # percent
+      service_change_latest_year is
+        revenue_hours_12m / nullif(revenue_hours { where: report_month >= @2024-09-01 and report_month < @2025-09-01 }, 0) - 1
   }
 
   #" GoRaleigh fixed-route boardings, service hours and boardings per hour by month, March to October 2024: the July
