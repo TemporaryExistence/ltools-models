@@ -345,7 +345,8 @@ source: library_years is library_years_base extend {
     order_by: visits_per_capita_fy2024 desc
   }
 
-  #" Big systems against small ones, FY2024: use, cost, staffing, hours, and change in visits since FY2019.
+  #" Big systems against small ones, FY2024: use, cost, staffing, hours, and change in visits since FY2019. FY2024
+  #" borrowing leaves out systems that left it blank and counts digital under that year's changed questions.
   # bar_chart { x=size_band y=visits_per_capita_fy2024 }
   view: by_size_band is {
     where: size_band != 'Unknown'
@@ -370,7 +371,8 @@ source: library_years is library_years_base extend {
   #" it depends on the yardstick. Small systems spend MORE per person ($58 under 5k vs $50 at 500k+) but get far
   #" more visits per dollar ($13.86 per visit vs $23.42; 72 vs 43 visits per $1,000). Per item borrowed the
   #" 100k–500k band is cheapest ($7.39 vs $8.77 for the smallest). Who acts: county and city budget offices weighing
-  #" a merger into a regional system, and state library agencies setting aid formulas.
+  #" a merger into a regional system, and state library agencies setting aid formulas. FY2024 cost per item borrowed
+  #" leaves out systems that left borrowing blank and counts digital under that year's changed questions.
   # bar_chart { x=size_band y=cost_per_visit_fy2024 }
   view: systems_by_size_value_per_dollar is {
     where: fiscal_year = 2024 and size_band != '6 Not comparable' and size_band != 'Unknown'

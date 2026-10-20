@@ -202,6 +202,8 @@ source: transit is ntd_rows extend {
     limit: 15
   }
 
+  #" Each state: agencies, trips, growth, recovery and productivity. Recovery leaves GoRaleigh out (see
+  #" counts_not_comparable_with_2019); trip counts, yoy_change and trips per hour count it as reported (NC row).
   view: by_state is {
     group_by: state
     aggregate: agencies, trips_latest_12m, yoy_change, recovery_vs_2019, trips_per_hour_12m
@@ -234,11 +236,13 @@ source: transit is ntd_rows extend {
     where: state = 'NC'
     group_by: nc_region
     aggregate:
-      trips_2019, trips_latest_12m, recovery_vs_2019, service_vs_2019
+      trips_2019_as_reported is trips_2019
+      trips_latest_12m_as_reported is trips_latest_12m
+      recovery_vs_2019, service_vs_2019
       # percent
       yoy_change_as_reported is yoy_change
       trips_per_hour_12m_as_reported is trips_per_hour_12m
-    order_by: trips_latest_12m desc
+    order_by: trips_latest_12m_as_reported desc
   }
 
   #" Every Triangle agency: ridership, service and productivity then and now. GoRaleigh's recovery and service are
