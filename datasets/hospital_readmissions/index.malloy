@@ -63,7 +63,7 @@ source: hospitals is motherduck.table('hospital_readmissions.hospitals') extend 
 #(agent) "Too Few to Report" means 1 to 10 readmissions, suppressed for privacy, and CMS also blanks the discharges on those rows; it is not zero. It hides 83% of hip/knee hospital rows and 47% of hip/knee discharges. Use `eligible_discharges` (from the CMS payment file, never suppressed), not `discharges_published`, and the predicted/expected measures, not `readmissions_published`.
 #(agent) `excess_readmission_ratio` (ERR) = predicted rate / expected rate. CMS shrinks small hospitals toward 1, so a small hospital's ERR near 1 means "not enough data", and an ERR of 1.12 on 176 cases is about one readmission. Quote excess readmissions (a count), not ERR alone; average ERRs only through `weighted_err`.
 #(agent) The penalty threshold is the peer group median ERR, not 1.0: 342 measure rows are penalized with ERR at or below 1 and 127 with ERR above 1 are not. Use `penalty_indicator`. Summing excess over all hospitals nets to near zero by design; `excess_readmissions` counts only hospitals above expected.
-#(agent) Predicted rates differ by measure because the patients differ (hip/knee about 5%, heart failure about 20%); never rank measures by rate. Maryland is in this file but outside the payment program; its rows have an ERR but no `eligible_discharges`, so counts leave them out.
+#(agent) To shorten a view, filter it but do not add a bare `+ { limit: N }`: that refinement dropped the view's ordering in testing (malloyyo 0.2.72). Predicted rates differ by measure because the patients differ (hip/knee about 5%, heart failure about 20%); never rank measures by rate. Maryland is in this file but outside the payment program; its rows have an ERR but no `eligible_discharges`, so counts leave them out.
 source: measure_results is motherduck.table('hospital_readmissions.measure_results') extend {
   join_one: hospital is hospitals on facility_id = hospital.facility_id
 
@@ -147,6 +147,14 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     group_by: state
     aggregate: hospital_count, discharges, excess_readmissions_per_year, excess_cost_per_year, net_excess_readmissions, net_excess_per_1000, hospital.penalized_hospitals, hospital.hospitals_in_program
     order_by: net_excess_per_1000 desc
+  }
+
+  #" Hospitals with the most excess readmissions per year (all six conditions), with their payment cut.
+  view: top_excess_hospitals is {
+    group_by: facility_id, facility_name, state, hospital.payment_reduction_pct
+    aggregate: discharges, excess_readmissions_per_year, excess_cost_per_year, net_excess_readmissions
+    order_by: excess_readmissions_per_year desc
+    limit: 50
   }
 
   #" Hip/knee replacement by hospital volume: predicted against expected readmission rate, and how many counts the public file hides.
