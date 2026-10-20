@@ -256,11 +256,25 @@ SELECT
   vmt_millions
 FROM read_csv('fhwa/vm2_2019_2024.csv');
 
--- 6. Population: US Census county estimates (copied from the libraries dataset), for per-resident rates.
+-- 6. Population: US Census county estimates, for per-resident rates. 2020-2024 are Vintage 2025 (copied from the
+--    libraries dataset). 2019 is the Census 2010-2020 intercensal estimate for July 1, 2019 (consistent with the 2020
+--    Census; the Vintage 2020 figure the libraries dataset holds is on the pre-2020-Census base and jumps by up to 5%
+--    into 2020 in some states). File: census/cc-est2020int-agesex-all.csv from
+--    https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/county/asrh/ (downloaded
+--    2026-10-20); YEAR code 11 = July 1, 2019 (code 12 = April 1, 2020, which matches the 2020 Census count). Its county
+--    codes are the same 3,143 as the Vintage 2020 2019 rows. Names and state fields come from the libraries rows.
 CREATE OR REPLACE TABLE ltools.fars.county_population AS
-SELECT county_fips, state AS state_abbr, state_name, county_name, pop_year AS year, population, vintage
+SELECT county_fips, state AS state_abbr, state_name, county_name, pop_year AS year, population, vintage,
+  'Vintage 2025' AS estimate_series
 FROM ltools.libraries.county_population
-WHERE pop_year BETWEEN 2019 AND 2024;
+WHERE pop_year BETWEEN 2020 AND 2024
+UNION ALL
+SELECT l.county_fips, l.state, l.state_name, l.county_name, 2019, i.population, NULL, 'Intercensal 2010-2020'
+FROM ltools.libraries.county_population l
+JOIN (SELECT lpad(STATE, 2, '0') || lpad(COUNTY, 3, '0') AS county_fips, POPESTIMATE::BIGINT AS population
+      FROM read_csv('census/cc-est2020int-agesex-all.csv', encoding = 'latin-1', all_varchar = true)
+      WHERE YEAR = '11' AND STATE <> '72') i ON i.county_fips = l.county_fips
+WHERE l.pop_year = 2019;
 
 -- deaths_sq (sections 7, 8, 10) = sum over crashes of fatalities squared: the variance of a death count when crashes
 --   occur at random and each kills one or more people (multi-death crashes make it larger than the count).
@@ -299,6 +313,8 @@ FULL JOIN d_all ON d_all.year = v.year AND d_all.state_name = v.state_name AND d
 
 -- 8. One row per state (and 'United States') per year: deaths, alcohol-impaired-driving deaths three ways, miles and
 --    residents, for per-mile and per-resident rates and the 23 CFR 1300.23 impaired-driving tier.
+--    deaths_road_type_unknown: deaths with unknown road function or rural/urban (not in road_exposure); a coding break
+--    shows here first (Missouri 2023-2024). Pedestrian deaths by state for per-resident pedestrian rates.
 --    deaths_without_miles: deaths in road cells (rural/urban x road function) where FHWA's VM-2 shows no miles ('-');
 --    their miles are missing from vmt_millions, so per-mile rates leave them out of the numerator (191 deaths over
 --    2019-2024, 115 of them in 2021; none in North Carolina). Built from road_exposure (section 7), so run 7 first.
@@ -307,12 +323,23 @@ WITH d AS (
   SELECT year, state_name, sum(fatalities) AS deaths, sum(fatalities * fatalities) AS deaths_sq,
     sum(fatalities * ai_share) AS alcohol_impaired_deaths,
     sum(fatalities) FILTER (WHERE tested_driver_bac_08) AS alcohol_deaths_tested_only,
-    sum(fatalities) FILTER (WHERE police_reported_drinking_driver) AS alcohol_deaths_police_reported
+    sum(fatalities) FILTER (WHERE police_reported_drinking_driver) AS alcohol_deaths_police_reported,
+    sum(fatalities) FILTER (WHERE NOT (rural_urban IN ('Rural', 'Urban') AND road_function_code BETWEEN 1 AND 7)) AS deaths_road_type_unknown
   FROM ltools.fars.crashes GROUP BY ALL
 ), d_all AS (
   SELECT * FROM d
   UNION ALL
-  SELECT year, 'United States', sum(deaths), sum(deaths_sq), sum(alcohol_impaired_deaths), sum(alcohol_deaths_tested_only), sum(alcohol_deaths_police_reported) FROM d GROUP BY ALL
+  SELECT year, 'United States', sum(deaths), sum(deaths_sq), sum(alcohol_impaired_deaths), sum(alcohol_deaths_tested_only), sum(alcohol_deaths_police_reported), sum(deaths_road_type_unknown) FROM d GROUP BY ALL
+), ped_s AS (
+  SELECT cr.year, cr.state_name, count(*) AS pedestrian_deaths,
+    count(*) FILTER (WHERE cr.light_condition LIKE 'Dark%') AS pedestrian_deaths_dark,
+    count(*) FILTER (WHERE cr.light_condition LIKE 'Dark%' AND cr.road_class = 'Arterial (not freeway)') AS pedestrian_deaths_dark_arterial
+  FROM ltools.fars.persons pe JOIN ltools.fars.crashes cr ON cr.crash_key = pe.crash_key
+  WHERE pe.is_killed AND pe.road_user = 'Pedestrian' GROUP BY ALL
+), ped AS (
+  SELECT * FROM ped_s
+  UNION ALL
+  SELECT year, 'United States', sum(pedestrian_deaths), sum(pedestrian_deaths_dark), sum(pedestrian_deaths_dark_arterial) FROM ped_s GROUP BY ALL
 ), v AS (
   SELECT year, state_name, sum(vmt_millions) AS vmt_millions FROM ltools.fars.vmt GROUP BY ALL
 ), nm_s AS (
@@ -327,10 +354,15 @@ WITH d AS (
   UNION ALL
   SELECT year, 'United States', sum(population) FROM ltools.fars.county_population GROUP BY ALL
 )
-SELECT d_all.year, d_all.state_name, d_all.deaths, d_all.deaths_sq, d_all.alcohol_impaired_deaths, coalesce(d_all.alcohol_deaths_tested_only, 0) AS alcohol_deaths_tested_only,
+SELECT d_all.state_name || '-' || d_all.year AS state_year_key,
+  d_all.year, d_all.state_name, d_all.deaths, d_all.deaths_sq, d_all.alcohol_impaired_deaths, coalesce(d_all.alcohol_deaths_tested_only, 0) AS alcohol_deaths_tested_only,
   coalesce(d_all.alcohol_deaths_police_reported, 0) AS alcohol_deaths_police_reported, v.vmt_millions, p.population,
-  coalesce(nm.deaths_without_miles, 0) AS deaths_without_miles, coalesce(nm.deaths_sq_without_miles, 0) AS deaths_sq_without_miles
+  coalesce(nm.deaths_without_miles, 0) AS deaths_without_miles, coalesce(nm.deaths_sq_without_miles, 0) AS deaths_sq_without_miles,
+  coalesce(d_all.deaths_road_type_unknown, 0) AS deaths_road_type_unknown,
+  coalesce(ped.pedestrian_deaths, 0) AS pedestrian_deaths, coalesce(ped.pedestrian_deaths_dark, 0) AS pedestrian_deaths_dark,
+  coalesce(ped.pedestrian_deaths_dark_arterial, 0) AS pedestrian_deaths_dark_arterial
 FROM d_all
+LEFT JOIN ped ON ped.year = d_all.year AND ped.state_name = d_all.state_name
 LEFT JOIN v ON v.year = d_all.year AND v.state_name = d_all.state_name
 LEFT JOIN nm ON nm.year = d_all.year AND nm.state_name = d_all.state_name
 LEFT JOIN p ON p.year = d_all.year AND p.state_name = d_all.state_name;
@@ -357,8 +389,10 @@ GROUP BY c.year;
 --     alcohol-impaired-driving deaths (imputed) and residents, for per-resident county rates (there are no county miles).
 --     Built from the shaped tables above, so it can be rebuilt alone. Deaths whose county is unknown (0-4 a year) are left
 --     out. FARS keeps Shannon County SD as 46113; Census renamed it Oglala Lakota (46102) in 2015, same area: mapped here.
---     Left without residents (population null): Connecticut 2020-2024 (Census uses planning regions, FARS the old
---     counties; about 300 deaths a year) and Alaska's former Valdez-Cordova area (split in 2019).
+--     Left without residents (population null), with geography_note saying why: Connecticut 2020-2024 (Census uses nine
+--     planning regions, FARS the eight old counties, about 300 deaths a year: both sets of rows are kept, neither has
+--     residents, so Connecticut has no county rates for those years) and county codes with deaths but no Census
+--     population (Alaska's retired 02201, 02261 Valdez-Cordova and 02270). State-level rates are in state_years.
 CREATE OR REPLACE TABLE ltools.fars.county_years AS
 WITH c AS (
   SELECT year, state_name,
@@ -382,7 +416,12 @@ SELECT
   coalesce(pop.state_name, c.state_name) AS state_name,
   coalesce(pop.county_fips, c.county_fips) AS county_fips,
   coalesce(pop.county_name, c.fars_county_name) AS county_name,
-  pop.population,
+  CASE WHEN coalesce(pop.state_name, c.state_name) = 'Connecticut' AND coalesce(pop.year, c.year) >= 2020 THEN NULL
+       ELSE pop.population END AS population,
+  CASE WHEN coalesce(pop.state_name, c.state_name) = 'Connecticut' AND coalesce(pop.year, c.year) >= 2020
+         THEN 'Not comparable: Census planning regions vs FARS counties (Connecticut 2020-2024)'
+       WHEN pop.population IS NULL THEN 'No Census population for this county code'
+       END AS geography_note,
   coalesce(c.deaths, 0) AS deaths,
   coalesce(c.deaths_sq, 0) AS deaths_sq,
   coalesce(p.pedestrian_deaths, 0) AS pedestrian_deaths,
