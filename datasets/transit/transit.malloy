@@ -135,9 +135,10 @@ source: transit is ntd_rows extend {
     #" Service supplied: vehicle revenue hours in the latest 12 months (September 2025 – August 2026). Late filers
     #" are understated (VIA San Antonio's demand response for July and August 2026).
     revenue_hours_12m is revenue_hours { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
-    #" Service now as a share of 2019 service. Compare with recovery_vs_2019: did riders follow the buses?
+    #" Service now as a share of 2019 service, on the same agencies as recovery_vs_2019 (flagged agencies left out),
+    #" so the two can be compared: did riders follow the buses?
     # percent
-    service_vs_2019 is revenue_hours_12m / nullif(revenue_hours_2019, 0)
+    service_vs_2019 is revenue_hours_12m { where: not counting_changed_since_2019 } / nullif(revenue_hours_2019 { where: not counting_changed_since_2019 }, 0)
     #" Vehicle revenue hours added since 2019: latest 12 months minus calendar 2019 (negative = service cut).
     revenue_hours_change is revenue_hours_12m - revenue_hours_2019
     #" Percent change in vehicle revenue hours, latest 12 months vs calendar 2019.
@@ -217,7 +218,8 @@ source: transit is ntd_rows extend {
     order_by: trips_per_resident_12m desc
   }
 
-  #" North Carolina as the Triangle, Charlotte and the rest.
+  #" North Carolina as the Triangle, Charlotte and the rest. Trip counts are as reported; recovery and service leave
+  #" GoRaleigh out (see counting_changed_since_2019).
   # bar_chart { x=nc_region y=recovery_vs_2019 }
   view: nc_regions is {
     where: state = 'NC'
@@ -226,7 +228,8 @@ source: transit is ntd_rows extend {
     order_by: trips_latest_12m desc
   }
 
-  #" Every Triangle agency: ridership, service and productivity then and now.
+  #" Every Triangle agency: ridership, service and productivity then and now. GoRaleigh's recovery and service are
+  #" blank (see counting_changed_since_2019); its trip counts are as reported.
   # bar_chart { x=agency_name y=trips_latest_12m }
   view: triangle_agencies is {
     where: peer_metro = 'Triangle (Raleigh + Durham)'
@@ -359,9 +362,9 @@ source: transit is ntd_rows extend {
   #" WHICH NORTH CAROLINA AGENCIES ARE STILL BELOW 2019? NC agencies with at least 100,000 trips in 2019, below
   #" their 2019 ridership in the latest 12 months, largest number of lost trips first, with service restored for
   #" comparison (an agency below 2019 on service is usually below on riders too). WHO ACTS: each agency's board and
-  #" NCDOT's Integrated Mobility Division (state transit funding). GoRaleigh is not listed because it reads 138% as
-  #" reported, but that can't be compared with 2019 and it was at about 80% in the year to June 2024, so it may
-  #" belong on this list (see goraleigh_138_percent_check). GoDurham reads 103%.
+  #" NCDOT's Integrated Mobility Division (state transit funding). GoRaleigh is not listed: its reported trips are
+  #" above 2019, but they can't be compared with 2019, and its buses were at about 80% of 2019 in the year to June
+  #" 2024, so it may belong on this list (see goraleigh_138_percent_check). GoDurham reads 103%.
   view: nc_agencies_below_2019 is {
     where: state = 'NC'
     group_by: agency_label, ntd_id
@@ -375,7 +378,8 @@ source: transit is ntd_rows extend {
   #" IS GORALEIGH REALLY AT 138% OF 2019? That figure can't be compared with 2019 (see counting_changed_since_2019).
   #" Fixed-route only, one row, all read directly from the data. As reported, the latest 12 months are about 145% of
   #" 2019. In the year to June 2024, before the jump, GoRaleigh carried about 80% of its 2019 riders on about 99% of
-  #" its 2019 service; service is now about 149% of 2019. Boardings per service hour: about 18 in 2019, about 14.6 in
+  #" its 2019 service; service is now about 149% of 2019. On the new counting, bus riders rose about 6% in the latest
+  #" 12 months on about 13% more service. Boardings per service hour: about 18 in 2019, about 14.6 in
   #" the year to June 2024 (about 12 in May and June 2024, after service hours rose 17.5% in May with no more riders),
   #" about 22.7 in July 2024, about 17.5 in the latest 12 months. How much of today's figure is real riders can't be
   #" measured from this data. The whole-agency "138%" includes GoRaleigh Access. Fares resumed after the jump (City
