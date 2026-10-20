@@ -803,7 +803,7 @@ function More({ t, narrow, givens, mine, mineShort, menuRows, events, allRows })
       <Card title="Riders follow service hours, against matched peers">
         <div className="cr-legend"><span><i style={{ background: abNeutral(t) }} />Service hours</span><span><i style={{ background: t.pal.down }} />Riders</span></div>
         <div className="od-vega"><VegaChart spec={specs.path} data={pathRows} /></div>
-        <Chips items={[`${busCut.events || "–"} sharp bus cuts, ${busAdd.events || "–"} additions, 2004–2025 outside COVID`, `Cut ${one2(busCut.elasticity_y2)} (${one2(busCut.e_y2_lo)}–${one2(busCut.e_y2_hi)}) · added ${one2(busAdd.elasticity_y2)} (${one2(busAdd.e_y2_lo)}–${one2(busAdd.e_y2_hi)}), year 2`, "Flat before the change"]} />
+        <Chips items={[`${busCut.events || "–"} sharp bus cuts, ${busAdd.events || "–"} additions, 2004–2025 outside COVID`, `Cut ${one2(busCut.elasticity_y2)} (${one2(busCut.e_y2_lo)}–${one2(busCut.e_y2_hi)}) · added ${one2(busAdd.elasticity_y2)} (${one2(busAdd.e_y2_lo)}–${one2(busAdd.e_y2_hi)}), year 2`, "Small drift before the change (pre-trend check: estimate_checks)"]} />
       </Card>
     </div>
   );
@@ -860,7 +860,7 @@ const ABOUT = {
     "Service response: sharp bus cuts and additions outside COVID, each against 10 same-size peers whose hours held steady and whose riders tracked it before; 95% bands from 500 bootstrap draws. " +
     "An agency-level panel gives a similar first year but a lower second year for cuts. Fake cut dates and fake cutting agencies show no effect, and the cut estimate moves with the cut-size rule (all checks: estimate_checks in the model). Numbers re-run through Malloyyo match the DuckDB build.",
   definitions: [
-    ["Relief gap", "Federal operating money in 2024 minus the agency's 2017–19 federal share × its 2024 operating money (never below zero). Agencies without 2017–19 money use their size class's median."],
+    ["Relief gap", "Federal operating money in 2024 minus the agency's 2017–19 federal share × its 2024 operating money (never below zero). Agencies without 2017–19 money use the median of their size class and urbanized-area band."],
     ["Flagged", "Relief gap of 10% or more of the 2024 operating budget."],
     ["No gap", "Relief gap under 1% of the 2024 operating budget."],
     ["Share ranking", "Relief gap ÷ 2024 operating budget, ranked among bus agencies and big systems with a $10M+ operating budget. The default order; the dollar ranking is the toggle."],
@@ -881,19 +881,12 @@ const ABOUT = {
   ],
 };
 
-// One agency's tags: the 2024 gap to close and, where its public schedule is in the sample, what its infrequent routes
-// cost (sized in dollars; which hours carry the fewest riders needs its passenger counts).
-function actionTags(r, g) {
+// One agency's tag: the 2024 gap to close. (Which hours to cut needs the agency's passenger counts, not in this data.)
+function actionTags(r) {
   if (!r || r.relief_gap == null || !(r.relief_share >= 0.01)) return { none: "no gap" };
   const gap = mBig(r.relief_gap);
-  if (!(r.bus_opex > 0)) return { act: `close ${gap} gap: rail only, no bus hours pool` };
-  let pool = null;
-  if (g && r.bus_vrh_2024 && r.bus_avoidable_cost_per_hour) {
-    pool = ((g.share_31_to_60 || 0) + (g.share_over60_or_peak_only || 0)) * r.bus_vrh_2024 * r.bus_avoidable_cost_per_hour;
-  }
-  const poolTxt = pool == null ? ""
-    : `infrequent routes cost ${g.hours_check_flag ? "≈" : ""}${mBig(pool)} a year`;
-  return { act: `close ${gap} gap`, keep: poolTxt || null };
+  if (!(r.bus_opex > 0)) return { act: `close ${gap} gap (rail only)` };
+  return { act: `close ${gap} gap` };
 }
 
 // The first screen: agencies ranked by relief gap as a share of budget (or in dollars), #1 highlighted, the selected agency outlined
@@ -939,7 +932,7 @@ function GapRanking({ rows, selId, by, setBy, onPick, topN, flaggedCount, univer
         {pinned && row(pinned)}
       </ol>
       <div className="rk-foot">
-        <Chips items={[`${universe} bus agencies and big systems · ${flaggedCount} at 10%+ (red)`, floorChip, "Gap = federal money above own 2017–19 share", "Infrequent-route cost shown where the public schedule is in the 43-agency sample", "Agency totals, not routes", ...(extraChips || []), "Click a row to select it"]} />
+        <Chips items={[`${universe} bus agencies and big systems · ${flaggedCount} at 10%+ (red)`, floorChip, "Gap = federal money above own 2017–19 share", "Public schedules for 43 agencies (selected agency's hours below)", "Agency totals, not routes", ...(extraChips || []), "Click a row to select it"]} />
       </div>
     </section>
   );
@@ -982,7 +975,7 @@ export default function Dashboard({ givens }) {
       const rank = i + 1, a2 = alt.get(r.ntd_id);
       const stab = rank === 1 ? (a2 === 1 ? "#1 on a 2019-only baseline too" : `#${a2} on a 2019-only baseline`)
         : rank <= 12 && Math.abs(a2 - rank) > 2 ? `#${a2} on a 2019-only baseline` : null;
-      return { ...r, rank, stab, short: clip(shortName(r.agency_label), narrow ? 30 : 38), tags: actionTags(r, gtById.get(r.ntd_id)) };
+      return { ...r, rank, stab, short: clip(shortName(r.agency_label), narrow ? 30 : 38), tags: actionTags(r) };
     });
   }, [alQ.rows, by, gtById, narrow]);
   const flaggedCount = ranked.filter((r) => r.flagged).length;
@@ -1078,7 +1071,7 @@ export default function Dashboard({ givens }) {
               <>
                 <div className="bc-tiles">
                   <div><div className="v good">{pc0(freqShare)}</div><div className="l"><b>Frequent</b> · hours every 15 min or better</div></div>
-                  <div><div className="v bad">{mBig(coverageDollars)}</div><div className="l"><b>Infrequent hours</b> · {pc0(coverageShare)} of hours, every 31+ min, on 2024 report-year hours{mineRanked && mineRanked.relief_gap > 0 ? ` · gap ${mBig(mineRanked.relief_gap)}` : ""}</div></div>
+                  <div><div className="v">{mBig(coverageDollars)}</div><div className="l"><b>Infrequent hours</b> · {pc0(coverageShare)} of hours, every 31+ min, on 2024 report-year hours{mineRanked && mineRanked.relief_gap > 0 ? ` · gap ${mBig(mineRanked.relief_gap)}` : ""}</div></div>
                 </div>
                 <div className="cr-legend">{HW.map((k, i) => <span key={k}><i style={{ background: hwColors(t)[i] }} />{k}</span>)}</div>
                 <div className="od-vega"><VegaChart spec={specs.hours} data={hoursRows} /></div>
