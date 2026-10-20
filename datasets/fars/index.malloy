@@ -1538,16 +1538,22 @@ source: persons_by_state_year is persons -> {
   }
 }
 
+#" One row per county code: the Census county name, used to label counties consistently across years.
+source: county_names is motherduck.sql("""SELECT county_fips, max(county_name) AS census_county_name FROM fars.county_population GROUP BY county_fips""") extend {
+  primary_key: county_fips
+}
+
 #" One row per county per year with the rest of its state beside it: pedestrian deaths in the dark on arterials and pedestrians' share of deaths, so any county can be compared with the rest of its state.
-#(agent) Grain: county x year (counties with a fatal crash that year); `rest_of_state_*_n` columns hold the rest of the same state in the same year. Any filter is safe. Rows with no county code (0-4 deaths a year) stay in their state's totals with a null county name.
+#(agent) Grain: county x year, keyed by `county_fips` with the Census name (FARS spells some counties differently across years). `rest_of_state_*_n` columns hold the rest of the same state in the same year. Any filter is safe. Rows with no county code (0-4 deaths a year) stay in their state's totals with a null name.
+#(agent) A county has rows only in years with a fatal crash there, so pooled rest-of-state figures cover those years only (small effect on shares).
 #(agent) Chance: Wilson intervals and two-proportion tests (people treated as independent); a Poisson interval on the dark-arterial count. Per-resident county rates are in `county_years`.
 source: pedestrians_by_county_year is persons -> {
   group_by:
     `year`
     state_name is crashes.state_name
     county_fips is crashes.county_fips
-    county_name is crashes.county_name
   aggregate:
+    fars_county_name is crashes.county_name.max()
     deaths_n is deaths
     peds_n is pedestrian_deaths
     peds_dark_n is pedestrian_deaths_dark
@@ -1562,6 +1568,12 @@ source: pedestrians_by_county_year is persons -> {
     )
       - pedestrian_deaths_dark_arterial
 } extend {
+  join_one: county_names on county_fips = county_names.county_fips
+
+  dimension:
+    #" County name as the Census writes it (FARS's own spelling where the Census has no such code, e.g. Connecticut's old counties).
+    county_display_name is coalesce(county_names.census_county_name, fars_county_name)
+
   measure:
     #" People killed.
     deaths is deaths_n.sum()
@@ -1713,8 +1725,9 @@ source: pedestrians_by_county_year is persons -> {
 
   #" Per county (all years in the query): pedestrians' share of deaths and the share of pedestrian deaths in the dark on arterials, with intervals and tests against the rest of the same state. Any filter is safe.
   view: pedestrians_by_county is {
-    group_by: state_name, county_fips, county_name
+    group_by: state_name, county_fips
     aggregate:
+      county_name is county_display_name.max()
       deaths, pedestrian_deaths, pedestrian_share_of_deaths, pedestrian_share_low_95
       pedestrian_share_high_95, rest_of_state_pedestrian_share, pedestrian_share_vs_rest_of_state
       pedestrian_deaths_dark, pedestrian_deaths_dark_arterial
@@ -1729,46 +1742,57 @@ source: pedestrians_by_county_year is persons -> {
 
 #" Deaths and vehicle-miles (FHWA VM-2) by year, state, rural/urban and road type: deaths per 100 million vehicle-miles by road class, with 95% intervals.
 #(agent) Unfiltered queries pool every state and year: filter `year` and `state_name`. No county miles exist: never divide county deaths by state miles. Rates include pedestrians, who drive no miles. National figures are sums over states. Deaths with unknown road type or rural/urban (490 in 2024) are not here. A state vs the rest of the US: `road_class_by_state_year`.
-#(agent) Miles can jump when a state re-estimates them (NC local roads +25% in 2024): check `road_class_change_since_2019` before reading a rate change. A few cells have deaths but no miles (2-4 deaths a year since 2022, 115 in 2021).
+#(agent) Miles can jump when a state re-estimates them (NC local roads +25% in 2024; Georgia rural local 16,793 million in 2022 vs about 4,400 in other years): check `road_class_change_since_2019` before reading a rate change.
+#(agent) Some cells have deaths but no miles in VM-2 ('-'): 29, 28, 115, 3, 4 and 2 deaths in 2019-2024 (Illinois 2021 rural local 58 and rural minor collector 12; Georgia rural other freeway; Wisconsin and North Dakota collectors; none in North Carolina). Rates leave these deaths out of the numerator; `deaths_without_miles` shows them.
 #(agent) Chance: rate intervals and tests use a Poisson variance widened for multi-death crashes (`deaths_sq`); they cover deaths only, not error in the miles.
 source: road_exposure is motherduck.table('fars.road_exposure') extend {
   where: state_name != 'United States'
 
+  dimension:
+    #" Deaths in this cell when FHWA reports miles for it, else 0: the numerator of every per-mile rate.
+    deaths_mi is pick deaths when vmt_millions > 0 else 0
+    #" Sum of fatalities squared for the same deaths (variance allowing for multi-death crashes).
+    deaths_sq_mi is pick deaths_sq when vmt_millions > 0 else 0
+
   measure:
     #" People killed (crashes with known road type and rural/urban only).
     deaths_with_road_type is deaths.sum()
+    #" Deaths in road cells where FHWA's VM-2 shows no miles; left out of every per-mile rate (191 in 2019-2024).
+    deaths_without_miles is deaths.sum() { where: vmt_millions = 0 }
     #" Vehicle-miles travelled, millions.
     vmt_millions_total is vmt_millions.sum()
     #" Deaths per 100 million vehicle-miles.
-    deaths_per_100m_vmt is deaths.sum() / nullif(vmt_millions.sum() / 100, 0)
+    deaths_per_100m_vmt is deaths_mi.sum() / nullif(vmt_millions.sum() / 100, 0)
     #" Lower end of the 95% interval on the rate (Poisson on deaths, widened for multi-death crashes).
     deaths_per_100m_vmt_low_95 is (
-        pick 0 when deaths.sum() = 0
+        pick 0 when deaths_mi.sum() = 0
         else greatest(
-          deaths.sum()
+          deaths_mi.sum()
             - (
-              deaths.sum()
-                - deaths.sum() * pow(
+              deaths_mi.sum()
+                - deaths_mi.sum() * pow(
                   1
-                    - 1 / nullif(9 * deaths.sum(), 0)
-                    - 1.96 / nullif(3 * sqrt(deaths.sum()), 0),
+                    - 1 / nullif(9 * deaths_mi.sum(), 0)
+                    - 1.96 / nullif(3 * sqrt(deaths_mi.sum()), 0),
                   3
                 )
-            ) * sqrt(greatest(deaths_sq.sum() / nullif(deaths.sum(), 0), 1)),
+            ) * sqrt(greatest(deaths_sq_mi.sum() / nullif(deaths_mi.sum(), 0), 1)),
           0
         )
     ) / nullif(vmt_millions.sum() / 100, 0)
     #" Upper end of the 95% interval on the rate (Poisson on deaths, widened for multi-death crashes).
     deaths_per_100m_vmt_high_95 is (
-      deaths.sum()
+      deaths_mi.sum()
         + (
-          (deaths.sum() + 1) * pow(
-            1 - 1 / (9 * (deaths.sum() + 1)) + 1.96 / (3 * sqrt(deaths.sum() + 1)),
+          (deaths_mi.sum() + 1) * pow(
+            1
+              - 1 / (9 * (deaths_mi.sum() + 1))
+              + 1.96 / (3 * sqrt(deaths_mi.sum() + 1)),
             3
           )
-            - deaths.sum()
+            - deaths_mi.sum()
         ) * sqrt(greatest(
-          coalesce(deaths_sq.sum() / nullif(deaths.sum(), 0), 1),
+          coalesce(deaths_sq_mi.sum() / nullif(deaths_mi.sum(), 0), 1),
           1
         ))
     ) / nullif(vmt_millions.sum() / 100, 0)
@@ -1780,35 +1804,41 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
   view: deaths_per_mile_by_road_class is {
     group_by: road_class
     aggregate:
-      deaths_with_road_type, vmt_millions_total, deaths_per_100m_vmt, deaths_per_100m_vmt_low_95
-      deaths_per_100m_vmt_high_95
+      deaths_with_road_type, deaths_without_miles, vmt_millions_total, deaths_per_100m_vmt
+      deaths_per_100m_vmt_low_95, deaths_per_100m_vmt_high_95
       # percent
       share_of_deaths is deaths.sum() / all(deaths.sum())
       # percent
       share_of_miles is vmt_millions.sum() / all(vmt_millions.sum())
-      rate_vs_interstate_freeway is (deaths.sum() / vmt_millions.sum()) / (
-        all(deaths.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() {
+      rate_vs_interstate_freeway is (deaths_mi.sum() / vmt_millions.sum()) / (
+        all(deaths_mi.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() {
           where: road_class = 'Interstate or freeway'
         })
       )
-      rate_vs_freeway_low_95 is (deaths.sum() / vmt_millions.sum()) / (
-        all(deaths.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() {
+      rate_vs_freeway_low_95 is (deaths_mi.sum() / vmt_millions.sum()) / (
+        all(deaths_mi.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() {
           where: road_class = 'Interstate or freeway'
         })
-      ) * exp(- 1.96 * sqrt(deaths_sq.sum() / nullif(deaths.sum() * deaths.sum(), 0)
-        + all(deaths_sq.sum() { where: road_class = 'Interstate or freeway' }) / nullif(
-          all(deaths.sum() { where: road_class = 'Interstate or freeway' }) * all(deaths.sum() {
+      ) * exp(- 1.96 * sqrt(deaths_sq_mi.sum() / nullif(
+        deaths_mi.sum() * deaths_mi.sum(),
+        0
+      )
+        + all(deaths_sq_mi.sum() { where: road_class = 'Interstate or freeway' }) / nullif(
+          all(deaths_mi.sum() { where: road_class = 'Interstate or freeway' }) * all(deaths_mi.sum() {
             where: road_class = 'Interstate or freeway'
           }),
           0
         )))
-      rate_vs_freeway_high_95 is (deaths.sum() / vmt_millions.sum()) / (
-        all(deaths.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() {
+      rate_vs_freeway_high_95 is (deaths_mi.sum() / vmt_millions.sum()) / (
+        all(deaths_mi.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() {
           where: road_class = 'Interstate or freeway'
         })
-      ) * exp(1.96 * sqrt(deaths_sq.sum() / nullif(deaths.sum() * deaths.sum(), 0)
-        + all(deaths_sq.sum() { where: road_class = 'Interstate or freeway' }) / nullif(
-          all(deaths.sum() { where: road_class = 'Interstate or freeway' }) * all(deaths.sum() {
+      ) * exp(1.96 * sqrt(deaths_sq_mi.sum() / nullif(
+        deaths_mi.sum() * deaths_mi.sum(),
+        0
+      )
+        + all(deaths_sq_mi.sum() { where: road_class = 'Interstate or freeway' }) / nullif(
+          all(deaths_mi.sum() { where: road_class = 'Interstate or freeway' }) * all(deaths_mi.sum() {
             where: road_class = 'Interstate or freeway'
           }),
           0
@@ -1827,51 +1857,53 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
     group_by: road_class
     aggregate:
       nc_deaths_2024 is deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 }
-      nc_rate_2024 is deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / (
+      nc_rate_2024 is deaths_mi.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / (
         vmt_millions.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / 100
       )
-      nc_rate_2022_2024 is deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / (
+      nc_rate_2022_2024 is deaths_mi.sum() {
+        where: state_name = 'North Carolina' and `year` >= 2022
+      } / (
         vmt_millions.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / 100
       )
-      us_rate_2024 is deaths.sum() { where: `year` = 2024 } / (
+      us_rate_2024 is deaths_mi.sum() { where: `year` = 2024 } / (
         vmt_millions.sum() { where: `year` = 2024 } / 100
       )
-      us_rate_2022_2024 is deaths.sum() { where: `year` >= 2022 } / (
+      us_rate_2022_2024 is deaths_mi.sum() { where: `year` >= 2022 } / (
         vmt_millions.sum() { where: `year` >= 2022 } / 100
       )
-      rest_of_us_rate_2022_2024 is deaths.sum() {
+      rest_of_us_rate_2022_2024 is deaths_mi.sum() {
         where: state_name != 'North Carolina' and `year` >= 2022
       } / (
         vmt_millions.sum() { where: state_name != 'North Carolina' and `year` >= 2022 } / 100
       )
       rest_of_us_ratio_vs_freeway_2022_2024 is (
-        deaths.sum() { where: state_name != 'North Carolina' and `year` >= 2022 } / vmt_millions.sum() {
+        deaths_mi.sum() { where: state_name != 'North Carolina' and `year` >= 2022 } / vmt_millions.sum() {
           where: state_name != 'North Carolina' and `year` >= 2022
         }
       ) / (
-        all(deaths.sum() {
+        all(deaths_mi.sum() {
           where: state_name != 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway'
         }) / all(vmt_millions.sum() {
           where: state_name != 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway'
         })
       )
       nc_ratio_vs_freeway_2024 is (
-        deaths.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / vmt_millions.sum() {
+        deaths_mi.sum() { where: state_name = 'North Carolina' and `year` = 2024 } / vmt_millions.sum() {
           where: state_name = 'North Carolina' and `year` = 2024
         }
       ) / (
-        all(deaths.sum() {
+        all(deaths_mi.sum() {
           where: state_name = 'North Carolina' and `year` = 2024 and road_class = 'Interstate or freeway'
         }) / all(vmt_millions.sum() {
           where: state_name = 'North Carolina' and `year` = 2024 and road_class = 'Interstate or freeway'
         })
       )
       nc_ratio_vs_freeway_2022_2024 is (
-        deaths.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / vmt_millions.sum() {
+        deaths_mi.sum() { where: state_name = 'North Carolina' and `year` >= 2022 } / vmt_millions.sum() {
           where: state_name = 'North Carolina' and `year` >= 2022
         }
       ) / (
-        all(deaths.sum() {
+        all(deaths_mi.sum() {
           where: state_name = 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway'
         }) / all(vmt_millions.sum() {
           where: state_name = 'North Carolina' and `year` >= 2022 and road_class = 'Interstate or freeway'
@@ -1888,8 +1920,8 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
   view: deaths_per_mile_by_road_function is {
     group_by: road_function
     aggregate:
-      deaths_with_road_type, vmt_millions_total, deaths_per_100m_vmt, deaths_per_100m_vmt_low_95
-      deaths_per_100m_vmt_high_95
+      deaths_with_road_type, deaths_without_miles, vmt_millions_total, deaths_per_100m_vmt
+      deaths_per_100m_vmt_low_95, deaths_per_100m_vmt_high_95
     order_by: road_function
   }
 
@@ -1901,37 +1933,37 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
       deaths_2024 is
         pick deaths.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
         else null
-      rate_2024 is deaths.sum() { where: `year` = 2024 } / (
+      rate_2024 is deaths_mi.sum() { where: `year` = 2024 } / (
         vmt_millions.sum() { where: `year` = 2024 } / 100
       )
       deaths_2022_2024 is deaths.sum() { where: `year` >= 2022 }
-      rate_2022_2024 is deaths.sum() { where: `year` >= 2022 } / (
+      rate_2022_2024 is deaths_mi.sum() { where: `year` >= 2022 } / (
         vmt_millions.sum() { where: `year` >= 2022 } / 100
       )
     order_by: road_function
   }
 
-  #" By road class: miles and deaths per 100 million vehicle-miles in 2019, 2023 and 2024, the change in miles, and whether each rate change beats chance given the miles. Add `+ { where: state_name = 'North Carolina' }` for a state.
+  #" By road class: miles, deaths in cells with miles, and deaths per 100 million vehicle-miles in 2019, 2023 and 2024, the change in miles, and whether each rate change beats chance given the miles. Add `+ { where: state_name = 'North Carolina' }`.
   view: road_class_change_since_2019 is {
     group_by: road_class
     aggregate:
       deaths_2019 is
-        pick deaths.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
+        pick deaths_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
         else null
       deaths_2023 is
-        pick deaths.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
+        pick deaths_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
         else null
       deaths_2024 is
-        pick deaths.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
+        pick deaths_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
         else null
       sq_2019 is
-        pick deaths_sq.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
+        pick deaths_sq_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
         else null
       sq_2023 is
-        pick deaths_sq.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
+        pick deaths_sq_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
         else null
       sq_2024 is
-        pick deaths_sq.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
+        pick deaths_sq_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
         else null
       vmt_2019 is
         pick vmt_millions.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
@@ -1997,23 +2029,25 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
 
 #" One row per state, road class and year with that year's rest-of-US figures and the state's own freeway rate: deaths per 100 million vehicle-miles for any state against the rest of the US, with intervals, tests and ranks.
 #(agent) Grain: state x road class x year. Any filter is safe, including state, year and road_class: each row stores the rest of the US and the state's own freeway deaths and miles. Keep `road_class` in the group_by: the freeway columns repeat on every class row, so summing them across classes is wrong.
-#(agent) Chance: Poisson variance widened for multi-death crashes (sum of fatalities squared) for the rate interval, the score test against the rest of the US (given the miles) and the log-scale interval on the ratio to the freeway rate. Deaths only, not miles error. Ranks need all 51 states and 30+ deaths.
+#(agent) Chance: Poisson variance widened for multi-death crashes (sum of fatalities squared) for the rate interval, the score test against the rest of the US (given the miles) and the log-scale interval on the ratio to the freeway rate. Deaths only, not miles error. Ranks need all 51 states and 30+ deaths with miles. Deaths in cells with no VM-2 miles are left out of the rates and shown in `deaths_without_miles`; `miles_note` flags rows where they are over 5% (Illinois 2021 local road: 58 of 169).
 source: road_class_by_state_year is road_exposure -> {
   group_by: `year`, state_name, road_class
   aggregate:
-    deaths_n is deaths.sum()
-    deaths_sq_n is deaths_sq.sum()
+    deaths_n is deaths_mi.sum()
+    deaths_no_miles_n is deaths.sum() { where: vmt_millions = 0 }
+    deaths_sq_n is deaths_sq_mi.sum()
     vmt_n is vmt_millions.sum()
-    rest_deaths_n is all(deaths.sum(), `year`, road_class) - deaths.sum()
-    rest_deaths_sq_n is all(deaths_sq.sum(), `year`, road_class) - deaths_sq.sum()
+    rest_deaths_n is all(deaths_mi.sum(), `year`, road_class) - deaths_mi.sum()
+    rest_deaths_sq_n is all(deaths_sq_mi.sum(), `year`, road_class)
+      - deaths_sq_mi.sum()
     rest_vmt_n is all(vmt_millions.sum(), `year`, road_class) - vmt_millions.sum()
     freeway_deaths_n is all(
-      deaths.sum() { where: road_class = 'Interstate or freeway' },
+      deaths_mi.sum() { where: road_class = 'Interstate or freeway' },
       `year`,
       state_name
     )
     freeway_deaths_sq_n is all(
-      deaths_sq.sum() { where: road_class = 'Interstate or freeway' },
+      deaths_sq_mi.sum() { where: road_class = 'Interstate or freeway' },
       `year`,
       state_name
     )
@@ -2023,11 +2057,11 @@ source: road_class_by_state_year is road_exposure -> {
       state_name
     )
     rest_freeway_deaths_n is all(
-      deaths.sum() { where: road_class = 'Interstate or freeway' },
+      deaths_mi.sum() { where: road_class = 'Interstate or freeway' },
       `year`
     )
       - all(
-        deaths.sum() { where: road_class = 'Interstate or freeway' },
+        deaths_mi.sum() { where: road_class = 'Interstate or freeway' },
         `year`,
         state_name
       )
@@ -2043,8 +2077,18 @@ source: road_class_by_state_year is road_exposure -> {
     states_in_year is all(count(state_name), `year`)
 } extend {
   measure:
-    #" People killed (known road type and rural/urban).
-    deaths_with_road_type is deaths_n.sum()
+    #" People killed (known road type and rural/urban), including deaths in cells with no reported miles.
+    deaths_with_road_type is deaths_n.sum() + deaths_no_miles_n.sum()
+    #" Deaths in cells with reported miles: the numerator of the rates here.
+    deaths_with_miles is deaths_n.sum()
+    #" Deaths in cells where FHWA's VM-2 shows no miles; left out of the rates.
+    deaths_without_miles is deaths_no_miles_n.sum()
+    #" Whether deaths without reported miles are a material share (over 5%) of this row's deaths.
+    miles_note is
+      pick 'Miles missing for part of this class'
+      when deaths_no_miles_n.sum() > 0.05 * (deaths_n.sum() + deaths_no_miles_n.sum())
+      pick 'Some deaths without miles (under 5%)' when deaths_no_miles_n.sum() > 0
+      else 'Miles reported for every cell'
     #" Vehicle-miles, millions.
     vmt_millions_total is vmt_n.sum()
     #" Deaths per 100 million vehicle-miles.
@@ -2139,27 +2183,35 @@ source: road_class_by_state_year is road_exposure -> {
   view: state_deaths_per_mile_by_road_class is {
     group_by: state_name, road_class
     aggregate:
-      deaths_with_road_type, vmt_millions_total, deaths_per_100m_vmt, deaths_per_100m_vmt_low_95
-      deaths_per_100m_vmt_high_95, rest_of_us_rate, rate_vs_rest_of_us, ratio_to_own_freeway_rate
-      ratio_low_95, ratio_high_95, rest_of_us_ratio_to_freeway, last_year
+      deaths_with_road_type, deaths_with_miles, deaths_without_miles, miles_note, vmt_millions_total
+      deaths_per_100m_vmt, deaths_per_100m_vmt_low_95, deaths_per_100m_vmt_high_95, rest_of_us_rate
+      rate_vs_rest_of_us, ratio_to_own_freeway_rate, ratio_low_95, ratio_high_95
+      rest_of_us_ratio_to_freeway, last_year
       states_compared is all(count(state_name), road_class)
       states_in_data is all(states_in_year.max(), road_class)
-      rate_basis is pick deaths_per_100m_vmt when deaths_with_road_type >= 30 else null
-      ratio_basis is pick ratio_to_own_freeway_rate when deaths_with_road_type >= 30 else null
+      rate_basis is pick deaths_per_100m_vmt when deaths_with_miles >= 30 else null
+      ratio_basis is pick ratio_to_own_freeway_rate when deaths_with_miles >= 30 else null
     calculate:
       rank_r is rank() { partition_by: road_class; order_by: rate_basis desc }
       rank_q is rank() { partition_by: road_class; order_by: ratio_basis desc }
   } -> {
     select:
-      state_name, road_class, deaths_with_road_type, vmt_millions_total, deaths_per_100m_vmt
-      deaths_per_100m_vmt_low_95, deaths_per_100m_vmt_high_95, rest_of_us_rate
+      state_name, road_class, deaths_with_road_type, deaths_with_miles, deaths_without_miles
+      miles_note, vmt_millions_total, deaths_per_100m_vmt, deaths_per_100m_vmt_low_95
+      deaths_per_100m_vmt_high_95, rest_of_us_rate
       vs_rest_of_us is rate_vs_rest_of_us
       rank_rate is
-        pick rank_r when states_compared = states_in_data and deaths_with_road_type >= 30
+        pick rank_r when states_compared = states_in_data and deaths_with_miles >= 30
         else null
-      ratio_to_own_freeway_rate, ratio_low_95, ratio_high_95, rest_of_us_ratio_to_freeway
+      ratio_to_own_freeway_rate
+      ratio_low_95 is pick null when road_class = 'Interstate or freeway' else ratio_low_95
+      ratio_high_95 is pick null when road_class = 'Interstate or freeway' else ratio_high_95
+      rest_of_us_ratio_to_freeway
       rank_ratio_to_freeway is
-        pick rank_q when states_compared = states_in_data and deaths_with_road_type >= 30
+        pick rank_q
+        when states_compared = states_in_data
+          and deaths_with_miles >= 30
+          and road_class != 'Interstate or freeway'
         else null
       last_year, states_compared
     order_by: road_class, rank_rate
@@ -2167,42 +2219,51 @@ source: road_class_by_state_year is road_exposure -> {
 }
 
 #" One row per state (and 'United States') per year: deaths, alcohol-impaired-driving deaths three ways, vehicle-miles and residents, for state rates per mile and per resident with intervals and change tests.
-#(agent) Filter `state_name` to one value or exclude 'United States', or national totals are counted twice. A state vs the rest of the US: `state_rates_by_year`. The federal impaired-driving tier (23 CFR 1300.23) uses three final years: 2021-2023 until the 2024 Final File exists.
-#(agent) Chance: rate intervals and change tests use a Poisson variance widened for multi-death crashes (`deaths_sq`), given the miles or residents. The tier interval is Poisson on the imputed count (imputation uncertainty not included).
+#(agent) Filter `state_name` to one value or exclude 'United States', or national totals are counted twice (views here group by `state_name`). A state vs the rest of the US: `state_rates_by_year`. The federal impaired-driving tier (23 CFR 1300.23) uses three final years: 2021-2023 until the 2024 Final File exists.
+#(agent) Chance: rate intervals and change tests use a Poisson variance widened for multi-death crashes (`deaths_sq`), given the miles or residents. The tier interval is Poisson on the imputed count, widened by the state's own all-deaths clustering factor (an approximation); imputation uncertainty is not included.
+#(agent) Per-mile rates leave out deaths in road cells where VM-2 shows no miles (`deaths_without_miles`: 191 in 2019-2024, 115 in 2021, none in NC), so they differ slightly from NHTSA's headline rate (all deaths over all miles; 2021 US 1.377 vs 1.380). Per-resident rates count every death. The impaired-driving rate keeps all imputed deaths (no split by cell exists).
 source: state_years is motherduck.table('fars.state_years') extend {
+  dimension:
+    #" Deaths with reported miles: all deaths less those in road cells where VM-2 shows no miles (the per-mile numerator).
+    deaths_mi is deaths - deaths_without_miles
+    #" Sum of fatalities squared for those deaths.
+    deaths_sq_mi is deaths_sq - deaths_sq_without_miles
+
   measure:
     #" People killed.
     total_deaths is deaths.sum()
     #" Deaths per 100 million vehicle-miles.
-    deaths_per_100m_vmt is deaths.sum() / nullif(vmt_millions.sum() / 100, 0)
+    deaths_per_100m_vmt is deaths_mi.sum() / nullif(vmt_millions.sum() / 100, 0)
     #" Lower end of the 95% interval on deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt_low_95 is (
-        pick 0 when deaths.sum() = 0
+        pick 0 when deaths_mi.sum() = 0
         else greatest(
-          deaths.sum()
+          deaths_mi.sum()
             - (
-              deaths.sum()
-                - deaths.sum() * pow(
+              deaths_mi.sum()
+                - deaths_mi.sum() * pow(
                   1
-                    - 1 / nullif(9 * deaths.sum(), 0)
-                    - 1.96 / nullif(3 * sqrt(deaths.sum()), 0),
+                    - 1 / nullif(9 * deaths_mi.sum(), 0)
+                    - 1.96 / nullif(3 * sqrt(deaths_mi.sum()), 0),
                   3
                 )
-            ) * sqrt(greatest(deaths_sq.sum() / nullif(deaths.sum(), 0), 1)),
+            ) * sqrt(greatest(deaths_sq_mi.sum() / nullif(deaths_mi.sum(), 0), 1)),
           0
         )
     ) / nullif(vmt_millions.sum() / 100, 0)
     #" Upper end of the 95% interval on deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt_high_95 is (
-      deaths.sum()
+      deaths_mi.sum()
         + (
-          (deaths.sum() + 1) * pow(
-            1 - 1 / (9 * (deaths.sum() + 1)) + 1.96 / (3 * sqrt(deaths.sum() + 1)),
+          (deaths_mi.sum() + 1) * pow(
+            1
+              - 1 / (9 * (deaths_mi.sum() + 1))
+              + 1.96 / (3 * sqrt(deaths_mi.sum() + 1)),
             3
           )
-            - deaths.sum()
+            - deaths_mi.sum()
         ) * sqrt(greatest(
-          coalesce(deaths_sq.sum() / nullif(deaths.sum(), 0), 1),
+          coalesce(deaths_sq_mi.sum() / nullif(deaths_mi.sum(), 0), 1),
           1
         ))
     ) / nullif(vmt_millions.sum() / 100, 0)
@@ -2250,7 +2311,7 @@ source: state_years is motherduck.table('fars.state_years') extend {
       0
     )
 
-  #" Federal impaired-driving tier per 23 CFR 1300.23 on 2021-2023 (low 0.30 or less, high 0.60 or more) from NHTSA's imputed counts, with a Poisson interval on the rate and whether the tier is within chance of a boundary; tested-only tier for contrast.
+  #" Federal impaired-driving tier per 23 CFR 1300.23 on 2021-2023 (low 0.30 or less, high 0.60 or more) from NHTSA's imputed counts, with an interval on the rate and whether the tier is within chance of a boundary; tested-only tier for contrast.
   view: impaired_driving_tier_by_state is {
     where: `year` >= 2021 and `year` <= 2023 and state_name != 'United States'
     group_by: state_name
@@ -2258,20 +2319,31 @@ source: state_years is motherduck.table('fars.state_years') extend {
       impaired_rate_per_100m_vmt, impaired_rate_tested_only
       ai is alcohol_impaired_deaths.sum()
       vmt is vmt_millions.sum()
+      phi is greatest(coalesce(deaths_sq.sum() / nullif(deaths.sum(), 0), 1), 1)
   } -> {
     extend: {
       dimension:
         lo is (
             pick 0 when ai = 0
-            else ai * pow(
-              1 - 1 / nullif(9 * ai, 0) - 1.96 / nullif(3 * sqrt(ai), 0),
-              3
+            else greatest(
+              ai
+                - (
+                  ai
+                    - ai * pow(
+                      1 - 1 / nullif(9 * ai, 0) - 1.96 / nullif(3 * sqrt(ai), 0),
+                      3
+                    )
+                ) * sqrt(phi),
+              0
             )
         ) / nullif(vmt / 100, 0)
-        hi is (ai + 1) * pow(1 - 1 / (9 * (ai + 1)) + 1.96 / (3 * sqrt(ai + 1)), 3) / nullif(
-          vmt / 100,
-          0
-        )
+        hi is (
+          ai
+            + (
+              (ai + 1) * pow(1 - 1 / (9 * (ai + 1)) + 1.96 / (3 * sqrt(ai + 1)), 3)
+                - ai
+            ) * sqrt(phi)
+        ) / nullif(vmt / 100, 0)
     }
     select:
       state_name, impaired_rate_per_100m_vmt, impaired_rate_tested_only
@@ -2289,13 +2361,13 @@ source: state_years is motherduck.table('fars.state_years') extend {
     order_by: impaired_rate_per_100m_vmt desc
   }
 
-  #" Deaths per resident and per mile by year with 95% intervals; add `+ { where: state_name = 'North Carolina' }` (or 'United States').
+  #" Deaths per resident and per mile by state (and 'United States') and year with 95% intervals; add `+ { where: state_name = 'North Carolina' }`.
   view: rates_by_year is {
-    group_by: `year`
+    group_by: state_name, `year`
     aggregate:
       total_deaths, deaths_per_100m_vmt, deaths_per_100m_vmt_low_95, deaths_per_100m_vmt_high_95
       deaths_per_100k_residents, deaths_per_100k_residents_low_95, deaths_per_100k_residents_high_95
-    order_by: `year`
+    order_by: state_name, `year`
   }
 
   #" Every state (and 'United States'): deaths per 100,000 residents and per 100 million vehicle-miles in 2019, 2023 and 2024, and whether each change in the rate beats chance given the residents or miles.
@@ -2339,8 +2411,26 @@ source: state_years is motherduck.table('fars.state_years') extend {
         pick vmt_millions.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
         else null
       n_2019 is count() { where: `year` = 2019 }
+      dm_2019 is
+        pick deaths_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
+        else null
+      sqm_2019 is
+        pick deaths_sq_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
+        else null
       n_2023 is count() { where: `year` = 2023 }
+      dm_2023 is
+        pick deaths_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
+        else null
+      sqm_2023 is
+        pick deaths_sq_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
+        else null
       n_2024 is count() { where: `year` = 2024 }
+      dm_2024 is
+        pick deaths_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
+        else null
+      sqm_2024 is
+        pick deaths_sq_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
+        else null
   } -> {
     extend: {
       dimension:
@@ -2362,20 +2452,14 @@ source: state_years is motherduck.table('fars.state_years') extend {
           ),
           0
         ))
-        zm19 is (
-          deaths_2024
-            - (deaths_2024 + deaths_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)
-        ) / sqrt(nullif(
-          (sq_2024 + sq_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (
+        zm19 is (dm_2024 - (dm_2024 + dm_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(
+          (sqm_2024 + sqm_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (
             vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)
           ),
           0
         ))
-        zm23 is (
-          deaths_2024
-            - (deaths_2024 + deaths_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)
-        ) / sqrt(nullif(
-          (sq_2024 + sq_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (
+        zm23 is (dm_2024 - (dm_2024 + dm_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(
+          (sqm_2024 + sqm_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (
             vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)
           ),
           0
@@ -2398,9 +2482,9 @@ source: state_years is motherduck.table('fars.state_years') extend {
         pick 'Up, beyond chance'                         when zr19 > 1.96
         pick 'Down, beyond chance'                       when zr19 < - 1.96
         else 'Within chance'
-      per_100m_vmt_2019 is deaths_2019 / nullif(vmt_2019 / 100, 0)
-      per_100m_vmt_2023 is deaths_2023 / nullif(vmt_2023 / 100, 0)
-      per_100m_vmt_2024 is deaths_2024 / nullif(vmt_2024 / 100, 0)
+      per_100m_vmt_2019 is dm_2019 / nullif(vmt_2019 / 100, 0)
+      per_100m_vmt_2023 is dm_2023 / nullif(vmt_2023 / 100, 0)
+      per_100m_vmt_2024 is dm_2024 / nullif(vmt_2024 / 100, 0)
       per_mile_2023_to_2024 is
         pick 'Not tested: 2023 or 2024 not in the query' when n_2023 = 0 or n_2024 = 0
         pick 'Not tested'                                when zm23 is null
@@ -2419,17 +2503,21 @@ source: state_years is motherduck.table('fars.state_years') extend {
 
 #" One row per state per year with that year's rest-of-US deaths, miles and residents: any state's death rate per mile and per resident against the rest of the US, with intervals, tests and ranks.
 #(agent) Grain: state x year (no 'United States' row); `rest_*_n` columns hold the rest of the US in the same year. Any filter is safe. Group by `state_name` to pool years (2024 is not final).
-#(agent) Chance: Poisson variance widened for multi-death crashes; score tests against the rest of the US given miles or residents. Ranks need all 51 states in the query.
+#(agent) Chance: Poisson variance widened for multi-death crashes; score tests against the rest of the US given miles or residents. Ranks need all 51 states in the query and 30+ deaths. Per-mile figures leave out deaths in road cells with no VM-2 miles (none in NC; 115 nationally in 2021).
 source: state_rates_by_year is state_years -> {
   where: state_name != 'United States'
   group_by: `year`, state_name
   aggregate:
     deaths_n is deaths.sum()
     deaths_sq_n is deaths_sq.sum()
+    deaths_mi_n is deaths_mi.sum()
+    deaths_sq_mi_n is deaths_sq_mi.sum()
     vmt_n is vmt_millions.sum()
     residents_n is population.sum()
     rest_deaths_n is all(deaths.sum(), `year`) - deaths.sum()
     rest_deaths_sq_n is all(deaths_sq.sum(), `year`) - deaths_sq.sum()
+    rest_deaths_mi_n is all(deaths_mi.sum(), `year`) - deaths_mi.sum()
+    rest_deaths_sq_mi_n is all(deaths_sq_mi.sum(), `year`) - deaths_sq_mi.sum()
     rest_vmt_n is all(vmt_millions.sum(), `year`) - vmt_millions.sum()
     rest_residents_n is all(population.sum(), `year`) - population.sum()
     states_in_year is all(count(state_name), `year`)
@@ -2438,51 +2526,54 @@ source: state_rates_by_year is state_years -> {
     #" People killed.
     total_deaths is deaths_n.sum()
     #" Deaths per 100 million vehicle-miles.
-    deaths_per_100m_vmt is deaths_n.sum() / nullif(vmt_n.sum() / 100, 0)
+    deaths_per_100m_vmt is deaths_mi_n.sum() / nullif(vmt_n.sum() / 100, 0)
     #" Lower end of the 95% interval on deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt_low_95 is (
-        pick 0 when deaths_n.sum() = 0
+        pick 0 when deaths_mi_n.sum() = 0
         else greatest(
-          deaths_n.sum()
+          deaths_mi_n.sum()
             - (
-              deaths_n.sum()
-                - deaths_n.sum() * pow(
+              deaths_mi_n.sum()
+                - deaths_mi_n.sum() * pow(
                   1
-                    - 1 / nullif(9 * deaths_n.sum(), 0)
-                    - 1.96 / nullif(3 * sqrt(deaths_n.sum()), 0),
+                    - 1 / nullif(9 * deaths_mi_n.sum(), 0)
+                    - 1.96 / nullif(3 * sqrt(deaths_mi_n.sum()), 0),
                   3
                 )
-            ) * sqrt(greatest(deaths_sq_n.sum() / nullif(deaths_n.sum(), 0), 1)),
+            ) * sqrt(greatest(
+              deaths_sq_mi_n.sum() / nullif(deaths_mi_n.sum(), 0),
+              1
+            )),
           0
         )
     ) / nullif(vmt_n.sum() / 100, 0)
     #" Upper end of the 95% interval on deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt_high_95 is (
-      deaths_n.sum()
+      deaths_mi_n.sum()
         + (
-          (deaths_n.sum() + 1) * pow(
+          (deaths_mi_n.sum() + 1) * pow(
             1
-              - 1 / (9 * (deaths_n.sum() + 1))
-              + 1.96 / (3 * sqrt(deaths_n.sum() + 1)),
+              - 1 / (9 * (deaths_mi_n.sum() + 1))
+              + 1.96 / (3 * sqrt(deaths_mi_n.sum() + 1)),
             3
           )
-            - deaths_n.sum()
+            - deaths_mi_n.sum()
         ) * sqrt(greatest(
-          coalesce(deaths_sq_n.sum() / nullif(deaths_n.sum(), 0), 1),
+          coalesce(deaths_sq_mi_n.sum() / nullif(deaths_mi_n.sum(), 0), 1),
           1
         ))
     ) / nullif(vmt_n.sum() / 100, 0)
     #" Rest-of-US deaths per 100 million vehicle-miles.
-    rest_of_us_per_100m_vmt is rest_deaths_n.sum() / nullif(rest_vmt_n.sum() / 100, 0)
+    rest_of_us_per_100m_vmt is rest_deaths_mi_n.sum() / nullif(rest_vmt_n.sum() / 100, 0)
     #" Test statistic, per-mile rate vs rest of US.
     z_per_mile is (
-      deaths_n.sum()
-        - (deaths_n.sum() + rest_deaths_n.sum()) * vmt_n.sum() / nullif(
+      deaths_mi_n.sum()
+        - (deaths_mi_n.sum() + rest_deaths_mi_n.sum()) * vmt_n.sum() / nullif(
           vmt_n.sum() + rest_vmt_n.sum(),
           0
         )
     ) / sqrt(nullif(
-      (deaths_sq_n.sum() + rest_deaths_sq_n.sum()) * (
+      (deaths_sq_mi_n.sum() + rest_deaths_sq_mi_n.sum()) * (
         vmt_n.sum() / nullif(vmt_n.sum() + rest_vmt_n.sum(), 0)
       ) * (rest_vmt_n.sum() / nullif(vmt_n.sum() + rest_vmt_n.sum(), 0)),
       0
@@ -2567,17 +2658,23 @@ source: state_rates_by_year is state_years -> {
       rest_of_us_per_100k_residents, per_resident_vs_rest_of_us, last_year
       states_compared is all(count(state_name))
       states_in_data is all(states_in_year.max())
+      m_basis is pick deaths_per_100m_vmt when total_deaths >= 30 else null
+      r_basis is pick deaths_per_100k_residents when total_deaths >= 30 else null
     calculate:
-      rank_m is rank() { order_by: deaths_per_100m_vmt desc }
-      rank_r is rank() { order_by: deaths_per_100k_residents desc }
+      rank_m is rank() { order_by: m_basis desc }
+      rank_r is rank() { order_by: r_basis desc }
   } -> {
     select:
       state_name, total_deaths, deaths_per_100m_vmt, deaths_per_100m_vmt_low_95
       deaths_per_100m_vmt_high_95, rest_of_us_per_100m_vmt, per_mile_vs_rest_of_us
-      rank_per_mile is pick rank_m when states_compared = states_in_data else null
+      rank_per_mile is
+        pick rank_m when states_compared = states_in_data and total_deaths >= 30
+        else null
       deaths_per_100k_residents, deaths_per_100k_residents_low_95, deaths_per_100k_residents_high_95
       rest_of_us_per_100k_residents, per_resident_vs_rest_of_us
-      rank_per_resident is pick rank_r when states_compared = states_in_data else null
+      rank_per_resident is
+        pick rank_r when states_compared = states_in_data and total_deaths >= 30
+        else null
       last_year, states_compared
     order_by: state_name
   }

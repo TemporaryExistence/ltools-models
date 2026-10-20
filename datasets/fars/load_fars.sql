@@ -299,6 +299,9 @@ FULL JOIN d_all ON d_all.year = v.year AND d_all.state_name = v.state_name AND d
 
 -- 8. One row per state (and 'United States') per year: deaths, alcohol-impaired-driving deaths three ways, miles and
 --    residents, for per-mile and per-resident rates and the 23 CFR 1300.23 impaired-driving tier.
+--    deaths_without_miles: deaths in road cells (rural/urban x road function) where FHWA's VM-2 shows no miles ('-');
+--    their miles are missing from vmt_millions, so per-mile rates leave them out of the numerator (191 deaths over
+--    2019-2024, 115 of them in 2021; none in North Carolina). Built from road_exposure (section 7), so run 7 first.
 CREATE OR REPLACE TABLE ltools.fars.state_years AS
 WITH d AS (
   SELECT year, state_name, sum(fatalities) AS deaths, sum(fatalities * fatalities) AS deaths_sq,
@@ -312,15 +315,24 @@ WITH d AS (
   SELECT year, 'United States', sum(deaths), sum(deaths_sq), sum(alcohol_impaired_deaths), sum(alcohol_deaths_tested_only), sum(alcohol_deaths_police_reported) FROM d GROUP BY ALL
 ), v AS (
   SELECT year, state_name, sum(vmt_millions) AS vmt_millions FROM ltools.fars.vmt GROUP BY ALL
+), nm_s AS (
+  SELECT year, state_name, sum(deaths) AS deaths_without_miles, sum(deaths_sq) AS deaths_sq_without_miles
+  FROM ltools.fars.road_exposure WHERE vmt_millions = 0 AND deaths > 0 AND state_name <> 'United States' GROUP BY ALL
+), nm AS (
+  SELECT * FROM nm_s
+  UNION ALL
+  SELECT year, 'United States', sum(deaths_without_miles), sum(deaths_sq_without_miles) FROM nm_s GROUP BY ALL
 ), p AS (
   SELECT year, state_name, sum(population) AS population FROM ltools.fars.county_population GROUP BY ALL
   UNION ALL
   SELECT year, 'United States', sum(population) FROM ltools.fars.county_population GROUP BY ALL
 )
 SELECT d_all.year, d_all.state_name, d_all.deaths, d_all.deaths_sq, d_all.alcohol_impaired_deaths, coalesce(d_all.alcohol_deaths_tested_only, 0) AS alcohol_deaths_tested_only,
-  coalesce(d_all.alcohol_deaths_police_reported, 0) AS alcohol_deaths_police_reported, v.vmt_millions, p.population
+  coalesce(d_all.alcohol_deaths_police_reported, 0) AS alcohol_deaths_police_reported, v.vmt_millions, p.population,
+  coalesce(nm.deaths_without_miles, 0) AS deaths_without_miles, coalesce(nm.deaths_sq_without_miles, 0) AS deaths_sq_without_miles
 FROM d_all
 LEFT JOIN v ON v.year = d_all.year AND v.state_name = d_all.state_name
+LEFT JOIN nm ON nm.year = d_all.year AND nm.state_name = d_all.state_name
 LEFT JOIN p ON p.year = d_all.year AND p.state_name = d_all.state_name;
 
 -- 9. North Carolina speeding-related deaths as NCDOT publishes them (state crash data, officer-reported speeding as a

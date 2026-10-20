@@ -5,6 +5,12 @@ import "../index.malloy"
 // index.malloy (the same component is saved as an instance draft). One panel per finding: F1 collectors per mile,
 // F2 alcohol count and imputation, F3 Wake pedestrians, F4 speeding definitions; values at US DOT's VSL.
 
+// The artifact query is inline (not a named view) so the catalog shows only this dashboard's own description; the
+// component draws every panel from its own queries.
 #" North Carolina road deaths: four findings (collector roads per mile, alcohol counting, Wake pedestrians in the dark, speeding definitions), each valued at US DOT's value of a statistical life.
 # artifact { title="North Carolina road deaths: four findings and what they are worth" } dashboard { columns=6 }
-query: nc_road_deaths is road_exposure -> nc_vs_us_deaths_per_mile_by_road_class
+query: nc_road_deaths is road_exposure -> {
+  where: state_name = 'North Carolina'
+  group_by: road_class
+  aggregate: deaths_with_road_type, deaths_per_100m_vmt
+}
