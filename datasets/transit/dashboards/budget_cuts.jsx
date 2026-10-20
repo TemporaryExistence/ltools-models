@@ -375,10 +375,10 @@ function AboutData({ about, live }) {
 // ---- Transit: budget gap and what to cut first. First screen: agencies ranked by the 2024 relief gap as a share of
 // their operating budget (federal operating money above their own pre-COVID share; $10M+ budgets only, so small
 // agencies with noisy percentages do not top it), with dollars as the toggle, #1 highlighted, each row tagged with the action the data supports
-// (cut coverage hours first, with that agency's coverage pool where its public schedule is in the sample; protect
-// frequent routes) or "no gap". The selected agency ($BUDGET_AGENCY, default GoRaleigh, picked by full name or by
+// (cut the least-used hours first, with that agency's infrequent-route pool where its public schedule is in the sample;
+// protect frequent routes) or "no gap". The selected agency ($BUDGET_AGENCY, default GoRaleigh, picked by full name or by
 // clicking a row) is highlighted inside the ranking. Below: the proof (its hours by frequency, riders lost per $1M by
-// kind of system, the one-way door), a collapsed "More", and About this data. No route names: route ridership is
+// kind of system, riders after a cut or an addition), a collapsed "More", and About this data. No route names: route ridership is
 // not public, so the data names a pool of hours, never a route. ----
 
 const BC_CSS = `
@@ -482,7 +482,6 @@ const kN = (n) => {
   if (a >= 1e3) return Math.round(n / 1e3) + "k";
   return String(Math.round(n));
 };
-const signedPct = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + "%";
 const one2 = (n) => (n == null || isNaN(n) ? "–" : Number(n).toFixed(2));
 const shortName = (s) => String(s || "")
   .replace("Research Triangle Regional Public Transportation Authority", "GoTriangle")
@@ -584,11 +583,11 @@ function menuSpec(t, narrow, n, max) {
   };
 }
 
-// 3: the one-way door. Riders per 1% of bus hours cut vs restored, year 1 and year 2, as a butterfly.
+// 3: riders per 1% of bus hours cut vs added, year 1 and year 2, as a butterfly.
 function doorSpec(t, narrow, maxX) {
   const y = { field: "yr", type: "nominal", sort: ["Year 1", "Year 2"], axis: { title: null, labelFontSize: 12, labelColor: t.fg, labelFontWeight: 600 } };
   const x = { field: "v", type: "quantitative", scale: { domain: [-maxX, maxX] }, axis: { title: "Riders, % per 1% of bus hours", labelExpr: "(datum.value > 0 ? '+' : '') + format(datum.value, '.1f') + '%'", values: [-1, -0.5, 0, 0.5, 1] } };
-  const color = { field: "dir", type: "nominal", scale: { domain: ["Cut 1%", "Restore 1%"], range: [t.pal.down, t.pal.up] }, legend: null };
+  const color = { field: "dir", type: "nominal", scale: { domain: ["Cut 1%", "Add 1%"], range: [t.pal.down, t.pal.up] }, legend: null };
   const tip = [{ field: "dir", title: "" }, { field: "yr", title: "" }, { field: "v", type: "quantitative", title: "Riders, %", format: "+.2f" }, { field: "band", title: "95% band" }, { field: "riders", type: "quantitative", title: "Riders a year at this agency", format: "+,.0f" }];
   return {
     config: vegaConfig(t), height: narrow ? 128 : 136,
@@ -880,8 +879,9 @@ const ABOUT = {
   ],
 };
 
-// The cut order the data supports for one agency: close its 2024 gap by cutting coverage hours first (its pool, when
-// its public schedule is in the sample) and protecting frequent routes; rail-only systems have no bus pool.
+// The cut order the data suggests for one agency: close its 2024 gap by cutting its least-used hours first (likely its
+// infrequent routes; the pool, when its public schedule is in the sample) and protecting frequent routes. Inferred from
+// the between-agency menu, not measured within the agency; rail-only systems have no bus pool.
 function actionTags(r, g) {
   if (!r || r.relief_gap == null || !(r.relief_share >= 0.01)) return { none: "no gap" };
   const gap = mBig(r.relief_gap);
@@ -892,7 +892,7 @@ function actionTags(r, g) {
   }
   const poolTxt = pool == null ? ""
     : ` (pool ${g.hours_check_flag ? "≈" : ""}${mBig(pool)}${pool < r.relief_gap ? `, ${pc0(pool / r.relief_gap)} of gap` : ""})`;
-  return { act: `close ${gap} gap: cut coverage hours first${poolTxt}`, keep: "protect frequent routes" };
+  return { act: `close ${gap} gap: cut least-used hours first${poolTxt}`, keep: "protect frequent routes" };
 }
 
 // The first screen: agencies ranked by relief gap as a share of budget (or in dollars), #1 highlighted, the selected agency outlined
@@ -1008,7 +1008,7 @@ export default function Dashboard({ givens }) {
   const busyNet = meQ.rows.find((r) => String(r.bus_type).startsWith("4")) || {};
   const menuRatio = cov.bus_riders_lost_per_1m_pooled && busyNet.bus_riders_lost_per_1m_pooled ? busyNet.bus_riders_lost_per_1m_pooled / cov.bus_riders_lost_per_1m_pooled : null;
 
-  // Proof 2: the one-way door
+  // Proof 2: riders after a cut or an addition
   const ev = (d) => evQ.rows.find((r) => r.mode_family === "bus" && r.direction === d) || {};
   const busCut = ev("cut"), busAdd = ev("add");
   const doorRows = React.useMemo(() => {
@@ -1022,13 +1022,11 @@ export default function Dashboard({ givens }) {
         lab: `${v > 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}%` + (riders != null && !narrow ? ` · ${v > 0 ? "+" : "−"}${kN(Math.abs(riders))}` : "") });
     };
     add("Year 1", "Cut 1%", busCut.elasticity_y1, busCut.e_y1_lo, busCut.e_y1_hi, -1);
-    add("Year 1", "Restore 1%", busAdd.elasticity_y1, busAdd.e_y1_lo, busAdd.e_y1_hi, 1);
+    add("Year 1", "Add 1%", busAdd.elasticity_y1, busAdd.e_y1_lo, busAdd.e_y1_hi, 1);
     add("Year 2", "Cut 1%", busCut.elasticity_y2, busCut.e_y2_lo, busCut.e_y2_hi, -1);
-    add("Year 2", "Restore 1%", busAdd.elasticity_y2, busAdd.e_y2_lo, busAdd.e_y2_hi, 1);
+    add("Year 2", "Add 1%", busAdd.elasticity_y2, busAdd.e_y2_lo, busAdd.e_y2_hi, 1);
     return rows;
   }, [busCut, busAdd, mine, narrow]);
-  const netY2 = busCut.elasticity_y2 != null && busAdd.elasticity_y2 != null ? busAdd.elasticity_y2 - busCut.elasticity_y2 : null;
-  const netY1 = busCut.elasticity_y1 != null && busAdd.elasticity_y1 != null ? busAdd.elasticity_y1 - busCut.elasticity_y1 : null;
 
   // Proof 3: the selected agency's weekday bus hours by midday frequency (its coverage pool)
   const mineG = mine ? gtById.get(mine.ntd_id) || null : null;
@@ -1071,7 +1069,7 @@ export default function Dashboard({ givens }) {
           floorChip={by === "share" ? `Share ranking: $${SHARE_FLOOR / 1e6}M+ operating budget only` : null} />
         {narrow && <p className="bc-none"><AboutLink>Sources and definitions</AboutLink></p>}
 
-        <p className="rk-proof">Why coverage hours first{mineShort ? ` · ${mineShort}` : ""}</p>
+        <p className="rk-proof">What a cut costs{mineShort ? ` · ${mineShort}` : ""}</p>
         <div className="bc-grid">
           <section className="bc-card wide">
             <div className="hd"><h2>{mineShort ? `${mineShort}: weekday bus hours by midday frequency` : "Weekday bus hours by midday frequency"}</h2></div>
@@ -1090,15 +1088,15 @@ export default function Dashboard({ givens }) {
             <Chips items={[mineG ? `Weekday schedule, ${abMonth(mineG.service_date)}` : null, mineG && mineG.hours_check_flag ? "Scheduled vs reported hours disagree" : null, "Coverage riders may have no other way to travel", "Route riders not public: check APC data", "Cuts can shrink the ADA area"]} />
           </section>
 
-          <BcCard n={1} title="Riders lost per $1M cut">
+          <BcCard n={1} title="Riders lost per $1M cut, by kind of agency">
             <div className="od-vega"><VegaChart spec={specs.menu} data={menuRows} /></div>
-            <Chips items={[menuRatio ? `Busy network ${menuRatio.toFixed(1)}× coverage` : null, `Elasticity ${one2(busCut.elasticity_y2)} by year 2`, "Hours-driven cost only", "2024 riders and costs"]} />
+            <Chips items={[menuRatio ? `Busy network ${menuRatio.toFixed(1)}× coverage` : null, `Elasticity ${one2(busCut.elasticity_y2)} by year 2`, "Compares agencies, not routes", "Hours-driven cost only", "2024 riders and costs"]} />
           </BcCard>
 
-          <BcCard n={2} title="The one-way door: per 1% of bus hours">
-            <div className="cr-legend"><span><i style={{ background: t.pal.down }} />Cut 1%</span><span><i style={{ background: t.pal.up }} />Restore 1%</span>{mineShort && !narrow && <span>· riders a year at {mineShort}</span>}</div>
+          <BcCard n={2} title="Riders after a 1% change in bus hours">
+            <div className="cr-legend"><span><i style={{ background: t.pal.down }} />Cut 1%</span><span><i style={{ background: t.pal.up }} />Add 1%</span>{mineShort && !narrow && <span>· riders a year at {mineShort}</span>}</div>
             <div className="od-vega"><VegaChart spec={specs.door} data={doorRows} /></div>
-            <Chips items={[netY1 != null ? `Cut then restore: ${signedPct(netY1)} riders, year 1` : null, netY2 != null ? `${signedPct(netY2)} by year 2` : null, `${busCut.events || "–"} cuts, ${busAdd.events || "–"} additions vs matched peers`, "95% bands in tooltip"]} />
+            <Chips items={["Riders build up more slowly after additions; research does not settle whether the gap lasts", `${busCut.events || "–"} cuts, ${busAdd.events || "–"} additions vs matched peers`, "95% bands in tooltip"]} />
           </BcCard>
         </div>
 
