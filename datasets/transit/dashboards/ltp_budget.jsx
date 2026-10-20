@@ -81,7 +81,7 @@ export default function Dashboard() {
         <table style={{ borderCollapse: "collapse", fontSize: 14 }}>
           <thead><tr>
             <th style={left}>Kind of bus system</th><th style={cell}>Agencies (typical)</th><th style={cell}>Riders per hour, typical</th>
-            <th style={cell}>Cost per hour, typical</th><th style={cell}>Riders lost per $1M, typical</th><th style={cell}>Riders lost per $1M, all agencies</th>
+            <th style={cell}>Cost per hour, typical</th><th style={cell}>Riders lost per $1M, typical</th><th style={cell}>Riders lost per $1M, all agencies incl. small systems (spending-weighted)</th>
           </tr></thead>
           <tbody>{(menu.rows ?? []).map((r) => (
             <tr key={String(r.bus_type)}>
@@ -107,7 +107,7 @@ export default function Dashboard() {
           <div style={{ display: "flex", gap: 28, flexWrap: "wrap", margin: "12px 0" }}>
             <Stat value={pct(m.local_general_fund_share)} label="Operating money from the city or county general fund (estimated split)" />
             <Stat value={(Number(m.relief_share) < 0.001 ? "under 0.1%" : pct(m.relief_share, 1)) + " / " + pct(m.relief_share_2019base, 1)} label="Relief money still in its 2024 budget, against its 2017-19 / 2019-only federal share (share of operating money)" />
-            <Stat value={int(m.bus_riders_lost_per_1m)} label={"Bus riders lost a year per $1M cut, by year two" + (range(m.bus_riders_lost_per_1m) ? " (" + range(m.bus_riders_lost_per_1m) + " across the study's estimates)" : "")} />
+            <Stat value={int(m.bus_riders_lost_per_1m)} label={"Bus riders lost a year per $1M cut, by year two (" + int(m.bus_riders_lost_per_1m_y1) + " in year one" + (range(m.bus_riders_lost_per_1m) ? "; " + range(m.bus_riders_lost_per_1m) + " across the study's year-two estimates" : "") + ")"} />
             <Stat value={int(m.riders_lost_10pct_bus)} label={"Riders lost a year by a cut that saves 10% of the bus budget (about " + pct(m.hours_share_cut_10pct_budget) + " of bus hours, " + pct(m.share_of_bus_riders_lost_10pct) + " of bus riders)"} />
           </div>
           <p style={{ maxWidth: 740, fontSize: 14 }}>
@@ -120,7 +120,7 @@ export default function Dashboard() {
       <p style={{ fontSize: 12, color: "#666", marginTop: 24 }}>
         Source: FTA National Transit Database (funding 2015-2024, monthly ridership 2002-2026). The relief measure finds
         agencies still running on relief in 2024; agencies that spent it in 2021-23 are not flagged. Cuts are compared
-        with up to 10 similar agencies whose service held steady.
+        with 10 similar agencies whose service held steady.
       </p>
     </div>
   );

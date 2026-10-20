@@ -782,7 +782,7 @@ function More({ t, narrow, givens, mine, mineShort, menuRows, events, allRows })
         </Card>
         <Card title={mineShort ? `${mineShort}: riders lost a year by size of bus cut` : "Riders lost a year by size of bus cut"}>
           <div className="od-vega"><VegaChart spec={specs.ladder} data={ladder} /></div>
-          <Chips items={[mine ? `${kN(mine.bus_trips_2024)} bus riders in 2024` : null, "Year-2 elasticity, constant", "Overhead treated as fixed", "Fares lost shrink the saving"]} />
+          <Chips items={[mine ? `${kN(mine.bus_trips_2024)} bus riders in 2024` : null, "Year-2 elasticity, constant", "Overhead treated as fixed", "Fares not grossed up"]} />
         </Card>
       </div>
       <Card title="Relief share of every bus agency and big system, 2024">
@@ -857,7 +857,7 @@ const ABOUT = {
     "Relief flag: in 2018, before relief existed, it would rarely have fired against a 2015–17 baseline (the chart under More shows the rates). " +
     "Ranking: the default order is the gap as a share of the 2024 operating budget, for agencies with $10M+ budgets only (below that, a few hundred thousand dollars swing the percentage); dollars are the toggle. " +
     "Both orders are re-run with the 2019 federal share alone as the baseline: #1 is marked with its rank there, and rows that move more than two places are marked. By dollars the top 10 is the same ten agencies on either baseline. " +
-    "Service response: sharp bus cuts and additions outside COVID, each against up to 10 same-size peers whose hours held steady and whose riders tracked it before; 95% bands from 500 bootstrap draws. " +
+    "Service response: sharp bus cuts and additions outside COVID, each against 10 same-size peers whose hours held steady and whose riders tracked it before; 95% bands from 500 bootstrap draws. " +
     "An agency-level panel gives a similar first year but a lower second year for cuts. Fake cut dates and fake cutting agencies show no effect, and the cut estimate moves with the cut-size rule (all checks: estimate_checks in the model). Numbers re-run through Malloyyo match the DuckDB build.",
   definitions: [
     ["Relief gap", "Federal operating money in 2024 minus the agency's 2017–19 federal share × its 2024 operating money (never below zero). Agencies without 2017–19 money use their size class's median."],
@@ -1078,7 +1078,7 @@ export default function Dashboard({ givens }) {
               <>
                 <div className="bc-tiles">
                   <div><div className="v good">{pc0(freqShare)}</div><div className="l"><b>Frequent</b> · hours every 15 min or better</div></div>
-                  <div><div className="v bad">{mBig(coverageDollars)}</div><div className="l"><b>Infrequent hours</b> · {pc0(coverageShare)} of hours, every 31+ min{mineRanked && mineRanked.relief_gap > 0 ? ` · gap ${mBig(mineRanked.relief_gap)}` : ""}</div></div>
+                  <div><div className="v bad">{mBig(coverageDollars)}</div><div className="l"><b>Infrequent hours</b> · {pc0(coverageShare)} of hours, every 31+ min, on 2024 report-year hours{mineRanked && mineRanked.relief_gap > 0 ? ` · gap ${mBig(mineRanked.relief_gap)}` : ""}</div></div>
                 </div>
                 <div className="cr-legend">{HW.map((k, i) => <span key={k}><i style={{ background: hwColors(t)[i] }} />{k}</span>)}</div>
                 <div className="od-vega"><VegaChart spec={specs.hours} data={hoursRows} /></div>

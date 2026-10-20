@@ -194,14 +194,18 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
   #" One agency (the agency control; default GoRaleigh): relief exposure, where its money comes from, what a bus cut costs it.
   #(agent) riders_lost_10pct_bus: a cut that saves 10% of the bus budget at hours-driven cost (overhead treated as fixed),
   #(agent) so it removes more than 10% of bus hours (hours_share_cut_10pct_budget); share lost = 1 - (1 - hours share)^e, with e
-  #(agent) the elasticity behind bus_riders_lost_per_1m (bus_elasticity_used), held constant in logs. fare_share_2024 is fares and other directly generated revenue.
+  #(agent) the elasticity behind bus_riders_lost_per_1m (bus_elasticity_used), held constant in logs. These are central
+  #(agent) figures: scale by the year-2 cut responses in service_elasticity_panel (low) and estimate_checks (high) for the
+  #(agent) study's range. Figures use the 2024 report year; for GoRaleigh, counted boardings more than doubled in July
+  #(agent) 2024 (likely a counting change; see the transit source), and its service has grown since. fare_share_2024 is fares and other directly generated revenue.
   view: agency_cut_menu is {
     where: agency_name ~ $BUDGET_AGENCY
     select: agency_label, ops_2024, relief_gap, relief_share, flagged, fed_share_base, fed_share_2024,
       # percent
       relief_share_2019base is relief_gap_2019base / nullif(ops_2024, 0),
       local_general_fund_share, local_other_share, agency_tax_share, fare_share_2024, ada_share_opex,
-      bus_opex, bus_trips_2024, bus_riders_per_hour, bus_avoidable_cost_per_hour, bus_riders_lost_per_1m
+      bus_opex, bus_trips_2024, bus_riders_per_hour, bus_avoidable_cost_per_hour, bus_riders_lost_per_1m,
+      bus_riders_lost_per_1m_y1
       # percent
       hours_share_cut_10pct_budget is h10
       # percent
@@ -338,7 +342,8 @@ source: service_elasticity_panel is motherduck.table('transit.service_elasticity
 #" Weekday bus hours by how often each route runs at midday, from public schedules, for 43 agencies (7 in North Carolina).
 #(agent) GTFS via the Mobility Database catalog (schedules mostly Oct 2026, some 2025); midday = 10:00-15:00, busier
 #(agent) direction. share_freq15 = share of weekday bus hours on routes every 15 minutes or better. hours_check_flag =
-#(agent) scheduled hours far from NTD's (partial feed or mismatched reporting: TARC, GoTriangle). Schedules show where the
+#(agent) scheduled hours far from NTD's 2024 report-year hours (partial feed or mismatched reporting: TARC, GoTriangle);
+#(agent) for agencies whose service grew after 2024 it compares different years. Schedules show where the
 #(agent) hours are, not where the riders are: route-level ridership is not public.
 source: gtfs_frequency is motherduck.table('transit.gtfs_frequency') extend {
   join_one: budget_agency on ntd_id = budget_agency.ntd_id
