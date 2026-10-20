@@ -269,7 +269,8 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
 #(agent) Leave size band '6 Not comparable' out of comparisons (see size_band).
 source: library_years is library_years_base extend {
   // Views live here, not on library_years_base, so sources built on the base (econtent_*) don't inherit them.
-  #" National trend, one row per fiscal year: use, spend and digital share.
+  #" National trend, one row per fiscal year: use, spend and digital share. FY2024 borrowing and digital share are not
+  #" comparable with earlier years (see library_years); for borrowing trends use did_borrowing_fall_in_fy2024.
   # line_chart { x=fiscal_year y=visits_per_capita }
   view: visits_by_year is {
     group_by: fiscal_year
@@ -298,12 +299,11 @@ source: library_years is library_years_base extend {
   }
 
   #" DID LIBRARY BORROWING FALL IN FY2024? Not as the total says. One row per fiscal year FY2022 - FY2024, comparable
-  #" systems only. The FY2024 borrowing total falls about 13%, only because 2,663 of these systems left the total
-  #" blank that year (nearly all reported physical). Physical borrowing per person is flat (about 4.27 both years).
-  #" Among systems that reported a total it rose (5.91 to 6.31; 5.93 to 6.32 on systems that reported both years),
-  #" all of it digital, and the digital questions changed in FY2024, so that rise may partly be a change in what is
-  #" counted. Systems that stopped reporting a total were not unusual: about 5.8 items per person in FY2023 against
-  #" 5.93. Who acts: anyone quoting a national borrowing trend.
+  #" systems only. The FY2024 borrowing total falls because many systems left it blank that year
+  #" (systems_not_reporting_borrowing; nearly all reported physical). Physical borrowing per person is flat (about
+  #" 4.27 both years). Among systems that reported a total it rose (5.91 to 6.31), all of it digital, and the digital
+  #" questions changed in FY2024, so that rise may partly be a change in what is counted. Who acts: anyone quoting a
+  #" national borrowing trend.
   view: did_borrowing_fall_in_fy2024 is {
     where: fiscal_year >= 2022 and size_band != '6 Not comparable'
     group_by: fiscal_year
