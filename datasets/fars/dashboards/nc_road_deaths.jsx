@@ -4,7 +4,7 @@ import { VegaChart, useQuery } from "@malloyyo/dashboard";
 // North Carolina road deaths: one panel per finding (F1 collectors per mile, F2 alcohol count and imputation,
 // F3 Wake pedestrians, F4 speeding definitions), each with its value at US DOT's value of a statistical life.
 // Self-contained on purpose: a dashboard component can import only React and @malloyyo/dashboard. Every query is a
-// whole template literal over the published model (views and measures of index.malloy), so the same component
+// whole string literal over the published model (views and measures of index.malloy), so the same component
 // works as a repo dashboard and as an instance draft. Every figure on the page comes from these queries.
 
 const CSS = `
@@ -212,22 +212,12 @@ export default function Dashboard() {
   const narrow = useNarrow();
 
   // Value of a statistical life and its range, per death, and the data's size (About).
-  const vslQ = useQuery({ malloy: `run: crashes -> {
-    aggregate:
-      deaths, fatal_crashes
-      vsl is deaths_valued_at_vsl / deaths
-      vsl_low is deaths_valued_at_vsl_low / deaths
-      vsl_high is deaths_valued_at_vsl_high / deaths
-      first_year is \`year\`.min()
-      last_year is \`year\`.max()
-      us_deaths_2024 is deaths { where: \`year\` = 2024 }
-      us_deaths_2024_valued is deaths_valued_at_vsl { where: \`year\` = 2024 }
-      nc_deaths_10_over_2024 is deaths_vehicle_10_over_limit { where: state_name = 'North Carolina' and \`year\` = 2024 }
-  }` });
+  // Double-quoted (not a template literal) because the queries quote the reserved word year in backticks.
+  const vslQ = useQuery({ malloy: "run: crashes -> { aggregate: deaths, fatal_crashes, vsl is deaths_valued_at_vsl / deaths, vsl_low is deaths_valued_at_vsl_low / deaths, vsl_high is deaths_valued_at_vsl_high / deaths, first_year is `year`.min(), last_year is `year`.max(), us_deaths_2024 is deaths { where: `year` = 2024 }, us_deaths_2024_valued is deaths_valued_at_vsl { where: `year` = 2024 }, nc_deaths_10_over_2024 is deaths_vehicle_10_over_limit { where: state_name = 'North Carolina' and `year` = 2024 } }" });
 
   // F1
   const f1Q = useQuery({ malloy: `run: road_exposure -> nc_vs_us_deaths_per_mile_by_road_class` });
-  const f1RestQ = useQuery({ malloy: `run: road_exposure -> deaths_per_mile_by_road_class + { where: state_name != 'North Carolina' and \`year\` >= 2022 }` });
+  const f1RestQ = useQuery({ malloy: "run: road_exposure -> deaths_per_mile_by_road_class + { where: state_name != 'North Carolina' and `year` >= 2022 }" });
   const f1FnQ = useQuery({ malloy: `run: road_exposure -> nc_deaths_per_mile_by_road_function` });
   // F2
   const f2Q = useQuery({ malloy: `run: crashes -> nc_vs_rest_alcohol_testing` });
