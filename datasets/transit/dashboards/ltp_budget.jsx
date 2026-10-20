@@ -65,8 +65,8 @@ export default function Dashboard() {
         Agencies grouped by how busy their buses are (2024 riders per service hour). Typical = the median bus agency or big
         system; all agencies = weighted by bus spending, where the largest systems dominate. At the year-two response
         ({busCut ? Number(busCut.elasticity_y2).toFixed(2) : "–"} per 1% of hours) and hours-driven cost per hour, assuming riders respond the same way at every
-        kind of agency. The two methods disagree on that: the agency-by-agency method finds about the same response
-        everywhere; the cut-by-cut method finds smaller responses at busier agencies, which would erase most of the gap.
+        kind of agency. The two methods disagree on that: the agency-by-agency method finds about the same first-year
+        response everywhere; the cut-by-cut method finds smaller responses at busier agencies, which would erase most of the gap.
         It compares agencies, not routes: which hours inside one agency carry the fewest riders needs its own passenger
         counts, which are not public.
       </p>
@@ -99,13 +99,12 @@ export default function Dashboard() {
         <>
           <div style={{ display: "flex", gap: 28, flexWrap: "wrap", margin: "12px 0" }}>
             <Stat value={pct(m.local_general_fund_share)} label="Operating money from the city or county general fund (estimated split)" />
-            <Stat value={Number(m.relief_share) < 0.001 ? "under 0.1%" : pct(m.relief_share, 1)} label="Relief money above its 2017-19 federal share, 2024 (share of operating money)" />
+            <Stat value={(Number(m.relief_share) < 0.001 ? "under 0.1%" : pct(m.relief_share, 1)) + " / " + pct(m.relief_share_2019base, 1)} label="Relief money still in its 2024 budget, against its 2017-19 / 2019-only federal share (share of operating money)" />
             <Stat value={int(m.bus_riders_lost_per_1m)} label="Bus riders lost a year per $1M cut, by year two" />
             <Stat value={int(m.riders_lost_10pct_bus)} label={"Riders lost a year by a cut that saves 10% of the bus budget (about " + pct(m.hours_share_cut_10pct_budget) + " of bus hours, " + pct(m.share_of_bus_riders_lost_10pct) + " of bus riders)"} />
           </div>
           <p style={{ maxWidth: 740, fontSize: 14 }}>
-            Based on the agency's 2024 report year, at the year-two response, with overhead ({pct(1 - m.bus_avoidable_cost_per_hour * m.bus_trips_2024 / m.bus_riders_per_hour / m.bus_opex)} of bus cost) treated as fixed. For GoRaleigh, counted boardings
-            more than doubled in July 2024, likely a counting change; if the new count is right, these figures are higher. Paratransit (ADA) is {pct(m.ada_share_opex)} of its operating cost.
+            Based on the agency's 2024 report year (service may have changed since), at the study's central year-two response, with overhead ({pct(1 - m.bus_avoidable_cost_per_hour * m.bus_trips_2024 / m.bus_riders_per_hour / m.bus_opex)} of bus cost) treated as fixed.{String(m.agency_label).startsWith("City of Raleigh") ? " Counted boardings more than doubled in July 2024, likely a counting change; if the new count is right, these figures are higher." : ""} Paratransit (ADA) is {pct(m.ada_share_opex)} of its operating cost.
             It can't be cut on its own: it must cover the area and hours the fixed routes serve, so cutting routes or
             hours can shrink it.
           </p>

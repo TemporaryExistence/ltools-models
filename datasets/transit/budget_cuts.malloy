@@ -151,7 +151,8 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
   }
 
   #" Riders lost a year per $1M of bus service cut, by kind of bus system (2024 riders per hour), weighted by bus spending.
-  #(agent) Bus agencies with 0.5M+ trips. Compares kinds of agency, not routes inside one agency. Assumes one response
+  #(agent) Every agency with 0.5M+ bus trips, including small, rural and specialty systems (campus and resort
+  #(agent) shuttles), which cut_menu_typical leaves out. Compares kinds of agency, not routes inside one agency. Assumes one response
   #(agent) to cuts at every kind of agency (the event study's year-2 bus elasticity, service_change_summary.headline).
   #(agent) The two methods disagree on that assumption: the agency panel by type (service_elasticity_panel.by_group,
   #(agent) breakdown bus_type) finds about the same response everywhere; the event study by type
@@ -196,6 +197,8 @@ source: budget_agency is motherduck.table('transit.budget_agency') extend {
   view: agency_cut_menu is {
     where: agency_name ~ $BUDGET_AGENCY
     select: agency_label, ops_2024, relief_gap, relief_share, flagged, fed_share_base, fed_share_2024,
+      # percent
+      relief_share_2019base is relief_gap_2019base / nullif(ops_2024, 0),
       local_general_fund_share, local_other_share, agency_tax_share, fare_share_2024, ada_share_opex,
       bus_opex, bus_trips_2024, bus_riders_per_hour, bus_avoidable_cost_per_hour, bus_riders_lost_per_1m
       # percent

@@ -40,6 +40,9 @@ query: bc_all is budget_agency -> {
 #" Step 2: riders lost a year per $1M of local-bus service cut, by kind of bus system.
 query: bc_menu is budget_agency -> cut_menu_by_type
 
+#" Step 2: the typical bus agency or big system of each kind (median riders lost per $1M).
+query: bc_typ is cut_menu_typical -> typical
+
 #" More: rail and ADA paratransit, pooled.
 query: bc_rail is budget_agency -> { aggregate: rail_riders_lost_per_1m_pooled, ada_share_pooled, ada_paratransit_cost }
 

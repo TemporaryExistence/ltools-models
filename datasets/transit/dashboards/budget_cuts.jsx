@@ -960,7 +960,8 @@ export default function Dashboard({ givens }) {
   const gtQ = useQuery({ query: "bc_gtfs", givens });
   const evQ = useQuery({ query: "bc_events", givens });
   const abQ = useQuery({ query: "bc_about", givens });
-  const all = [pkQ, miQ, alQ, meQ, gtQ, evQ, abQ];
+  const tyQ = useQuery({ query: "bc_typ", givens });
+  const all = [pkQ, miQ, alQ, meQ, gtQ, evQ, abQ, tyQ];
   const error = all.map((q) => q.error).find(Boolean);
   const busy = all.some((q) => q.loading);
 
@@ -995,19 +996,18 @@ export default function Dashboard({ givens }) {
   const shownRows = React.useMemo(() => rows.map((r) => (r.unranked ? { ...r, rank: -1 } : r)), [rows]);
   const onPick = (r) => { setPickState(r.state); setAgency(filters.oneOf(r.agency_name)); };
 
-  // Proof 1: riders lost per $1M cut, by kind of bus system; the selected agency on top.
+  // Proof 1: riders lost per $1M cut at the typical bus agency or big system of each kind (median, if riders respond
+  // alike); the selected agency on top. ADA shares stay pooled.
   const menuRows = React.useMemo(() => {
     const rows = meQ.rows.map((r) => {
       const k = String(r.bus_type).charAt(0);
-      return { name: narrow ? typeLabel(r.bus_type).replace(/ \(.*\)$/, "") : typeLabel(r.bus_type) + " bus", v: r.bus_riders_lost_per_1m_pooled, rph: r.bus_riders_per_hour_pooled, cph: r.bus_cost_per_hour_pooled,
-        n: r.agencies, c: k === "1" ? "cov" : k === "4" ? "busy" : "bus", lab: kN(r.bus_riders_lost_per_1m_pooled), ada: r.ada_share_pooled };
-    });
+      const ty = tyQ.rows.find((x) => x.bus_type === r.bus_type) || {};
+      return { name: narrow ? typeLabel(r.bus_type).replace(/ \(.*\)$/, "") : typeLabel(r.bus_type) + " bus", v: ty.riders_lost_per_1m_median, rph: ty.riders_per_hour_median, cph: ty.cost_per_hour_median,
+        n: ty.agencies, c: k === "1" ? "cov" : k === "4" ? "busy" : "bus", lab: kN(ty.riders_lost_per_1m_median), ada: r.ada_share_pooled };
+    }).filter((r) => r.v != null);
     if (mine && mine.bus_riders_lost_per_1m) rows.unshift({ name: mineShort + (mine.bus_type ? ` (${typeLabel(mine.bus_type).replace(/ \(.*\)$/, "").toLowerCase()})` : ""), v: mine.bus_riders_lost_per_1m, rph: mine.bus_riders_per_hour, cph: mine.bus_avoidable_cost_per_hour, c: "mine", lab: kN(mine.bus_riders_lost_per_1m) });
     return rows.map((r, o) => ({ ...r, o }));
-  }, [meQ.rows, mine, mineShort, narrow]);
-  const cov = meQ.rows.find((r) => String(r.bus_type).startsWith("1")) || {};
-  const busyNet = meQ.rows.find((r) => String(r.bus_type).startsWith("4")) || {};
-  const menuRatio = cov.bus_riders_lost_per_1m_pooled && busyNet.bus_riders_lost_per_1m_pooled ? busyNet.bus_riders_lost_per_1m_pooled / cov.bus_riders_lost_per_1m_pooled : null;
+  }, [meQ.rows, tyQ.rows, mine, mineShort, narrow]);
 
   // Proof 2: riders after a cut or an addition
   const ev = (d) => evQ.rows.find((r) => r.mode_family === "bus" && r.direction === d) || {};
@@ -1091,7 +1091,7 @@ export default function Dashboard({ givens }) {
 
           <BcCard n={1} title="Riders lost per $1M cut, by kind of agency">
             <div className="od-vega"><VegaChart spec={specs.menu} data={menuRows} /></div>
-            <Chips items={[menuRatio ? `Busy network ${menuRatio.toFixed(1)}× coverage, spending-weighted` : null, `Elasticity ${one2(busCut.elasticity_y2)} by year 2`, "Compares agencies, not routes", "Hours-driven cost only", "2024 riders and costs"]} />
+            <Chips items={["Typical agency, if riders respond alike everywhere", "The study's two methods disagree on that", `Elasticity ${one2(busCut.elasticity_y2)} by year 2`, "Compares agencies, not routes", "Hours-driven cost only", "2024 riders and costs"]} />
           </BcCard>
 
           <BcCard n={2} title="Riders after a 1% change in bus hours">
