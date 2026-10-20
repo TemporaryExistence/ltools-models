@@ -208,6 +208,18 @@ source: persons is motherduck.table('fars.persons') extend {
       at_intersection_share_of_pedestrian_deaths is deaths { where: road_user = 'Pedestrian' and nonoccupant_location = 'At intersection' } / nullif(pedestrian_deaths, 0)
   }
 
+  #" F3 comparison. Wake County, rest of NC and outside NC (all years in the query, 2019-2024 unless filtered): deaths, pedestrian deaths, and pedestrian deaths in the dark on non-freeway arterials, with shares.
+  view: pedestrians_by_area is {
+    group_by: crashes.wake_or_rest_of_nc
+    aggregate:
+      deaths, pedestrian_deaths
+      # percent
+      pedestrian_share_of_deaths is pedestrian_deaths / nullif(deaths, 0)
+      pedestrian_deaths_dark_arterial
+      # percent
+      dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0)
+  }
+
   #" Unrestrained share of passenger-vehicle occupants killed, by year and day vs night (known use only). Add `where: crashes.state_name = 'North Carolina'`; nationally the split matches NHTSA's published 56% night / 41% day (2024).
   view: unbelted_by_day_night is {
     where: road_user = 'Passenger vehicle occupant'
