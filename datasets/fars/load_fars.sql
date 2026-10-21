@@ -8,7 +8,7 @@
 --   2019-2024 pages saved to fhwa/vm2_<year>.html and parsed to fhwa/vm2_2019_2024.csv (parse_vm2.py in the working notes).
 -- Step 3: run this file from units/ltools/public-data/fars/raw with ltools attached:
 --   duckdb -c "ATTACH 'md:ltools'; .read <this file>"
--- County population comes from ltools.libraries.county_population (US Census estimates, Vintage 2020 and 2025).
+-- County population: 2020-2024 from ltools.libraries.county_population (Census Vintage 2025); 2019 from the Census 2010-2020 intercensal file (section 6).
 -- Keys: ST_CASE repeats across years (41,852 distinct values over 222,695 crashes), so every key here includes the year:
 --   crash_key = year * 1000000 + st_case; vehicle_key = crash_key * 1000 + veh_no; person_key = vehicle_key * 1000 + per_no.
 
@@ -316,7 +316,7 @@ FULL JOIN d_all ON d_all.year = v.year AND d_all.state_name = v.state_name AND d
 --    deaths_road_type_unknown: deaths with unknown road function or rural/urban (not in road_exposure); a coding break
 --    shows here first (Missouri 2023-2024). Pedestrian deaths by state for per-resident pedestrian rates.
 --    deaths_without_miles: deaths in road cells (rural/urban x road function) where FHWA's VM-2 shows no miles ('-');
---    their miles are missing from vmt_millions, so per-mile rates leave them out of the numerator (191 deaths over
+--    their miles are missing from vmt_millions, so per-mile rates leave them out of the numerator (181 deaths over
 --    2019-2024, 115 of them in 2021; none in North Carolina). Built from road_exposure (section 7), so run 7 first.
 CREATE OR REPLACE TABLE ltools.fars.state_years AS
 WITH d AS (
@@ -349,6 +349,16 @@ WITH d AS (
   SELECT * FROM nm_s
   UNION ALL
   SELECT year, 'United States', sum(deaths_without_miles), sum(deaths_sq_without_miles) FROM nm_s GROUP BY ALL
+), mix AS (
+  -- Road-class coding check: a class holding 15%+ of the state's miles but under 1% of its classified deaths (Hawaii
+  -- 2019, 2021, 2023, 2024 codes almost no collector or local deaths; DC 2022 local). Such a state-year's class rates
+  -- move deaths between classes, so the model does not test or rank them.
+  SELECT year, state_name, bool_or(vshare >= 0.15 AND dshare < 0.01) AS road_class_mix_suspect
+  FROM (SELECT year, state_name, road_class,
+          sum(deaths) / sum(sum(deaths)) OVER (PARTITION BY year, state_name) AS dshare,
+          sum(vmt_millions) / sum(sum(vmt_millions)) OVER (PARTITION BY year, state_name) AS vshare
+        FROM ltools.fars.road_exposure WHERE state_name <> 'United States' GROUP BY year, state_name, road_class)
+  GROUP BY ALL
 ), p AS (
   SELECT year, state_name, sum(population) AS population FROM ltools.fars.county_population GROUP BY ALL
   UNION ALL
@@ -360,8 +370,10 @@ SELECT d_all.state_name || '-' || d_all.year AS state_year_key,
   coalesce(nm.deaths_without_miles, 0) AS deaths_without_miles, coalesce(nm.deaths_sq_without_miles, 0) AS deaths_sq_without_miles,
   coalesce(d_all.deaths_road_type_unknown, 0) AS deaths_road_type_unknown,
   coalesce(ped.pedestrian_deaths, 0) AS pedestrian_deaths, coalesce(ped.pedestrian_deaths_dark, 0) AS pedestrian_deaths_dark,
-  coalesce(ped.pedestrian_deaths_dark_arterial, 0) AS pedestrian_deaths_dark_arterial
+  coalesce(ped.pedestrian_deaths_dark_arterial, 0) AS pedestrian_deaths_dark_arterial,
+  coalesce(mix.road_class_mix_suspect, false) AS road_class_mix_suspect
 FROM d_all
+LEFT JOIN mix ON mix.year = d_all.year AND mix.state_name = d_all.state_name
 LEFT JOIN ped ON ped.year = d_all.year AND ped.state_name = d_all.state_name
 LEFT JOIN v ON v.year = d_all.year AND v.state_name = d_all.state_name
 LEFT JOIN nm ON nm.year = d_all.year AND nm.state_name = d_all.state_name
