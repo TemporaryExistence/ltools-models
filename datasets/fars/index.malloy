@@ -1652,7 +1652,7 @@ source: state_years is motherduck.table('fars.state_years') extend {
 }
 
 #" Deaths and vehicle-miles by state, year and road type: deaths per 100 million vehicle-miles.
-#(agent) Filter `year` and `state_name` (unfiltered pools all). No county miles. Rates include pedestrians. Deaths with unknown road type (`road_type_unknown_share`) are in no class, so class rates are floors.
+#(agent) Filter `year` and `state_name` (unfiltered pools all). In `road_class_change_since_2019` pick a class on the output (`-> { where: road_class = ... select: * }`), not inside the view. No county miles. Rates include pedestrians. Deaths with unknown road type (`road_type_unknown_share`) are in no class, so class rates are floors.
 #(agent) Coding and miles can shift: Missouri stopped coding local roads in 2023-2024; NC local miles +25% in 2024. `road_class_change_since_2019` checks both. State vs rest of US: `road_class_by_state_year`.
 #(agent) Chance: Poisson widened for multi-death crashes; deaths only, not miles error. Deaths in cells with no VM-2 miles are left out (`deaths_without_miles`).
 source: road_exposure is motherduck.table('fars.road_exposure') extend {
@@ -1847,7 +1847,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
     order_by: road_function
   }
 
-  #" By road class: miles, deaths and rates 2019, 2023, 2024; changes tested for any placement of unknown road type, with coding checks for a single state.
+  #" Road-class miles, deaths, rates 2019, 2023, 2024; changes tested under unknown road type, coding checks for one whole state. Filter road_class on the output only.
   view: road_class_change_since_2019 is {
     group_by: road_class
     aggregate:
@@ -1882,8 +1882,10 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
       classified_2024 is all(deaths_mi.sum() { where: `year` = 2024 })
       mile_share_2024 is vmt_millions.sum() { where: `year` = 2024 } / nullif(all(vmt_millions.sum() { where: `year` = 2024 }), 0)
       states_in_query is all(count(state_name))
+      query_vmt is all(vmt_millions.sum())
+      state_vmt is all(sy.vmt_millions.sum())
   } -> {
-    group_by: road_class, states_in_query, deaths_2019, sq_2019, vmt_2019, n_2019, unk_2019, all_2019, suspect_2019, class_share_2019, classified_2019, mile_share_2019, deaths_2023, sq_2023, vmt_2023, n_2023, unk_2023, all_2023, suspect_2023, class_share_2023, classified_2023, mile_share_2023, deaths_2024, sq_2024, vmt_2024, n_2024, unk_2024, all_2024, suspect_2024, class_share_2024, classified_2024, mile_share_2024
+    group_by: road_class, states_in_query, query_vmt, state_vmt, deaths_2019, sq_2019, vmt_2019, n_2019, unk_2019, all_2019, suspect_2019, class_share_2019, classified_2019, mile_share_2019, deaths_2023, sq_2023, vmt_2023, n_2023, unk_2023, all_2023, suspect_2023, class_share_2023, classified_2023, mile_share_2023, deaths_2024, sq_2024, vmt_2024, n_2024, unk_2024, all_2024, suspect_2024, class_share_2024, classified_2024, mile_share_2024
     aggregate:
       all_rise_19 is all(sum(greatest(deaths_2024 - deaths_2019, 0)))
       all_fall_19 is all(sum(greatest(deaths_2019 - deaths_2024, 0)))
@@ -1892,10 +1894,11 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
   } -> {
     extend: {
       dimension:
+        whole_state is query_vmt >= 0.9999 * state_vmt
         z_lo_19 is (deaths_2024 - (deaths_2024 + (deaths_2019 + unk_2019)) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif((sq_2024 + (sq_2019 + unk_2019)) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
         z_hi_19 is ((deaths_2024 + unk_2024) - ((deaths_2024 + unk_2024) + deaths_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(((sq_2024 + unk_2024) + sq_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
         z_mix_19 is (class_share_2024 - class_share_2019) / sqrt(nullif(((deaths_2024 + deaths_2019) / nullif(classified_2024 + classified_2019, 0)) * (1 - ((deaths_2024 + deaths_2019) / nullif(classified_2024 + classified_2019, 0))) * (1 / nullif(classified_2024, 0) + 1 / nullif(classified_2019, 0)), 0))
-        share_moved_19 is states_in_query = 1 and abs(class_share_2024 - class_share_2019) > 0.08 and abs(mile_share_2024 - mile_share_2019) < 0.03 and abs(z_mix_19) > 1.96
+        share_moved_19 is states_in_query = 1 and whole_state and abs(class_share_2024 - class_share_2019) > 0.08 and abs(mile_share_2024 - mile_share_2019) < 0.03 and abs(z_mix_19) > 1.96
         offset_19 is pick least(all_fall_19 - greatest(deaths_2019 - deaths_2024, 0), deaths_2024 - deaths_2019) when deaths_2024 >= deaths_2019 else least(all_rise_19 - greatest(deaths_2024 - deaths_2019, 0), deaths_2019 - deaths_2024)
         adj_2024_19 is pick deaths_2024 - offset_19 when deaths_2024 >= deaths_2019 else deaths_2024 + offset_19
         z_lo_adj_19 is (adj_2024_19 - (adj_2024_19 + (deaths_2019 + unk_2019)) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(((sq_2024 * adj_2024_19 / nullif(deaths_2024, 0)) + (sq_2019 + unk_2019)) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
@@ -1903,7 +1906,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
         z_lo_23 is (deaths_2024 - (deaths_2024 + (deaths_2023 + unk_2023)) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif((sq_2024 + (sq_2023 + unk_2023)) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
         z_hi_23 is ((deaths_2024 + unk_2024) - ((deaths_2024 + unk_2024) + deaths_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(((sq_2024 + unk_2024) + sq_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
         z_mix_23 is (class_share_2024 - class_share_2023) / sqrt(nullif(((deaths_2024 + deaths_2023) / nullif(classified_2024 + classified_2023, 0)) * (1 - ((deaths_2024 + deaths_2023) / nullif(classified_2024 + classified_2023, 0))) * (1 / nullif(classified_2024, 0) + 1 / nullif(classified_2023, 0)), 0))
-        share_moved_23 is states_in_query = 1 and abs(class_share_2024 - class_share_2023) > 0.08 and abs(mile_share_2024 - mile_share_2023) < 0.03 and abs(z_mix_23) > 1.96
+        share_moved_23 is states_in_query = 1 and whole_state and abs(class_share_2024 - class_share_2023) > 0.08 and abs(mile_share_2024 - mile_share_2023) < 0.03 and abs(z_mix_23) > 1.96
         offset_23 is pick least(all_fall_23 - greatest(deaths_2023 - deaths_2024, 0), deaths_2024 - deaths_2023) when deaths_2024 >= deaths_2023 else least(all_rise_23 - greatest(deaths_2024 - deaths_2023, 0), deaths_2023 - deaths_2024)
         adj_2024_23 is pick deaths_2024 - offset_23 when deaths_2024 >= deaths_2023 else deaths_2024 + offset_23
         z_lo_adj_23 is (adj_2024_23 - (adj_2024_23 + (deaths_2023 + unk_2023)) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(((sq_2024 * adj_2024_23 / nullif(deaths_2024, 0)) + (sq_2023 + unk_2023)) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
@@ -1940,6 +1943,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
         pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)' when states_in_query = 1 and (suspect_2023 > 0 or suspect_2024 > 0)
         pick 'Too few deaths to test' when deaths_2023 + deaths_2024 < 10
         pick 'Not tested' when z_lo_23 is null or z_hi_23 is null
+        pick 'Not tested: road_class or rural_urban filtered inside the view (coding checks need the whole state; filter the output instead)' when states_in_query = 1 and not whole_state and (z_lo_23 > 1.96 or z_hi_23 < -1.96)
         pick 'Up, beyond chance even if coding moved deaths between classes' when share_moved_23 and deaths_2024 > deaths_2023 and z_lo_adj_23 > 1.96
         pick 'Down, beyond chance even if coding moved deaths between classes' when share_moved_23 and deaths_2024 < deaths_2023 and z_hi_adj_23 < -1.96
         pick 'Not tested: class share of deaths moved over 8 points and other classes offset the change (possible coding shift)' when share_moved_23 and ((deaths_2024 > deaths_2023 and z_lo_23 > 1.96) or (deaths_2024 < deaths_2023 and z_hi_23 < -1.96))
@@ -1952,6 +1956,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
         pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)' when states_in_query = 1 and (suspect_2019 > 0 or suspect_2024 > 0)
         pick 'Too few deaths to test' when deaths_2019 + deaths_2024 < 10
         pick 'Not tested' when z_lo_19 is null or z_hi_19 is null
+        pick 'Not tested: road_class or rural_urban filtered inside the view (coding checks need the whole state; filter the output instead)' when states_in_query = 1 and not whole_state and (z_lo_19 > 1.96 or z_hi_19 < -1.96)
         pick 'Up, beyond chance even if coding moved deaths between classes' when share_moved_19 and deaths_2024 > deaths_2019 and z_lo_adj_19 > 1.96
         pick 'Down, beyond chance even if coding moved deaths between classes' when share_moved_19 and deaths_2024 < deaths_2019 and z_hi_adj_19 < -1.96
         pick 'Not tested: class share of deaths moved over 8 points and other classes offset the change (possible coding shift)' when share_moved_19 and ((deaths_2024 > deaths_2019 and z_lo_19 > 1.96) or (deaths_2024 < deaths_2019 and z_hi_19 < -1.96))
@@ -1959,7 +1964,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
         pick 'Down, beyond chance' when z_hi_19 < -1.96
         pick 'Within chance' when z_lo_19 >= -1.96 and z_hi_19 <= 1.96
         else 'Not tested: deaths with unknown road type could change this'
-      coding_checks is pick 'Applied (one state)' when states_in_query = 1 else 'Not applied: several states pooled (coding checks are per state; run one state)'
+      coding_checks is pick 'Applied (one state)' when states_in_query = 1 and whole_state pick 'Not applied: road_class or rural_urban filtered (coding checks need the whole state; filter the output instead)' when states_in_query = 1 else 'Not applied: several states pooled (coding checks are per state; run one state)'
       note_2024 is '2024 is not final (Annual Report File; earlier years rose 0.5-0.7% when finalised)'
     order_by: road_class
   }
@@ -1968,7 +1973,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
 
 #" State x road class x year with the rest of the US: deaths per mile compared, tested, ranked.
 #(agent) Grain: state x road class x year; each row stores the rest of the US and the state's freeway figures, so any filter is safe. Keep `road_class` in the group_by.
-#(agent) Unknown road type can only raise a class rate: labels hold for any placement of the state's unknowns (`rate_upper_bound`), else 'Not tested'; rest-of-US unknowns (0.4% to 1.25% of deaths by year) are not bounded. Coding suspects (Hawaii) are not tested or ranked; coding breaks (`road_class_coding_breaks`) are ranked with a note. Ranks need 51 states, 30+ deaths.
+#(agent) Unknown road type can only raise a class rate: labels hold for any placement of the state's unknowns (`rate_upper_bound`), else 'Not tested'; rest-of-US unknowns (0.4% to 1.25% of deaths by year) are not bounded. Coding suspects (Hawaii) are not tested or ranked; possible coding changes (`road_class_coding_breaks`) are ranked with a note. Ranks need 51 states, 30+ deaths.
 source: road_class_by_state_year is road_exposure -> {
   group_by: `year`, state_name, road_class
   aggregate:
@@ -2048,7 +2053,7 @@ source: road_class_by_state_year is road_exposure -> {
     # percent
     road_type_unknown_share is state_road_type_unknown_n.sum() / nullif(state_deaths_all_n.sum(), 0)
     #" Whether unknown road type is large enough to distort the class rates (over 5%, or 2-5%).
-    road_type_note is pick "Road-class coding suspect: a class with 15%+ of the state's miles has under 1% of its deaths" when road_class_coding_suspect_years > 0 pick "Road type unknown for over 5% of the state's deaths: rates are floors (see rate_upper_bound)" when road_type_unknown_share > 0.05 pick "Road type unknown for 2-5% of the state's deaths: rates are floors" when road_type_unknown_share > 0.02 else "Road type known for over 98% of the state's deaths"
+    road_type_note is concat(pick concat("Possible road-class coding change (", road_class_coding_breaks, "): class rates around those years may not compare with other states. ") when road_class_coding_breaks is not null else "", pick "Road-class coding suspect: a class with 15%+ of the state's miles has under 1% of its deaths" when road_class_coding_suspect_years > 0 pick "Road type unknown for over 5% of the state's deaths: rates are floors (see rate_upper_bound)" when road_type_unknown_share > 0.05 pick "Road type unknown for 2-5% of the state's deaths: rates are floors" when road_type_unknown_share > 0.02 else "Road type known for over 98% of the state's deaths")
     #" Whether deaths without reported miles are a material share (over 5%) of this row's deaths.
     miles_note is pick 'Miles missing for part of this class' when deaths_no_miles_n.sum() > 0.05 * (deaths_n.sum() + deaths_no_miles_n.sum()) pick 'Some deaths without miles (under 5%)' when deaths_no_miles_n.sum() > 0 else 'Miles reported for every cell'
     #" Vehicle-miles, millions.
@@ -2071,8 +2076,8 @@ source: road_class_by_state_year is road_exposure -> {
     z_rate_upper_vs_rest is ((deaths_with_miles + state_road_type_unknown) - ((deaths_with_miles + state_road_type_unknown) + rest_deaths) * vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) / sqrt(nullif(((deaths_sq_with_miles + state_road_type_unknown) + rest_deaths_sq) * (vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) * (rest_vmt / nullif(vmt_millions_total + rest_vmt, 0)), 0))
     #" State-years in the query flagged for road-class coding (a class with 15%+ of miles has under 1% of deaths: Hawaii 2019, 2021, 2023, 2024; DC 2022).
     road_class_coding_suspect_years is mix_suspect_n.sum()
-    #" Years where this state's road-class coding broke (a class's death share jumped 8+ points with miles steady, offset by other classes); null if none. Rows spanning or compared across a break mix two codings.
-    road_class_coding_breaks is coding_breaks_n.max()
+    #" Possible road-class coding changes in this state (year pairs) that fall within or touch the query's years; null if none.
+    road_class_coding_breaks is pick coding_breaks_n.max() when substr(coding_breaks_n.max(), 1, 4)::number <= `year`.max() and substr(coding_breaks_n.max(), length(coding_breaks_n.max()) - 3, 4)::number >= `year`.min() else null
     #" Rate against the rest of the US: beyond chance or not.
     rate_vs_rest_of_us is pick 'No miles' when vmt_millions_total = 0 pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)' when road_class_coding_suspect_years > 0 pick 'Too few deaths to test' when deaths_with_miles + state_road_type_unknown < 10 pick 'Not tested' when z_rate_vs_rest is null or z_rate_upper_vs_rest is null pick 'Higher, beyond chance' when z_rate_vs_rest > 1.96 pick 'Lower, beyond chance' when z_rate_upper_vs_rest < - 1.96 pick 'Within chance' when z_rate_vs_rest >= - 1.96 and z_rate_upper_vs_rest <= 1.96 else 'Not tested: deaths with unknown road type could change this'
     #" This road class's rate divided by the state's own interstate and freeway rate.
@@ -2125,8 +2130,8 @@ source: road_class_by_state_year is road_exposure -> {
           and deaths_with_miles >= 30
           and road_class_coding_suspect_years = 0
         else null
-      # The same rank using the highest possible rate (all the state's unknown-road-type deaths in this class); a large gap from rank_rate means the rank depends on where the unknowns belong.
-      rank_by_upper_bound is
+      # Rank if every state's unknown-road-type deaths were in this class (all upper bounds ranked together); not this state's best or worst rank.
+      rank_if_all_states_unknowns_in_class is
         pick rank_u
         when states_compared = states_in_data
           and deaths_with_miles >= 30
@@ -2134,9 +2139,11 @@ source: road_class_by_state_year is road_exposure -> {
         else null
       road_class_coding_breaks
       rank_note is
-        pick concat("Ranked on the floor rate; this state changed road-class coding (", road_class_coding_breaks, "), so class rates may not match other states' coding")
+        pick 'Not ranked: ranks need every state in the query, 30+ deaths and no coding suspect'
+        when not (states_compared = states_in_data and deaths_with_miles >= 30 and road_class_coding_suspect_years = 0)
+        pick concat("Ranked on the floor rate; possible road-class coding change (", road_class_coding_breaks, "): class rates around those years may not compare with other states")
         when road_class_coding_breaks is not null
-        pick 'Ranked on the floor rate (known road type only); see rank_by_upper_bound'
+        pick "Ranked on the floor rate (known road type only); the state's unknown road type could only raise its rate"
         when road_type_unknown_share > 0.02
         else 'Ranked on the floor rate'
       ratio_to_own_freeway_rate
