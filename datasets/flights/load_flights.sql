@@ -1,7 +1,7 @@
 -- Load BTS Reporting Carrier On-Time Performance (US public data) into MotherDuck.
 -- Source: https://transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_<YYYY>_<M>.zip
 -- Run with the DuckDB CLI (1.5.6+) with motherduck_token set, from the folder holding the unzipped CSVs:
---   duckdb -c ".read /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/load_flights.sql"
+--   duckdb -c ".read datasets/flights/load_flights.sql"
 -- Loading is the one place raw SQL is used (DR-LT-2): everything after this is Malloy, built through agents.
 
 ATTACH 'md:';

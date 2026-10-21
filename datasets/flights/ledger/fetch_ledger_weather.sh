@@ -6,7 +6,7 @@
 # Files go to units/ltools/public-data/weather/asos-ledger/<IATA>.csv (kept apart from asos/, which build_storms.sql
 # globs, so the storm study's tables are unchanged).
 # Source: IEM ASOS archive (Iowa State University, redistributing NWS observations, free).
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/ledger/fetch_ledger_weather.sh
+# Usage: bash datasets/flights/ledger/fetch_ledger_weather.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$(cd "$HERE/../../../.." && pwd)/public-data/weather/asos-ledger"

@@ -8,7 +8,7 @@
 # Sources: IEM ASOS archive (Iowa State University, redistributing NWS observations, free) and NOAA NCEI Storm
 # Events Database (public domain). Large files stay under units/ltools/public-data/weather/.
 #
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/storms/build_storms.sh [--upload]
+# Usage: bash datasets/flights/storms/build_storms.sh [--upload]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"

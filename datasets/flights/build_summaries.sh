@@ -26,7 +26,7 @@
 # Rerun after any change to the flights files or to the queries, then redeploy every file to
 # https://tabblabs.net/datasets/flights/.
 #
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/build_summaries.sh [out_dir]
+# Usage: bash datasets/flights/build_summaries.sh [out_dir]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"

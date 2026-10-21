@@ -2,7 +2,7 @@
 # Convert BTS On-Time PREZIP months (Feb-Apr 2026) to Parquet with the same columns as flights_2026_0{5,6,7}.parquet,
 # streaming the CSV out of the zip (no extracted copy). Downloads (polite, one file at a time, 3 s apart):
 #   https://transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2026_<M>.zip
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/airline_risk/convert_prezip.sh
+# Usage: bash datasets/flights/airline_risk/convert_prezip.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DIR="$(cd "$HERE/../../../../public-data/flights-prezip" && pwd)"

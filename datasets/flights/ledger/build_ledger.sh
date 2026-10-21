@@ -5,7 +5,7 @@
 #   3. With --upload, copies the tables into MotherDuck ltools.flights (token from the motherduck_token variable,
 #      never printed; no sign-in is attempted without it).
 # Outputs: units/ltools/public-data/weather/out/ledger_*.parquet.
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/ledger/build_ledger.sh [--upload]
+# Usage: bash datasets/flights/ledger/build_ledger.sh [--upload]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"

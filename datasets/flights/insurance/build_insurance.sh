@@ -2,7 +2,7 @@
 # Build the flight-delay cover pricing tables (ins_*). Needs the ledger build's weather (ledger_wx_days.parquet,
 # asos/, asos-ledger/) and the SPC outlook history (fetch_spc.sh). With --upload, copies the tables into MotherDuck
 # ltools.flights (token from the motherduck_token variable, never printed; no sign-in is attempted without it).
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/insurance/build_insurance.sh [--upload]
+# Usage: bash datasets/flights/insurance/build_insurance.sh [--upload]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 FL="$(cd "$HERE/.." && pwd)"

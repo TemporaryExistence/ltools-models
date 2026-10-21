@@ -689,7 +689,7 @@ function AboutData({ about, live }) {
 }
 
 // Source facts for this page, checked against the publishers on 7 October 2026
-// (/home/andrew/Project/work/units/ltools/outputs/2026-10-07_libraries-transit-source-check.md).
+// (source check notes, 2026-10-07).
 
 // ---- State library aid: where the next state / federal library dollar does most good. Six numbered steps, each a
 // chart with a short label and caveat chips; $STATE picks the state (default NC). ----

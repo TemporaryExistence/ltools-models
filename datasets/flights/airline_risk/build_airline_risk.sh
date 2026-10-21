@@ -6,7 +6,7 @@
 #   4. With --upload, copies the tables into MotherDuck ltools.flights (token from motherduck_token; never printed;
 #      no sign-in is attempted without it).
 # Outputs: units/ltools/public-data/airline-risk/*.parquet.
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/airline_risk/build_airline_risk.sh [--upload]
+# Usage: bash datasets/flights/airline_risk/build_airline_risk.sh [--upload]
 set -euo pipefail
 UPLOAD="${1:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

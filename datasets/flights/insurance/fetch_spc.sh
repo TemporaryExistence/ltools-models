@@ -2,7 +2,7 @@
 # Fetch NWS Storm Prediction Center (SPC) convective outlook history (Day 1 and Day 2, categorical) for each of the
 # 99 ledger airports from the IEM point service (Iowa State University; SPC outlooks are US public domain).
 # One request per airport per day-type, 3 s apart. Output: public-data/weather/spc/<IATA>_d<1|2>.json
-# Usage: bash /home/andrew/Project/work/units/ltools/model-repo/datasets/flights/insurance/fetch_spc.sh
+# Usage: bash datasets/flights/insurance/fetch_spc.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 FL="$(cd "$HERE/.." && pwd)"
