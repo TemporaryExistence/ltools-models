@@ -359,6 +359,28 @@ WITH d AS (
           sum(vmt_millions) / sum(sum(vmt_millions)) OVER (PARTITION BY year, state_name) AS vshare
         FROM ltools.fars.road_exposure WHERE state_name <> 'United States' GROUP BY year, state_name, road_class)
   GROUP BY ALL
+), cls AS (
+  SELECT year, state_name, road_class, sum(deaths) AS d, sum(vmt_millions) AS v
+  FROM ltools.fars.road_exposure WHERE state_name <> 'United States' GROUP BY year, state_name, road_class
+), cls_s AS (
+  SELECT *, d / sum(d) OVER (PARTITION BY year, state_name) AS ds, v / sum(v) OVER (PARTITION BY year, state_name) AS vs,
+    sum(d) OVER (PARTITION BY year, state_name) AS tot FROM cls
+), brk_pairs AS (
+  -- Road-class coding break between consecutive years: a class's share of the state's classified deaths moves over 8
+  -- points (two-proportion z over 3) while its share of miles moves under 3 points, and the state's other classes move
+  -- the other way by at least half as many deaths (deaths moved between classes). South Carolina 2020-2022, Washington
+  -- 2019-2020, Hawaii 2019-2021 and a few others.
+  SELECT a.state_name, a.year AS y0, b.year AS y1, a.road_class, b.d - a.d AS dd,
+    (SELECT sum(greatest(-sign(b.d - a.d) * (b2.d - a2.d), 0)) FROM cls_s a2 JOIN cls_s b2 ON b2.state_name = a2.state_name
+       AND b2.road_class = a2.road_class AND b2.year = a2.year + 1
+     WHERE a2.state_name = a.state_name AND a2.year = a.year AND a2.road_class <> a.road_class) AS offset_deaths,
+    (b.ds - a.ds) / sqrt(((a.d + b.d) / (a.tot + b.tot)) * (1 - (a.d + b.d) / (a.tot + b.tot)) * (1 / a.tot + 1 / b.tot)) AS z_share,
+    b.ds - a.ds AS dshare, b.vs - a.vs AS dmiles
+  FROM cls_s a JOIN cls_s b ON b.state_name = a.state_name AND b.road_class = a.road_class AND b.year = a.year + 1
+), brk AS (
+  SELECT state_name, string_agg(DISTINCT y0 || '-' || y1, ', ' ORDER BY y0 || '-' || y1) AS road_class_coding_breaks
+  FROM brk_pairs WHERE abs(dshare) > 0.08 AND abs(dmiles) < 0.03 AND abs(z_share) > 3 AND offset_deaths >= 0.5 * abs(dd)
+  GROUP BY state_name
 ), p AS (
   SELECT year, state_name, sum(population) AS population FROM ltools.fars.county_population GROUP BY ALL
   UNION ALL
@@ -371,8 +393,10 @@ SELECT d_all.state_name || '-' || d_all.year AS state_year_key,
   coalesce(d_all.deaths_road_type_unknown, 0) AS deaths_road_type_unknown,
   coalesce(ped.pedestrian_deaths, 0) AS pedestrian_deaths, coalesce(ped.pedestrian_deaths_dark, 0) AS pedestrian_deaths_dark,
   coalesce(ped.pedestrian_deaths_dark_arterial, 0) AS pedestrian_deaths_dark_arterial,
-  coalesce(mix.road_class_mix_suspect, false) AS road_class_mix_suspect
+  coalesce(mix.road_class_mix_suspect, false) AS road_class_mix_suspect,
+  brk.road_class_coding_breaks
 FROM d_all
+LEFT JOIN brk ON brk.state_name = d_all.state_name
 LEFT JOIN mix ON mix.year = d_all.year AND mix.state_name = d_all.state_name
 LEFT JOIN ped ON ped.year = d_all.year AND ped.state_name = d_all.state_name
 LEFT JOIN v ON v.year = d_all.year AND v.state_name = d_all.state_name

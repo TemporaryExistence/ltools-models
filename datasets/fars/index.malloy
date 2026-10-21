@@ -41,11 +41,9 @@ source: crashes is motherduck.table('fars.crashes') extend {
     #" Variance of the death count relative to plain Poisson (1 = no multi-death crashes).
     clustering_variance_factor is deaths_sq / nullif(deaths, 0)
     #" Lower end of the 95% interval on deaths (Poisson, widened for multi-death crashes).
-    deaths_low_95 is (pick 0 when deaths = 0 else greatest(deaths - (deaths - deaths * pow(1 - 1 / nullif(9 * deaths, 0) - 1.96 / nullif(3 * sqrt(deaths), 0), 3)) * sqrt(greatest(coalesce(clustering_variance_factor, 1), 1)), 0)
-    )
+    deaths_low_95 is (pick 0 when deaths = 0 else greatest(deaths - (deaths - deaths * pow(1 - 1 / nullif(9 * deaths, 0) - 1.96 / nullif(3 * sqrt(deaths), 0), 3)) * sqrt(greatest(coalesce(clustering_variance_factor, 1), 1)), 0))
     #" Upper end of the 95% interval on deaths (Poisson, widened for multi-death crashes).
-    deaths_high_95 is (deaths + ((deaths + 1) * pow(1 - 1 / (9 * (deaths + 1)) + 1.96 / (3 * sqrt(deaths + 1)), 3) - deaths) * sqrt(greatest(coalesce(clustering_variance_factor, 1), 1))
-    )
+    deaths_high_95 is (deaths + ((deaths + 1) * pow(1 - 1 / (9 * (deaths + 1)) + 1.96 / (3 * sqrt(deaths + 1)), 3) - deaths) * sqrt(greatest(coalesce(clustering_variance_factor, 1), 1)))
     #" Number of states in the rows counted (51 = all states and DC).
     states_count is count(state_name)
     #" Deaths valued at US DOT's value of a statistical life, $14.2 million (2025 dollars) per death; sums over the years in the query.
@@ -92,18 +90,15 @@ source: crashes is motherduck.table('fars.crashes') extend {
     #" Deaths by day (6am-5:59pm).
     day_deaths is fatalities.sum() { where: day_night = 'Daytime (6am-5:59pm)' }
     #" Alcohol-impaired-driving deaths (imputed) at night.
-    alcohol_impaired_night_deaths is sum(fatalities * ai_share) { where: day_night = 'Nighttime (6pm-5:59am)'
-    }
+    alcohol_impaired_night_deaths is sum(fatalities * ai_share) { where: day_night = 'Nighttime (6pm-5:59am)' }
     #" Share of deaths with the hour unknown (left out of both night and day; Nebraska 2020 and North Dakota 2021 and 2023 run 12-15%).
     # percent
     hour_unknown_share is deaths { where: `hour` is null } / nullif(deaths, 0)
     #" Share of deaths with unknown road function or rural/urban (Missouri 2023 8.9%, 2024 12.4%; Nevada 2024 8.6%).
     # percent
-    road_type_unknown_share is deaths { where: not (rural_urban = ('Rural' | 'Urban') and road_function_code >= 1 and road_function_code <= 7)
-    } / nullif(deaths, 0)
+    road_type_unknown_share is deaths { where: not (rural_urban = ('Rural' | 'Urban') and road_function_code >= 1 and road_function_code <= 7) } / nullif(deaths, 0)
     #" Alcohol-impaired-driving deaths (imputed) by day.
-    alcohol_impaired_day_deaths is sum(fatalities * ai_share) { where: day_night = 'Daytime (6am-5:59pm)'
-    }
+    alcohol_impaired_day_deaths is sum(fatalities * ai_share) { where: day_night = 'Daytime (6am-5:59pm)' }
 
   #" Alcohol-impaired-driving deaths by year, three ways (NHTSA's imputed method is right), with drivers tested. Filter `state_name` or `county_fips`.
   view: alcohol_counting_methods is {
@@ -160,6 +155,8 @@ source: crashes is motherduck.table('fars.crashes') extend {
       # percent
       pct_change_vs_prior_year is deaths / nullif(deaths_prior_year, 0) - 1
       vs_prior_year is
+        pick 'Not tested: no earlier year (data start in 2019)'
+        when `year` = 2019
         pick 'Not tested: no deaths in the year before in this selection, or it is filtered out'
         when deaths_prior_year is null
         pick 'Too few deaths to test'
@@ -287,19 +284,8 @@ source: crashes is motherduck.table('fars.crashes') extend {
   } -> {
     extend: {
       dimension:
-        pooled is (alcohol_impaired_night_deaths + alcohol_impaired_day_deaths) / nullif(
-          night_deaths + day_deaths,
-          0
-        )
-        z_night_day is (
-          alcohol_impaired_night_deaths / nullif(night_deaths, 0)
-            - alcohol_impaired_day_deaths / nullif(day_deaths, 0)
-        ) / sqrt(nullif(
-          pooled * (1 - pooled) * (
-            1 / nullif(night_deaths, 0) + 1 / nullif(day_deaths, 0)
-          ),
-          0
-        ))
+        pooled is (alcohol_impaired_night_deaths + alcohol_impaired_day_deaths) / nullif(night_deaths + day_deaths, 0)
+        z_night_day is (alcohol_impaired_night_deaths / nullif(night_deaths, 0) - alcohol_impaired_day_deaths / nullif(day_deaths, 0)) / sqrt(nullif(pooled * (1 - pooled) * (1 / nullif(night_deaths, 0) + 1 / nullif(day_deaths, 0)), 0))
     }
     select:
       state_name, first_year, last_year, deaths, night_deaths
@@ -431,7 +417,7 @@ source: crashes is motherduck.table('fars.crashes') extend {
 
 #" State x year with the rest of the US: alcohol testing and speeding shares compared, tested, ranked.
 #(agent) Grain: state x year; `rest_*_n` = rest of the US, same year, so any filter is safe. Group by `state_name` to pool years.
-#(agent) Chance: two-proportion tests, deaths treated as independent (slightly liberal). Ranks need all 51 states and a base of 30+.
+#(agent) Chance: two-proportion tests, deaths treated as independent (slightly liberal); the share-resting test treats the imputed count as a sample size (approximate). Ranks need all 51 states and a base of 30+.
 source: crashes_by_state_year is crashes -> {
   group_by: `year`, file_status, state_name
   aggregate:
@@ -484,25 +470,8 @@ source: crashes_by_state_year is crashes -> {
     # percent
     rest_of_us_share_resting_on_imputation is 1 - rest_tested_only / nullif(rest_alcohol_impaired, 0)
     #" Test statistic, share resting on imputation vs rest of US (approximate).
-    z_share_resting is (alcohol_share_resting_on_imputation - rest_of_us_share_resting_on_imputation
-    ) / sqrt(nullif(
-      (
-        (alcohol_deaths_tested_only + rest_tested_only) / nullif(
-          alcohol_impaired_deaths + rest_alcohol_impaired,
-          0
-        )
-      ) * (
-        1
-          - (
-            (alcohol_deaths_tested_only + rest_tested_only) / nullif(
-              alcohol_impaired_deaths + rest_alcohol_impaired,
-              0
-            )
-          )
-      ) * (1 / nullif(alcohol_impaired_deaths, 0) + 1 / nullif(rest_alcohol_impaired, 0)),
-      0
-    ))
-    #" Share resting on imputation against the rest of the US: beyond chance or not (approximate test).
+    z_share_resting is (alcohol_share_resting_on_imputation - rest_of_us_share_resting_on_imputation) / sqrt(nullif(((alcohol_deaths_tested_only + rest_tested_only) / nullif(alcohol_impaired_deaths + rest_alcohol_impaired, 0)) * (1 - ((alcohol_deaths_tested_only + rest_tested_only) / nullif(alcohol_impaired_deaths + rest_alcohol_impaired, 0))) * (1 / nullif(alcohol_impaired_deaths, 0) + 1 / nullif(rest_alcohol_impaired, 0)), 0))
+    #" Share resting on imputation against the rest of the US: beyond chance or not (approximate: the imputed count is treated as a sample size).
     share_resting_vs_rest_of_us is pick 'Too few to test' when alcohol_impaired_deaths < 10 pick 'Not tested' when z_share_resting is null pick 'Higher, beyond chance' when z_share_resting > 1.96 pick 'Lower, beyond chance' when z_share_resting < - 1.96 else 'Within chance'
     #" Share of drivers in fatal crashes (killed or not) with a known BAC result.
     # percent
@@ -511,8 +480,7 @@ source: crashes_by_state_year is crashes -> {
     # percent
     rest_of_us_driver_bac_known_share is rest_drivers_tested / nullif(rest_drivers, 0)
     #" Test statistic, drivers tested vs rest of US.
-    z_driver_tested is (driver_bac_known_share - rest_of_us_driver_bac_known_share) / sqrt(nullif(((drivers_tested + rest_drivers_tested) / nullif(drivers + rest_drivers, 0)) * (1 - ((drivers_tested + rest_drivers_tested) / nullif(drivers + rest_drivers, 0))) * (1 / nullif(drivers, 0) + 1 / nullif(rest_drivers, 0)), 0
-    ))
+    z_driver_tested is (driver_bac_known_share - rest_of_us_driver_bac_known_share) / sqrt(nullif(((drivers_tested + rest_drivers_tested) / nullif(drivers + rest_drivers, 0)) * (1 - ((drivers_tested + rest_drivers_tested) / nullif(drivers + rest_drivers, 0))) * (1 / nullif(drivers, 0) + 1 / nullif(rest_drivers, 0)), 0))
     #" Drivers tested against the rest of the US: beyond chance or not.
     driver_bac_known_vs_rest_of_us is pick 'Too few to test' when drivers < 10 pick 'Not tested' when z_driver_tested is null pick 'Higher, beyond chance' when z_driver_tested > 1.96 pick 'Lower, beyond chance' when z_driver_tested < - 1.96 else 'Within chance'
     #" Deaths in speeding-related crashes (FARS flag).
@@ -524,8 +492,7 @@ source: crashes_by_state_year is crashes -> {
     # percent
     rest_of_us_speeding_share is rest_speeding / nullif(rest_deaths, 0)
     #" Test statistic, speeding share vs rest of US.
-    z_speeding_share is (speeding_related_share - rest_of_us_speeding_share) / sqrt(nullif(((speeding_related_deaths + rest_speeding) / nullif(deaths + rest_deaths, 0)) * (1 - ((speeding_related_deaths + rest_speeding) / nullif(deaths + rest_deaths, 0))) * (1 / nullif(deaths, 0) + 1 / nullif(rest_deaths, 0)), 0
-    ))
+    z_speeding_share is (speeding_related_share - rest_of_us_speeding_share) / sqrt(nullif(((speeding_related_deaths + rest_speeding) / nullif(deaths + rest_deaths, 0)) * (1 - ((speeding_related_deaths + rest_speeding) / nullif(deaths + rest_deaths, 0))) * (1 / nullif(deaths, 0) + 1 / nullif(rest_deaths, 0)), 0))
     #" Speeding share against the rest of the US: beyond chance or not.
     speeding_share_vs_rest_of_us is pick 'Too few to test' when deaths < 10 pick 'Not tested' when z_speeding_share is null pick 'Higher, beyond chance' when z_speeding_share > 1.96 pick 'Lower, beyond chance' when z_speeding_share < - 1.96 else 'Within chance'
     #" Deaths in crashes with a vehicle recorded 10+ mph over the limit.
@@ -623,20 +590,17 @@ source: vehicles is motherduck.table('fars.vehicles') extend {
     #" Vehicles in fatal crashes.
     vehicle_count is count()
     #" Vehicles with both a recorded travel speed and a posted limit.
-    vehicles_speed_and_limit_known is count() { where: travel_speed_mph is not null and posted_speed_limit_mph is not null
-    }
+    vehicles_speed_and_limit_known is count() { where: travel_speed_mph is not null and posted_speed_limit_mph is not null }
     #" Vehicles with recorded travel speed 10+ mph over the posted limit.
     vehicles_10_over is count() { where: over_limit_by_10 }
     #" Vehicles recorded 10+ mph over the limit that FARS flags as speeding-related.
     vehicles_10_over_flagged is count() { where: over_limit_by_10 and speeding_related }
     #" Of the vehicles recorded 10+ mph over the limit, the share FARS flags as speeding-related (NC 51% in 2019, 88% in 2024).
     # percent
-    flagged_share_of_10_over is count() { where: over_limit_by_10 and speeding_related } / nullif(count() { where: over_limit_by_10 }, 0
-    )
+    flagged_share_of_10_over is count() { where: over_limit_by_10 and speeding_related } / nullif(count() { where: over_limit_by_10 }, 0)
     #" Of the vehicles with recorded travel speed over the posted limit (by any amount), the share FARS flags as speeding-related.
     # percent
-    flagged_share_of_over_limit is count() { where: travel_speed_mph > posted_speed_limit_mph and speeding_related
-    } / nullif(count() { where: travel_speed_mph > posted_speed_limit_mph }, 0)
+    flagged_share_of_over_limit is count() { where: travel_speed_mph > posted_speed_limit_mph and speeding_related } / nullif(count() { where: travel_speed_mph > posted_speed_limit_mph }, 0)
     #" Occupants of these vehicles who died (excludes pedestrians and cyclists).
     occupant_deaths_total is occupant_deaths.sum()
 
@@ -686,19 +650,9 @@ source: vehicles is motherduck.table('fars.vehicles') extend {
     extend: {
       dimension:
         p19 is (flagged_2019 + flagged_2024) / nullif(fast_2019 + fast_2024, 0)
-        z_19 is (
-          flagged_2024 / nullif(fast_2024, 0) - flagged_2019 / nullif(fast_2019, 0)
-        ) / sqrt(nullif(
-          p19 * (1 - p19) * (1 / nullif(fast_2019, 0) + 1 / nullif(fast_2024, 0)),
-          0
-        ))
+        z_19 is (flagged_2024 / nullif(fast_2024, 0) - flagged_2019 / nullif(fast_2019, 0)) / sqrt(nullif(p19 * (1 - p19) * (1 / nullif(fast_2019, 0) + 1 / nullif(fast_2024, 0)), 0))
         p22 is (flagged_2022 + flagged_2024) / nullif(fast_2022 + fast_2024, 0)
-        z_22 is (
-          flagged_2024 / nullif(fast_2024, 0) - flagged_2022 / nullif(fast_2022, 0)
-        ) / sqrt(nullif(
-          p22 * (1 - p22) * (1 / nullif(fast_2022, 0) + 1 / nullif(fast_2024, 0)),
-          0
-        ))
+        z_22 is (flagged_2024 / nullif(fast_2024, 0) - flagged_2022 / nullif(fast_2022, 0)) / sqrt(nullif(p22 * (1 - p22) * (1 / nullif(fast_2022, 0) + 1 / nullif(fast_2024, 0)), 0))
     }
     select:
       state_name, fast_2019, fast_2022, fast_2024
@@ -758,18 +712,15 @@ source: fast_vehicles_by_state_year is vehicles -> {
     flagged_share_of_10_over is vehicles_10_over_flagged / nullif(vehicles_10_over, 0)
     #" Lower end of the Wilson 95% interval on the flagged share.
     # percent
-    flagged_share_low_95 is (flagged_share_of_10_over + 1.9208 / nullif(vehicles_10_over, 0) - 1.96 * sqrt(flagged_share_of_10_over * (1 - flagged_share_of_10_over) / nullif(vehicles_10_over, 0) + 0.9604 / nullif(vehicles_10_over * vehicles_10_over, 0))
-    ) / (1 + 3.8416 / nullif(vehicles_10_over, 0))
+    flagged_share_low_95 is (flagged_share_of_10_over + 1.9208 / nullif(vehicles_10_over, 0) - 1.96 * sqrt(flagged_share_of_10_over * (1 - flagged_share_of_10_over) / nullif(vehicles_10_over, 0) + 0.9604 / nullif(vehicles_10_over * vehicles_10_over, 0))) / (1 + 3.8416 / nullif(vehicles_10_over, 0))
     #" Upper end of the Wilson 95% interval on the flagged share.
     # percent
-    flagged_share_high_95 is (flagged_share_of_10_over + 1.9208 / nullif(vehicles_10_over, 0) + 1.96 * sqrt(flagged_share_of_10_over * (1 - flagged_share_of_10_over) / nullif(vehicles_10_over, 0) + 0.9604 / nullif(vehicles_10_over * vehicles_10_over, 0))
-    ) / (1 + 3.8416 / nullif(vehicles_10_over, 0))
+    flagged_share_high_95 is (flagged_share_of_10_over + 1.9208 / nullif(vehicles_10_over, 0) + 1.96 * sqrt(flagged_share_of_10_over * (1 - flagged_share_of_10_over) / nullif(vehicles_10_over, 0) + 0.9604 / nullif(vehicles_10_over * vehicles_10_over, 0))) / (1 + 3.8416 / nullif(vehicles_10_over, 0))
     #" The flagged share in the rest of the US, like for like.
     # percent
     rest_of_us_flagged_share is rest_vehicles_10_over_flagged / nullif(rest_vehicles_10_over, 0)
     #" Test statistic, flagged share vs rest of US.
-    z_flagged is (flagged_share_of_10_over - rest_of_us_flagged_share) / sqrt(nullif(((vehicles_10_over_flagged + rest_vehicles_10_over_flagged) / nullif(vehicles_10_over + rest_vehicles_10_over, 0)) * (1 - ((vehicles_10_over_flagged + rest_vehicles_10_over_flagged) / nullif(vehicles_10_over + rest_vehicles_10_over, 0))) * (1 / nullif(vehicles_10_over, 0) + 1 / nullif(rest_vehicles_10_over, 0)), 0
-    ))
+    z_flagged is (flagged_share_of_10_over - rest_of_us_flagged_share) / sqrt(nullif(((vehicles_10_over_flagged + rest_vehicles_10_over_flagged) / nullif(vehicles_10_over + rest_vehicles_10_over, 0)) * (1 - ((vehicles_10_over_flagged + rest_vehicles_10_over_flagged) / nullif(vehicles_10_over + rest_vehicles_10_over, 0))) * (1 / nullif(vehicles_10_over, 0) + 1 / nullif(rest_vehicles_10_over, 0)), 0))
     #" Flagged share against the rest of the US: beyond chance or not.
     flagged_share_vs_rest_of_us is pick 'Too few to test' when vehicles_10_over < 10 pick 'Not tested' when z_flagged is null pick 'Higher, beyond chance' when z_flagged > 1.96 pick 'Lower, beyond chance' when z_flagged < - 1.96 else 'Within chance'
     #" Share of vehicles with both travel speed and posted limit recorded.
@@ -842,59 +793,45 @@ source: persons is motherduck.table('fars.persons') extend {
     #" Passenger-vehicle occupants killed who were unrestrained.
     unbelted_deaths is count() { where: is_killed and restraint = 'Unrestrained' }
     #" Passenger-vehicle occupants killed whose restraint use is known.
-    belt_known_deaths is count() { where: is_killed and restraint = ('Restrained' | 'Unrestrained')
-    }
+    belt_known_deaths is count() { where: is_killed and restraint = ('Restrained' | 'Unrestrained') }
     #" Share of passenger-vehicle occupants killed who were unrestrained, of those with known use (NHTSA basis).
     # percent
     unbelted_share is unbelted_deaths / nullif(belt_known_deaths, 0)
     #" Lower end of the Wilson 95% interval on `unbelted_share`.
     # percent
-    unbelted_share_low_95 is (unbelted_share + 1.9208 / nullif(belt_known_deaths, 0) - 1.96 * sqrt(unbelted_share * (1 - unbelted_share) / nullif(belt_known_deaths, 0) + 0.9604 / nullif(belt_known_deaths * belt_known_deaths, 0))
-    ) / (1 + 3.8416 / nullif(belt_known_deaths, 0))
+    unbelted_share_low_95 is (unbelted_share + 1.9208 / nullif(belt_known_deaths, 0) - 1.96 * sqrt(unbelted_share * (1 - unbelted_share) / nullif(belt_known_deaths, 0) + 0.9604 / nullif(belt_known_deaths * belt_known_deaths, 0))) / (1 + 3.8416 / nullif(belt_known_deaths, 0))
     #" Upper end of the Wilson 95% interval on `unbelted_share`.
     # percent
-    unbelted_share_high_95 is (unbelted_share + 1.9208 / nullif(belt_known_deaths, 0) + 1.96 * sqrt(unbelted_share * (1 - unbelted_share) / nullif(belt_known_deaths, 0) + 0.9604 / nullif(belt_known_deaths * belt_known_deaths, 0))
-    ) / (1 + 3.8416 / nullif(belt_known_deaths, 0))
+    unbelted_share_high_95 is (unbelted_share + 1.9208 / nullif(belt_known_deaths, 0) + 1.96 * sqrt(unbelted_share * (1 - unbelted_share) / nullif(belt_known_deaths, 0) + 0.9604 / nullif(belt_known_deaths * belt_known_deaths, 0))) / (1 + 3.8416 / nullif(belt_known_deaths, 0))
     #" Share of passenger-vehicle occupants killed whose restraint use is unknown (not in `unbelted_share`'s base; jumps by 5-23 points in some state-years, e.g. Hawaii 2020 40%, Mississippi 2020 17%).
     # percent
-    restraint_unknown_share is count() { where: is_killed and restraint = 'Unknown' } / nullif(count() { where: is_killed and road_user = 'Passenger vehicle occupant' }, 0
-    )
+    restraint_unknown_share is count() { where: is_killed and restraint = 'Unknown' } / nullif(count() { where: is_killed and road_user = 'Passenger vehicle occupant' }, 0)
     #" Share of pedestrians killed whose location is unknown (affects the at-intersection share; Utah 2024 19%).
     # percent
-    pedestrian_location_unknown_share is pedestrian_deaths { where: nonoccupant_location = 'Unknown'
-    } / nullif(pedestrian_deaths, 0)
+    pedestrian_location_unknown_share is pedestrian_deaths { where: nonoccupant_location = 'Unknown' } / nullif(pedestrian_deaths, 0)
     #" Pedestrians killed.
     pedestrian_deaths is count() { where: is_killed and road_user = 'Pedestrian' }
     #" Pedestrians killed in the dark.
     pedestrian_deaths_dark is count() { where: is_killed and road_user = 'Pedestrian' and in_dark }
     #" Pedestrians killed in the dark on non-freeway arterials.
-    pedestrian_deaths_dark_arterial is count() { where: is_killed and road_user = 'Pedestrian' and in_dark and crashes.road_class = 'Arterial (not freeway)'
-    }
+    pedestrian_deaths_dark_arterial is count() { where: is_killed and road_user = 'Pedestrian' and in_dark and crashes.road_class = 'Arterial (not freeway)' }
     #" Pedestrians killed at an intersection.
-    pedestrian_deaths_at_intersection is count() { where: is_killed and road_user = 'Pedestrian' and nonoccupant_location = 'At intersection'
-    }
+    pedestrian_deaths_at_intersection is count() { where: is_killed and road_user = 'Pedestrian' and nonoccupant_location = 'At intersection' }
     #" Pedestrians as a share of all people killed.
     # percent
     pedestrian_share_of_deaths is pedestrian_deaths / nullif(deaths, 0)
     #" Share of pedestrian deaths in the dark on non-freeway arterials.
     # percent
-    dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0
-    )
+    dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0)
     #" Share of killed drivers with a known (tested and reported) BAC result.
     # percent
-    killed_driver_bac_known_share is deaths { where: person_type = 'Driver' and bac_test_status = 'Tested, result known'
-    } / nullif(deaths { where: person_type = 'Driver' }, 0)
+    killed_driver_bac_known_share is deaths { where: person_type = 'Driver' and bac_test_status = 'Tested, result known' } / nullif(deaths { where: person_type = 'Driver' }, 0)
     #" Of killed drivers with a known BAC result, the share at .08 or higher.
     # percent
-    killed_driver_tested_positive_share is deaths { where: person_type = 'Driver' and tested_bac >= 0.08
-    } / nullif(
-      deaths { where: person_type = 'Driver' and bac_test_status = 'Tested, result known' },
-      0
-    )
+    killed_driver_tested_positive_share is deaths { where: person_type = 'Driver' and tested_bac >= 0.08 } / nullif(deaths { where: person_type = 'Driver' and bac_test_status = 'Tested, result known' }, 0)
     #" Share of surviving drivers (not killed) with a known BAC result.
     # percent
-    surviving_driver_bac_known_share is count() { where: not is_killed and person_type = 'Driver' and bac_test_status = 'Tested, result known'
-    } / nullif(count() { where: not is_killed and person_type = 'Driver' }, 0)
+    surviving_driver_bac_known_share is count() { where: not is_killed and person_type = 'Driver' and bac_test_status = 'Tested, result known' } / nullif(count() { where: not is_killed and person_type = 'Driver' }, 0)
     #" People killed whose imputed BAC was .08+ (NHTSA imputation; drivers and nonoccupants only).
     deaths_own_bac_08_imputed is imputed_bac08_share.sum() { where: is_killed }
 
@@ -990,12 +927,7 @@ source: persons is motherduck.table('fars.persons') extend {
         pn is night_unbelted / nullif(night_known, 0)
         pd is day_unbelted / nullif(day_known, 0)
         pool is (night_unbelted + day_unbelted) / nullif(night_known + day_known, 0)
-        z is (
-          night_unbelted / nullif(night_known, 0) - day_unbelted / nullif(day_known, 0)
-        ) / sqrt(nullif(
-          pool * (1 - pool) * (1 / nullif(night_known, 0) + 1 / nullif(day_known, 0)),
-          0
-        ))
+        z is (night_unbelted / nullif(night_known, 0) - day_unbelted / nullif(day_known, 0)) / sqrt(nullif(pool * (1 - pool) * (1 / nullif(night_known, 0) + 1 / nullif(day_known, 0)), 0))
     }
     select:
       state_name, unbelted_deaths
@@ -1168,18 +1100,15 @@ source: persons_by_state_year is persons -> {
     pedestrian_share_of_deaths is pedestrian_deaths / nullif(deaths, 0)
     #" Lower end of the Wilson 95% interval on the pedestrian share.
     # percent
-    pedestrian_share_low_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) - 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))
-    ) / (1 + 3.8416 / nullif(deaths, 0))
+    pedestrian_share_low_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) - 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))) / (1 + 3.8416 / nullif(deaths, 0))
     #" Upper end of the Wilson 95% interval on the pedestrian share.
     # percent
-    pedestrian_share_high_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) + 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))
-    ) / (1 + 3.8416 / nullif(deaths, 0))
+    pedestrian_share_high_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) + 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))) / (1 + 3.8416 / nullif(deaths, 0))
     #" Pedestrian share of deaths in the rest of the US.
     # percent
     rest_of_us_pedestrian_share is rest_pedestrian_deaths / nullif(rest_deaths, 0)
     #" Test statistic, pedestrian share vs rest of US.
-    z_pedestrian_share is (pedestrian_share_of_deaths - rest_of_us_pedestrian_share) / sqrt(nullif(((pedestrian_deaths + rest_pedestrian_deaths) / nullif(deaths + rest_deaths, 0)) * (1 - ((pedestrian_deaths + rest_pedestrian_deaths) / nullif(deaths + rest_deaths, 0))) * (1 / nullif(deaths, 0) + 1 / nullif(rest_deaths, 0)), 0
-    ))
+    z_pedestrian_share is (pedestrian_share_of_deaths - rest_of_us_pedestrian_share) / sqrt(nullif(((pedestrian_deaths + rest_pedestrian_deaths) / nullif(deaths + rest_deaths, 0)) * (1 - ((pedestrian_deaths + rest_pedestrian_deaths) / nullif(deaths + rest_deaths, 0))) * (1 / nullif(deaths, 0) + 1 / nullif(rest_deaths, 0)), 0))
     #" Pedestrian share against the rest of the US: beyond chance or not.
     pedestrian_share_vs_rest_of_us is pick 'Too few to test' when deaths < 10 pick 'Not tested' when z_pedestrian_share is null pick 'Higher, beyond chance' when z_pedestrian_share > 1.96 pick 'Lower, beyond chance' when z_pedestrian_share < - 1.96 else 'Within chance'
     #" Share of pedestrian deaths in the dark.
@@ -1187,45 +1116,23 @@ source: persons_by_state_year is persons -> {
     dark_share_of_pedestrian_deaths is pedestrian_deaths_dark / nullif(pedestrian_deaths, 0)
     #" Share of pedestrian deaths in the dark on non-freeway arterials.
     # percent
-    dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0
-    )
+    dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0)
     #" Lower end of the Wilson 95% interval on the dark-arterial share.
     # percent
-    dark_arterial_share_low_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) - 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))
-    ) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
+    dark_arterial_share_low_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) - 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
     #" Upper end of the Wilson 95% interval on the dark-arterial share.
     # percent
-    dark_arterial_share_high_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) + 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))
-    ) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
+    dark_arterial_share_high_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) + 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
     #" Dark-arterial share of pedestrian deaths in the rest of the US.
     # percent
-    rest_of_us_dark_arterial_share is rest_pedestrian_deaths_dark_arterial / nullif(rest_pedestrian_deaths, 0
-    )
+    rest_of_us_dark_arterial_share is rest_pedestrian_deaths_dark_arterial / nullif(rest_pedestrian_deaths, 0)
     #" Test statistic, dark-arterial share vs rest of US.
-    z_dark_arterial is (dark_arterial_share_of_pedestrian_deaths - rest_of_us_dark_arterial_share
-    ) / sqrt(nullif(
-      (
-        (pedestrian_deaths_dark_arterial + rest_pedestrian_deaths_dark_arterial) / nullif(
-          pedestrian_deaths + rest_pedestrian_deaths,
-          0
-        )
-      ) * (
-        1
-          - (
-            (pedestrian_deaths_dark_arterial + rest_pedestrian_deaths_dark_arterial) / nullif(
-              pedestrian_deaths + rest_pedestrian_deaths,
-              0
-            )
-          )
-      ) * (1 / nullif(pedestrian_deaths, 0) + 1 / nullif(rest_pedestrian_deaths, 0)),
-      0
-    ))
+    z_dark_arterial is (dark_arterial_share_of_pedestrian_deaths - rest_of_us_dark_arterial_share) / sqrt(nullif(((pedestrian_deaths_dark_arterial + rest_pedestrian_deaths_dark_arterial) / nullif(pedestrian_deaths + rest_pedestrian_deaths, 0)) * (1 - ((pedestrian_deaths_dark_arterial + rest_pedestrian_deaths_dark_arterial) / nullif(pedestrian_deaths + rest_pedestrian_deaths, 0))) * (1 / nullif(pedestrian_deaths, 0) + 1 / nullif(rest_pedestrian_deaths, 0)), 0))
     #" Dark-arterial share against the rest of the US: beyond chance or not.
     dark_arterial_share_vs_rest_of_us is pick 'Too few to test' when pedestrian_deaths < 10 pick 'Not tested' when z_dark_arterial is null pick 'Higher, beyond chance' when z_dark_arterial > 1.96 pick 'Lower, beyond chance' when z_dark_arterial < - 1.96 else 'Within chance'
     #" Share of pedestrian deaths at an intersection.
     # percent
-    at_intersection_share_of_pedestrian_deaths is pedestrian_deaths_at_intersection / nullif(pedestrian_deaths, 0
-    )
+    at_intersection_share_of_pedestrian_deaths is pedestrian_deaths_at_intersection / nullif(pedestrian_deaths, 0)
     #" Drivers killed.
     killed_drivers is killed_drivers_n.sum()
     #" Killed drivers with a known BAC result.
@@ -1245,31 +1152,25 @@ source: persons_by_state_year is persons -> {
     # percent
     rest_of_us_bac_known_share is rest_killed_drivers_tested / nullif(rest_killed_drivers, 0)
     #" Test statistic, killed drivers tested vs rest of US.
-    z_bac_known is (killed_driver_bac_known_share - rest_of_us_bac_known_share) / sqrt(nullif(((killed_drivers_tested + rest_killed_drivers_tested) / nullif(killed_drivers + rest_killed_drivers, 0)) * (1 - ((killed_drivers_tested + rest_killed_drivers_tested) / nullif(killed_drivers + rest_killed_drivers, 0))) * (1 / nullif(killed_drivers, 0) + 1 / nullif(rest_killed_drivers, 0)), 0
-    ))
+    z_bac_known is (killed_driver_bac_known_share - rest_of_us_bac_known_share) / sqrt(nullif(((killed_drivers_tested + rest_killed_drivers_tested) / nullif(killed_drivers + rest_killed_drivers, 0)) * (1 - ((killed_drivers_tested + rest_killed_drivers_tested) / nullif(killed_drivers + rest_killed_drivers, 0))) * (1 / nullif(killed_drivers, 0) + 1 / nullif(rest_killed_drivers, 0)), 0))
     #" Killed drivers tested against the rest of the US: beyond chance or not.
     bac_known_vs_rest_of_us is pick 'Too few to test' when killed_drivers < 10 pick 'Not tested' when z_bac_known is null pick 'Higher, beyond chance' when z_bac_known > 1.96 pick 'Lower, beyond chance' when z_bac_known < - 1.96 else 'Within chance'
     #" Of killed drivers with a known result, the share at .08+.
     # percent
-    killed_driver_tested_positive_share is killed_drivers_positive / nullif(killed_drivers_tested, 0
-    )
+    killed_driver_tested_positive_share is killed_drivers_positive / nullif(killed_drivers_tested, 0)
     #" The same share in the rest of the US.
     # percent
-    rest_of_us_tested_positive_share is rest_killed_drivers_positive / nullif(rest_killed_drivers_tested, 0
-    )
+    rest_of_us_tested_positive_share is rest_killed_drivers_positive / nullif(rest_killed_drivers_tested, 0)
     #" Test statistic, positive share vs rest of US.
-    z_positive is (killed_driver_tested_positive_share - rest_of_us_tested_positive_share) / sqrt(nullif(((killed_drivers_positive + rest_killed_drivers_positive) / nullif(killed_drivers_tested + rest_killed_drivers_tested, 0)) * (1 - ((killed_drivers_positive + rest_killed_drivers_positive) / nullif(killed_drivers_tested + rest_killed_drivers_tested, 0))) * (1 / nullif(killed_drivers_tested, 0) + 1 / nullif(rest_killed_drivers_tested, 0)), 0
-    ))
+    z_positive is (killed_driver_tested_positive_share - rest_of_us_tested_positive_share) / sqrt(nullif(((killed_drivers_positive + rest_killed_drivers_positive) / nullif(killed_drivers_tested + rest_killed_drivers_tested, 0)) * (1 - ((killed_drivers_positive + rest_killed_drivers_positive) / nullif(killed_drivers_tested + rest_killed_drivers_tested, 0))) * (1 / nullif(killed_drivers_tested, 0) + 1 / nullif(rest_killed_drivers_tested, 0)), 0))
     #" Positive share against the rest of the US: beyond chance or not.
     positive_vs_rest_of_us is pick 'Too few to test' when killed_drivers_tested < 10 pick 'Not tested' when z_positive is null pick 'Higher, beyond chance' when z_positive > 1.96 pick 'Lower, beyond chance' when z_positive < - 1.96 else 'Within chance'
     #" Share of surviving drivers with a known BAC result.
     # percent
-    surviving_driver_bac_known_share is surviving_drivers_tested_n.sum() / nullif(surviving_drivers_n.sum(), 0
-    )
+    surviving_driver_bac_known_share is surviving_drivers_tested_n.sum() / nullif(surviving_drivers_n.sum(), 0)
     #" The same share in the rest of the US.
     # percent
-    rest_of_us_surviving_driver_bac_known_share is rest_surviving_drivers_tested_n.sum() / nullif(rest_surviving_drivers_n.sum(), 0
-    )
+    rest_of_us_surviving_driver_bac_known_share is rest_surviving_drivers_tested_n.sum() / nullif(rest_surviving_drivers_n.sum(), 0)
     #" First data year in the query.
     first_year is `year`.min()
     #" Last data year in the query (2024 is not final).
@@ -1343,13 +1244,14 @@ source: persons_by_state_year is persons -> {
 }
 
 #" County x year with the rest of its state: pedestrian shares of deaths, in the dark and on arterials.
-#(agent) Grain: county x year with a crash, keyed by `county_fips` (Census name); `rest_of_state_*_n` = rest of the state, same year; any filter is safe. Per-resident rates: `county_rates_by_year`.
+#(agent) Grain: county x year with a crash, keyed by `county_fips` (Census name); `rest_of_state_*_n` = rest of the state, same year; any filter is safe. Pooled rest-of-state covers only years with a crash in the county. Per-resident rates: `county_rates_by_year`.
 #(agent) Chance: Wilson intervals and two-proportion tests; Poisson interval on the dark-arterial count.
 source: pedestrians_by_county_year is persons -> {
   group_by:
     `year`
     state_name is crashes.state_name
-    county_fips is crashes.county_fips
+    # Oglala Lakota County SD: FARS still codes some crashes under its old FIPS 46113 (Shannon); mapped to 46102 as in `county_years`.
+    county_fips is pick '46102' when crashes.county_fips = '46113' else crashes.county_fips
   aggregate:
     fars_county_name is crashes.county_name.max()
     deaths_n is deaths
@@ -1392,74 +1294,44 @@ source: pedestrians_by_county_year is persons -> {
     #" Pedestrians killed at an intersection.
     pedestrian_deaths_at_intersection is peds_at_intersection_n.sum()
     #" Lower end of the Poisson 95% interval on the dark-arterial count.
-    pedestrian_deaths_dark_arterial_low_95 is (pick 0 when pedestrian_deaths_dark_arterial = 0 else pedestrian_deaths_dark_arterial * pow(1 - 1 / nullif(9 * pedestrian_deaths_dark_arterial, 0) - 1.96 / nullif(3 * sqrt(pedestrian_deaths_dark_arterial), 0), 3)
-    )
+    pedestrian_deaths_dark_arterial_low_95 is (pick 0 when pedestrian_deaths_dark_arterial = 0 else pedestrian_deaths_dark_arterial * pow(1 - 1 / nullif(9 * pedestrian_deaths_dark_arterial, 0) - 1.96 / nullif(3 * sqrt(pedestrian_deaths_dark_arterial), 0), 3))
     #" Upper end of the Poisson 95% interval on the dark-arterial count.
-    pedestrian_deaths_dark_arterial_high_95 is (pedestrian_deaths_dark_arterial + 1) * pow(1 - 1 / (9 * (pedestrian_deaths_dark_arterial + 1)) + 1.96 / (3 * sqrt(pedestrian_deaths_dark_arterial + 1)), 3
-    )
+    pedestrian_deaths_dark_arterial_high_95 is (pedestrian_deaths_dark_arterial + 1) * pow(1 - 1 / (9 * (pedestrian_deaths_dark_arterial + 1)) + 1.96 / (3 * sqrt(pedestrian_deaths_dark_arterial + 1)), 3)
     #" Pedestrians as a share of all people killed.
     # percent
     pedestrian_share_of_deaths is pedestrian_deaths / nullif(deaths, 0)
     #" Lower end of the Wilson 95% interval on the pedestrian share.
     # percent
-    pedestrian_share_low_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) - 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))
-    ) / (1 + 3.8416 / nullif(deaths, 0))
+    pedestrian_share_low_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) - 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))) / (1 + 3.8416 / nullif(deaths, 0))
     #" Upper end of the Wilson 95% interval on the pedestrian share.
     # percent
-    pedestrian_share_high_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) + 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))
-    ) / (1 + 3.8416 / nullif(deaths, 0))
+    pedestrian_share_high_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) + 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))) / (1 + 3.8416 / nullif(deaths, 0))
     #" Pedestrian share of deaths in the rest of the state.
     # percent
-    rest_of_state_pedestrian_share is rest_of_state_pedestrian_deaths / nullif(rest_of_state_deaths, 0
-    )
+    rest_of_state_pedestrian_share is rest_of_state_pedestrian_deaths / nullif(rest_of_state_deaths, 0)
     #" Test statistic, pedestrian share vs rest of state.
-    z_pedestrian_share is (pedestrian_share_of_deaths - rest_of_state_pedestrian_share) / sqrt(nullif(((pedestrian_deaths + rest_of_state_pedestrian_deaths) / nullif(deaths + rest_of_state_deaths, 0)) * (1 - ((pedestrian_deaths + rest_of_state_pedestrian_deaths) / nullif(deaths + rest_of_state_deaths, 0))) * (1 / nullif(deaths, 0) + 1 / nullif(rest_of_state_deaths, 0)), 0
-    ))
+    z_pedestrian_share is (pedestrian_share_of_deaths - rest_of_state_pedestrian_share) / sqrt(nullif(((pedestrian_deaths + rest_of_state_pedestrian_deaths) / nullif(deaths + rest_of_state_deaths, 0)) * (1 - ((pedestrian_deaths + rest_of_state_pedestrian_deaths) / nullif(deaths + rest_of_state_deaths, 0))) * (1 / nullif(deaths, 0) + 1 / nullif(rest_of_state_deaths, 0)), 0))
     #" Pedestrian share against the rest of the state: beyond chance or not.
     pedestrian_share_vs_rest_of_state is pick 'Too few to test' when deaths < 10 pick 'Not tested' when z_pedestrian_share is null pick 'Higher, beyond chance' when z_pedestrian_share > 1.96 pick 'Lower, beyond chance' when z_pedestrian_share < - 1.96 else 'Within chance'
     #" Share of pedestrian deaths in the dark on non-freeway arterials.
     # percent
-    dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0
-    )
+    dark_arterial_share_of_pedestrian_deaths is pedestrian_deaths_dark_arterial / nullif(pedestrian_deaths, 0)
     #" Lower end of the Wilson 95% interval on the dark-arterial share.
     # percent
-    dark_arterial_share_low_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) - 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))
-    ) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
+    dark_arterial_share_low_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) - 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
     #" Upper end of the Wilson 95% interval on the dark-arterial share.
     # percent
-    dark_arterial_share_high_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) + 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))
-    ) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
+    dark_arterial_share_high_95 is (dark_arterial_share_of_pedestrian_deaths + 1.9208 / nullif(pedestrian_deaths, 0) + 1.96 * sqrt(dark_arterial_share_of_pedestrian_deaths * (1 - dark_arterial_share_of_pedestrian_deaths) / nullif(pedestrian_deaths, 0) + 0.9604 / nullif(pedestrian_deaths * pedestrian_deaths, 0))) / (1 + 3.8416 / nullif(pedestrian_deaths, 0))
     #" Dark-arterial share of pedestrian deaths in the rest of the state.
     # percent
-    rest_of_state_dark_arterial_share is rest_of_state_pedestrian_deaths_dark_arterial / nullif(rest_of_state_pedestrian_deaths, 0
-    )
+    rest_of_state_dark_arterial_share is rest_of_state_pedestrian_deaths_dark_arterial / nullif(rest_of_state_pedestrian_deaths, 0)
     #" Test statistic, dark-arterial share vs rest of state.
-    z_dark_arterial is (dark_arterial_share_of_pedestrian_deaths - rest_of_state_dark_arterial_share
-    ) / sqrt(nullif(
-      (
-        (pedestrian_deaths_dark_arterial + rest_of_state_pedestrian_deaths_dark_arterial) / nullif(
-          pedestrian_deaths + rest_of_state_pedestrian_deaths,
-          0
-        )
-      ) * (
-        1
-          - (
-            (pedestrian_deaths_dark_arterial + rest_of_state_pedestrian_deaths_dark_arterial) / nullif(
-              pedestrian_deaths + rest_of_state_pedestrian_deaths,
-              0
-            )
-          )
-      ) * (
-        1 / nullif(pedestrian_deaths, 0) + 1 / nullif(rest_of_state_pedestrian_deaths, 0)
-      ),
-      0
-    ))
+    z_dark_arterial is (dark_arterial_share_of_pedestrian_deaths - rest_of_state_dark_arterial_share) / sqrt(nullif(((pedestrian_deaths_dark_arterial + rest_of_state_pedestrian_deaths_dark_arterial) / nullif(pedestrian_deaths + rest_of_state_pedestrian_deaths, 0)) * (1 - ((pedestrian_deaths_dark_arterial + rest_of_state_pedestrian_deaths_dark_arterial) / nullif(pedestrian_deaths + rest_of_state_pedestrian_deaths, 0))) * (1 / nullif(pedestrian_deaths, 0) + 1 / nullif(rest_of_state_pedestrian_deaths, 0)), 0))
     #" Dark-arterial share against the rest of the state: beyond chance or not.
     dark_arterial_share_vs_rest_of_state is pick 'Too few to test' when pedestrian_deaths < 10 pick 'Not tested' when z_dark_arterial is null pick 'Higher, beyond chance' when z_dark_arterial > 1.96 pick 'Lower, beyond chance' when z_dark_arterial < - 1.96 else 'Within chance'
     #" Share of pedestrian deaths at an intersection.
     # percent
-    at_intersection_share_of_pedestrian_deaths is pedestrian_deaths_at_intersection / nullif(pedestrian_deaths, 0
-    )
+    at_intersection_share_of_pedestrian_deaths is pedestrian_deaths_at_intersection / nullif(pedestrian_deaths, 0)
 
   #" Per county: pedestrian share of deaths and dark-arterial share, with intervals, tested against the rest of the state.
   view: pedestrians_by_county is {
@@ -1480,7 +1352,7 @@ source: pedestrians_by_county_year is persons -> {
 
 #" State x year: deaths, alcohol, miles and residents; rates per mile and per resident; change since 2019.
 #(agent) One row per state (no national row): national figures are sums over states (`national_` views). State vs rest of US: `state_rates_by_year`. The 23 CFR 1300.23 tier uses 2021-2023.
-#(agent) Chance: Poisson widened for multi-death crashes. Per-mile rates leave out the 181 deaths in road cells with no VM-2 miles (`deaths_without_miles`; none in NC). The tier interval omits imputation uncertainty.
+#(agent) Chance: Poisson widened for multi-death crashes. Per-mile rates leave out the 181 deaths in road cells with no VM-2 miles (`deaths_without_miles`; none in NC), so they differ slightly from NHTSA's headline rate. The tier interval is widened by the state's all-deaths clustering factor (an approximation) and omits imputation uncertainty.
 source: state_years is motherduck.table('fars.state_years') extend {
   primary_key: state_year_key
   where: state_name != 'United States'
@@ -1507,27 +1379,21 @@ source: state_years is motherduck.table('fars.state_years') extend {
     #" Deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt is deaths_with_miles / nullif(vmt_millions_total / 100, 0)
     #" Lower end of the 95% interval on deaths per 100 million vehicle-miles.
-    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)) / nullif(vmt_millions_total / 100, 0)
     #" Upper end of the 95% interval on deaths per 100 million vehicle-miles.
-    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))) / nullif(vmt_millions_total / 100, 0)
     #" Deaths per 100,000 residents (per year when one year is selected; over several years, per resident-year).
     deaths_per_100k_residents is total_deaths / nullif(residents / 100000, 0)
     #" Lower end of the 95% interval on deaths per 100,000 residents.
-    deaths_per_100k_residents_low_95 is (pick 0 when total_deaths = 0 else greatest(total_deaths - (total_deaths - total_deaths * pow(1 - 1 / nullif(9 * total_deaths, 0) - 1.96 / nullif(3 * sqrt(total_deaths), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1)), 0)
-    ) / nullif(residents / 100000, 0)
+    deaths_per_100k_residents_low_95 is (pick 0 when total_deaths = 0 else greatest(total_deaths - (total_deaths - total_deaths * pow(1 - 1 / nullif(9 * total_deaths, 0) - 1.96 / nullif(3 * sqrt(total_deaths), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1)), 0)) / nullif(residents / 100000, 0)
     #" Upper end of the 95% interval on deaths per 100,000 residents.
-    deaths_per_100k_residents_high_95 is (total_deaths + ((total_deaths + 1) * pow(1 - 1 / (9 * (total_deaths + 1)) + 1.96 / (3 * sqrt(total_deaths + 1)), 3) - total_deaths) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1))
-    ) / nullif(residents / 100000, 0)
+    deaths_per_100k_residents_high_95 is (total_deaths + ((total_deaths + 1) * pow(1 - 1 / (9 * (total_deaths + 1)) + 1.96 / (3 * sqrt(total_deaths + 1)), 3) - total_deaths) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1))) / nullif(residents / 100000, 0)
     #" Alcohol-impaired-driving deaths per 100 million vehicle-miles (NHTSA imputed method): the rate in 23 CFR 1300.23.
-    impaired_rate_per_100m_vmt is alcohol_impaired_deaths.sum() / nullif(vmt_millions_total / 100, 0
-    )
+    impaired_rate_per_100m_vmt is alcohol_impaired_deaths.sum() / nullif(vmt_millions_total / 100, 0)
     #" For comparison only: the same rate from tested BAC results only (undercounts).
-    impaired_rate_tested_only is alcohol_deaths_tested_only.sum() / nullif(vmt_millions_total / 100, 0
-    )
+    impaired_rate_tested_only is alcohol_deaths_tested_only.sum() / nullif(vmt_millions_total / 100, 0)
 
-  #" 23 CFR 1300.23 impaired-driving tier, 2021-2023 (imputed counts), with rate interval and boundary flag; tested-only tier for contrast.
+  #" 23 CFR 1300.23 impaired-driving tier, 2021-2023 (imputed counts; boundaries 0.30 and 0.60 per 100M vehicle-miles), with rate interval and boundary flag; tested-only tier for contrast.
   view: impaired_driving_tier_by_state is {
     where: `year` >= 2021 and `year` <= 2023 and state_name != 'United States'
     group_by: state_name
@@ -1539,27 +1405,8 @@ source: state_years is motherduck.table('fars.state_years') extend {
   } -> {
     extend: {
       dimension:
-        lo is (
-            pick 0 when ai = 0
-            else greatest(
-              ai
-                - (
-                  ai
-                    - ai * pow(
-                      1 - 1 / nullif(9 * ai, 0) - 1.96 / nullif(3 * sqrt(ai), 0),
-                      3
-                    )
-                ) * sqrt(phi),
-              0
-            )
-        ) / nullif(vmt / 100, 0)
-        hi is (
-          ai
-            + (
-              (ai + 1) * pow(1 - 1 / (9 * (ai + 1)) + 1.96 / (3 * sqrt(ai + 1)), 3)
-                - ai
-            ) * sqrt(phi)
-        ) / nullif(vmt / 100, 0)
+        lo is (pick 0 when ai = 0 else greatest(ai - (ai - ai * pow(1 - 1 / nullif(9 * ai, 0) - 1.96 / nullif(3 * sqrt(ai), 0), 3)) * sqrt(phi), 0)) / nullif(vmt / 100, 0)
+        hi is (ai + ((ai + 1) * pow(1 - 1 / (9 * (ai + 1)) + 1.96 / (3 * sqrt(ai + 1)), 3) - ai) * sqrt(phi)) / nullif(vmt / 100, 0)
     }
     select:
       state_name, impaired_rate_per_100m_vmt, impaired_rate_tested_only
@@ -1659,36 +1506,10 @@ source: state_years is motherduck.table('fars.state_years') extend {
   } -> {
     extend: {
       dimension:
-        zr19 is (
-          deaths_2024
-            - (deaths_2024 + deaths_2019) * pop_2024 / nullif(pop_2024 + pop_2019, 0)
-        ) / sqrt(nullif(
-          (sq_2024 + sq_2019) * (pop_2024 / nullif(pop_2024 + pop_2019, 0)) * (
-            pop_2019 / nullif(pop_2024 + pop_2019, 0)
-          ),
-          0
-        ))
-        zr23 is (
-          deaths_2024
-            - (deaths_2024 + deaths_2023) * pop_2024 / nullif(pop_2024 + pop_2023, 0)
-        ) / sqrt(nullif(
-          (sq_2024 + sq_2023) * (pop_2024 / nullif(pop_2024 + pop_2023, 0)) * (
-            pop_2023 / nullif(pop_2024 + pop_2023, 0)
-          ),
-          0
-        ))
-        zm19 is (dm_2024 - (dm_2024 + dm_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(
-          (sqm_2024 + sqm_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (
-            vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)
-          ),
-          0
-        ))
-        zm23 is (dm_2024 - (dm_2024 + dm_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(
-          (sqm_2024 + sqm_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (
-            vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)
-          ),
-          0
-        ))
+        zr19 is (deaths_2024 - (deaths_2024 + deaths_2019) * pop_2024 / nullif(pop_2024 + pop_2019, 0)) / sqrt(nullif((sq_2024 + sq_2019) * (pop_2024 / nullif(pop_2024 + pop_2019, 0)) * (pop_2019 / nullif(pop_2024 + pop_2019, 0)), 0))
+        zr23 is (deaths_2024 - (deaths_2024 + deaths_2023) * pop_2024 / nullif(pop_2024 + pop_2023, 0)) / sqrt(nullif((sq_2024 + sq_2023) * (pop_2024 / nullif(pop_2024 + pop_2023, 0)) * (pop_2023 / nullif(pop_2024 + pop_2023, 0)), 0))
+        zm19 is (dm_2024 - (dm_2024 + dm_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif((sqm_2024 + sqm_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
+        zm23 is (dm_2024 - (dm_2024 + dm_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif((sqm_2024 + sqm_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
     }
     select:
       state_name, deaths_2019, deaths_2023, deaths_2024
@@ -1789,36 +1610,10 @@ source: state_years is motherduck.table('fars.state_years') extend {
   } -> {
     extend: {
       dimension:
-        zr19 is (
-          deaths_2024
-            - (deaths_2024 + deaths_2019) * pop_2024 / nullif(pop_2024 + pop_2019, 0)
-        ) / sqrt(nullif(
-          (sq_2024 + sq_2019) * (pop_2024 / nullif(pop_2024 + pop_2019, 0)) * (
-            pop_2019 / nullif(pop_2024 + pop_2019, 0)
-          ),
-          0
-        ))
-        zr23 is (
-          deaths_2024
-            - (deaths_2024 + deaths_2023) * pop_2024 / nullif(pop_2024 + pop_2023, 0)
-        ) / sqrt(nullif(
-          (sq_2024 + sq_2023) * (pop_2024 / nullif(pop_2024 + pop_2023, 0)) * (
-            pop_2023 / nullif(pop_2024 + pop_2023, 0)
-          ),
-          0
-        ))
-        zm19 is (dm_2024 - (dm_2024 + dm_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(
-          (sqm_2024 + sqm_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (
-            vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)
-          ),
-          0
-        ))
-        zm23 is (dm_2024 - (dm_2024 + dm_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(
-          (sqm_2024 + sqm_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (
-            vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)
-          ),
-          0
-        ))
+        zr19 is (deaths_2024 - (deaths_2024 + deaths_2019) * pop_2024 / nullif(pop_2024 + pop_2019, 0)) / sqrt(nullif((sq_2024 + sq_2019) * (pop_2024 / nullif(pop_2024 + pop_2019, 0)) * (pop_2019 / nullif(pop_2024 + pop_2019, 0)), 0))
+        zr23 is (deaths_2024 - (deaths_2024 + deaths_2023) * pop_2024 / nullif(pop_2024 + pop_2023, 0)) / sqrt(nullif((sq_2024 + sq_2023) * (pop_2024 / nullif(pop_2024 + pop_2023, 0)) * (pop_2023 / nullif(pop_2024 + pop_2023, 0)), 0))
+        zm19 is (dm_2024 - (dm_2024 + dm_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif((sqm_2024 + sqm_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
+        zm23 is (dm_2024 - (dm_2024 + dm_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif((sqm_2024 + sqm_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
     }
     select:
       deaths_2019, deaths_2023, deaths_2024
@@ -1886,18 +1681,15 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
     deaths_road_type_unknown is sy.deaths_road_type_unknown.sum()
     #" Share of all deaths in the query's state-years with unknown road type: a coding break shows here (Missouri 2023-2024).
     # percent
-    road_type_unknown_share is sy.deaths_road_type_unknown.sum() / nullif(sy.deaths.sum(), 0
-    )
+    road_type_unknown_share is sy.deaths_road_type_unknown.sum() / nullif(sy.deaths.sum(), 0)
     #" Vehicle-miles, millions (FHWA VM-2). States re-estimate miles: NC local roads +25% in 2024; Georgia rural local 16,793 million in 2022 vs about 4,400 other years.
     vmt_millions_total is vmt_millions.sum()
     #" Deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt is deaths_with_miles / nullif(vmt_millions_total / 100, 0)
     #" Lower end of the 95% interval on the rate (Poisson on deaths, widened for multi-death crashes).
-    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)) / nullif(vmt_millions_total / 100, 0)
     #" Upper end of the 95% interval on the rate (Poisson on deaths, widened for multi-death crashes).
-    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))) / nullif(vmt_millions_total / 100, 0)
     #" Deaths valued at US DOT's VSL ($14.2M, 2025 dollars); sums over the years in the query.
     # currency
     deaths_valued_at_vsl is deaths_with_road_type * 14200000
@@ -1949,9 +1741,19 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
     order_by: deaths_per_100m_vmt desc
   }
 
-  #" US 2024 (not final): deaths per 100 million vehicle-miles by road class.
-  view: us_2024_deaths_per_mile_by_road_class is deaths_per_mile_by_road_class + {
+  #" US 2024 (not final): deaths per 100 million vehicle-miles by road class, with interval, shares and ratio to the freeway rate. Other years or states: `deaths_per_mile_by_road_class`.
+  view: us_2024_deaths_per_mile_by_road_class is {
     where: `year` = 2024
+    group_by: road_class
+    aggregate:
+      deaths_with_road_type, deaths_without_miles, vmt_millions_total, deaths_per_100m_vmt
+      deaths_per_100m_vmt_low_95, deaths_per_100m_vmt_high_95, road_type_unknown_share
+      # percent
+      share_of_deaths is deaths.sum() / all(deaths.sum())
+      # percent
+      share_of_miles is vmt_millions.sum() / all(vmt_millions.sum())
+      rate_vs_interstate_freeway is (deaths_mi.sum() / vmt_millions.sum()) / (all(deaths_mi.sum() { where: road_class = 'Interstate or freeway' }) / all(vmt_millions.sum() { where: road_class = 'Interstate or freeway' }))
+    order_by: deaths_per_100m_vmt desc
   }
 
   #" NC vs US deaths per 100M vehicle-miles by road class, 2024 and 2022-2024, with ratios to freeways. Any state: `road_class_by_state_year`.
@@ -2045,151 +1847,67 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
     order_by: road_function
   }
 
-  #" By road class: miles, deaths and rates 2019, 2023, 2024; changes tested for any placement of unknown road type, with coding checks.
+  #" By road class: miles, deaths and rates 2019, 2023, 2024; changes tested for any placement of unknown road type, with coding checks for a single state.
   view: road_class_change_since_2019 is {
     group_by: road_class
     aggregate:
-      deaths_2019 is
-        pick deaths_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
-        else null
-      deaths_2023 is
-        pick deaths_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
-        else null
-      deaths_2024 is
-        pick deaths_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
-        else null
-      sq_2019 is
-        pick deaths_sq_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
-        else null
-      sq_2023 is
-        pick deaths_sq_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
-        else null
-      sq_2024 is
-        pick deaths_sq_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
-        else null
-      vmt_2019 is
-        pick vmt_millions.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0
-        else null
-      vmt_2023 is
-        pick vmt_millions.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0
-        else null
-      vmt_2024 is
-        pick vmt_millions.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0
-        else null
+      deaths_2019 is pick deaths_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0 else null
+      sq_2019 is pick deaths_sq_mi.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0 else null
+      vmt_2019 is pick vmt_millions.sum() { where: `year` = 2019 } when count() { where: `year` = 2019 } > 0 else null
       n_2019 is count() { where: `year` = 2019 }
       unk_2019 is sy.deaths_road_type_unknown.sum() { where: `year` = 2019 }
       all_2019 is sy.deaths.sum() { where: `year` = 2019 }
       suspect_2019 is sy.count() { where: `year` = 2019 and sy.road_class_mix_suspect }
-      class_share_2019 is deaths_mi.sum() { where: `year` = 2019 } / nullif(
-        all(deaths_mi.sum() { where: `year` = 2019 }),
-        0
-      )
+      class_share_2019 is deaths_mi.sum() { where: `year` = 2019 } / nullif(all(deaths_mi.sum() { where: `year` = 2019 }), 0)
       classified_2019 is all(deaths_mi.sum() { where: `year` = 2019 })
-      mile_share_2019 is vmt_millions.sum() { where: `year` = 2019 } / nullif(
-        all(vmt_millions.sum() { where: `year` = 2019 }),
-        0
-      )
+      mile_share_2019 is vmt_millions.sum() { where: `year` = 2019 } / nullif(all(vmt_millions.sum() { where: `year` = 2019 }), 0)
+      deaths_2023 is pick deaths_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0 else null
+      sq_2023 is pick deaths_sq_mi.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0 else null
+      vmt_2023 is pick vmt_millions.sum() { where: `year` = 2023 } when count() { where: `year` = 2023 } > 0 else null
       n_2023 is count() { where: `year` = 2023 }
       unk_2023 is sy.deaths_road_type_unknown.sum() { where: `year` = 2023 }
       all_2023 is sy.deaths.sum() { where: `year` = 2023 }
       suspect_2023 is sy.count() { where: `year` = 2023 and sy.road_class_mix_suspect }
-      class_share_2023 is deaths_mi.sum() { where: `year` = 2023 } / nullif(
-        all(deaths_mi.sum() { where: `year` = 2023 }),
-        0
-      )
+      class_share_2023 is deaths_mi.sum() { where: `year` = 2023 } / nullif(all(deaths_mi.sum() { where: `year` = 2023 }), 0)
       classified_2023 is all(deaths_mi.sum() { where: `year` = 2023 })
-      mile_share_2023 is vmt_millions.sum() { where: `year` = 2023 } / nullif(
-        all(vmt_millions.sum() { where: `year` = 2023 }),
-        0
-      )
+      mile_share_2023 is vmt_millions.sum() { where: `year` = 2023 } / nullif(all(vmt_millions.sum() { where: `year` = 2023 }), 0)
+      deaths_2024 is pick deaths_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0 else null
+      sq_2024 is pick deaths_sq_mi.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0 else null
+      vmt_2024 is pick vmt_millions.sum() { where: `year` = 2024 } when count() { where: `year` = 2024 } > 0 else null
       n_2024 is count() { where: `year` = 2024 }
       unk_2024 is sy.deaths_road_type_unknown.sum() { where: `year` = 2024 }
       all_2024 is sy.deaths.sum() { where: `year` = 2024 }
       suspect_2024 is sy.count() { where: `year` = 2024 and sy.road_class_mix_suspect }
-      class_share_2024 is deaths_mi.sum() { where: `year` = 2024 } / nullif(
-        all(deaths_mi.sum() { where: `year` = 2024 }),
-        0
-      )
+      class_share_2024 is deaths_mi.sum() { where: `year` = 2024 } / nullif(all(deaths_mi.sum() { where: `year` = 2024 }), 0)
       classified_2024 is all(deaths_mi.sum() { where: `year` = 2024 })
-      mile_share_2024 is vmt_millions.sum() { where: `year` = 2024 } / nullif(
-        all(vmt_millions.sum() { where: `year` = 2024 }),
-        0
-      )
+      mile_share_2024 is vmt_millions.sum() { where: `year` = 2024 } / nullif(all(vmt_millions.sum() { where: `year` = 2024 }), 0)
+      states_in_query is all(count(state_name))
+  } -> {
+    group_by: road_class, states_in_query, deaths_2019, sq_2019, vmt_2019, n_2019, unk_2019, all_2019, suspect_2019, class_share_2019, classified_2019, mile_share_2019, deaths_2023, sq_2023, vmt_2023, n_2023, unk_2023, all_2023, suspect_2023, class_share_2023, classified_2023, mile_share_2023, deaths_2024, sq_2024, vmt_2024, n_2024, unk_2024, all_2024, suspect_2024, class_share_2024, classified_2024, mile_share_2024
+    aggregate:
+      all_rise_19 is all(sum(greatest(deaths_2024 - deaths_2019, 0)))
+      all_fall_19 is all(sum(greatest(deaths_2019 - deaths_2024, 0)))
+      all_rise_23 is all(sum(greatest(deaths_2024 - deaths_2023, 0)))
+      all_fall_23 is all(sum(greatest(deaths_2023 - deaths_2024, 0)))
   } -> {
     extend: {
       dimension:
-        z_lo_19 is (
-          deaths_2024
-            - (deaths_2024 + (deaths_2019 + unk_2019)) * vmt_2024 / nullif(
-              vmt_2024 + vmt_2019,
-              0
-            )
-        ) / sqrt(nullif(
-          (sq_2024 + (sq_2019 + unk_2019)) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (
-            vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)
-          ),
-          0
-        ))
-        z_hi_19 is (
-          (deaths_2024 + unk_2024)
-            - ((deaths_2024 + unk_2024) + deaths_2019) * vmt_2024 / nullif(
-              vmt_2024 + vmt_2019,
-              0
-            )
-        ) / sqrt(nullif(
-          ((sq_2024 + unk_2024) + sq_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (
-            vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)
-          ),
-          0
-        ))
-        z_mix_19 is (class_share_2024 - class_share_2019) / sqrt(nullif(
-          ((deaths_2024 + deaths_2019) / nullif(classified_2024 + classified_2019, 0)) * (
-            1
-              - (
-                (deaths_2024 + deaths_2019) / nullif(classified_2024 + classified_2019, 0)
-              )
-          ) * (1 / nullif(classified_2024, 0) + 1 / nullif(classified_2019, 0)),
-          0
-        ))
-        shifted_19 is abs(class_share_2024 - class_share_2019) > 0.08
-          and abs(mile_share_2024 - mile_share_2019) < 0.03
-          and abs(z_mix_19) > 1.96
-        z_lo_23 is (
-          deaths_2024
-            - (deaths_2024 + (deaths_2023 + unk_2023)) * vmt_2024 / nullif(
-              vmt_2024 + vmt_2023,
-              0
-            )
-        ) / sqrt(nullif(
-          (sq_2024 + (sq_2023 + unk_2023)) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (
-            vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)
-          ),
-          0
-        ))
-        z_hi_23 is (
-          (deaths_2024 + unk_2024)
-            - ((deaths_2024 + unk_2024) + deaths_2023) * vmt_2024 / nullif(
-              vmt_2024 + vmt_2023,
-              0
-            )
-        ) / sqrt(nullif(
-          ((sq_2024 + unk_2024) + sq_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (
-            vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)
-          ),
-          0
-        ))
-        z_mix_23 is (class_share_2024 - class_share_2023) / sqrt(nullif(
-          ((deaths_2024 + deaths_2023) / nullif(classified_2024 + classified_2023, 0)) * (
-            1
-              - (
-                (deaths_2024 + deaths_2023) / nullif(classified_2024 + classified_2023, 0)
-              )
-          ) * (1 / nullif(classified_2024, 0) + 1 / nullif(classified_2023, 0)),
-          0
-        ))
-        shifted_23 is abs(class_share_2024 - class_share_2023) > 0.08
-          and abs(mile_share_2024 - mile_share_2023) < 0.03
-          and abs(z_mix_23) > 1.96
+        z_lo_19 is (deaths_2024 - (deaths_2024 + (deaths_2019 + unk_2019)) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif((sq_2024 + (sq_2019 + unk_2019)) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
+        z_hi_19 is ((deaths_2024 + unk_2024) - ((deaths_2024 + unk_2024) + deaths_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(((sq_2024 + unk_2024) + sq_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
+        z_mix_19 is (class_share_2024 - class_share_2019) / sqrt(nullif(((deaths_2024 + deaths_2019) / nullif(classified_2024 + classified_2019, 0)) * (1 - ((deaths_2024 + deaths_2019) / nullif(classified_2024 + classified_2019, 0))) * (1 / nullif(classified_2024, 0) + 1 / nullif(classified_2019, 0)), 0))
+        share_moved_19 is states_in_query = 1 and abs(class_share_2024 - class_share_2019) > 0.08 and abs(mile_share_2024 - mile_share_2019) < 0.03 and abs(z_mix_19) > 1.96
+        offset_19 is pick least(all_fall_19 - greatest(deaths_2019 - deaths_2024, 0), deaths_2024 - deaths_2019) when deaths_2024 >= deaths_2019 else least(all_rise_19 - greatest(deaths_2024 - deaths_2019, 0), deaths_2019 - deaths_2024)
+        adj_2024_19 is pick deaths_2024 - offset_19 when deaths_2024 >= deaths_2019 else deaths_2024 + offset_19
+        z_lo_adj_19 is (adj_2024_19 - (adj_2024_19 + (deaths_2019 + unk_2019)) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(((sq_2024 * adj_2024_19 / nullif(deaths_2024, 0)) + (sq_2019 + unk_2019)) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
+        z_hi_adj_19 is ((adj_2024_19 + unk_2024) - ((adj_2024_19 + unk_2024) + deaths_2019) * vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) / sqrt(nullif(((sq_2024 * adj_2024_19 / nullif(deaths_2024, 0) + unk_2024) + sq_2019) * (vmt_2024 / nullif(vmt_2024 + vmt_2019, 0)) * (vmt_2019 / nullif(vmt_2024 + vmt_2019, 0)), 0))
+        z_lo_23 is (deaths_2024 - (deaths_2024 + (deaths_2023 + unk_2023)) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif((sq_2024 + (sq_2023 + unk_2023)) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
+        z_hi_23 is ((deaths_2024 + unk_2024) - ((deaths_2024 + unk_2024) + deaths_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(((sq_2024 + unk_2024) + sq_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
+        z_mix_23 is (class_share_2024 - class_share_2023) / sqrt(nullif(((deaths_2024 + deaths_2023) / nullif(classified_2024 + classified_2023, 0)) * (1 - ((deaths_2024 + deaths_2023) / nullif(classified_2024 + classified_2023, 0))) * (1 / nullif(classified_2024, 0) + 1 / nullif(classified_2023, 0)), 0))
+        share_moved_23 is states_in_query = 1 and abs(class_share_2024 - class_share_2023) > 0.08 and abs(mile_share_2024 - mile_share_2023) < 0.03 and abs(z_mix_23) > 1.96
+        offset_23 is pick least(all_fall_23 - greatest(deaths_2023 - deaths_2024, 0), deaths_2024 - deaths_2023) when deaths_2024 >= deaths_2023 else least(all_rise_23 - greatest(deaths_2024 - deaths_2023, 0), deaths_2023 - deaths_2024)
+        adj_2024_23 is pick deaths_2024 - offset_23 when deaths_2024 >= deaths_2023 else deaths_2024 + offset_23
+        z_lo_adj_23 is (adj_2024_23 - (adj_2024_23 + (deaths_2023 + unk_2023)) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(((sq_2024 * adj_2024_23 / nullif(deaths_2024, 0)) + (sq_2023 + unk_2023)) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
+        z_hi_adj_23 is ((adj_2024_23 + unk_2024) - ((adj_2024_23 + unk_2024) + deaths_2023) * vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) / sqrt(nullif(((sq_2024 * adj_2024_23 / nullif(deaths_2024, 0) + unk_2024) + sq_2023) * (vmt_2024 / nullif(vmt_2024 + vmt_2023, 0)) * (vmt_2023 / nullif(vmt_2024 + vmt_2023, 0)), 0))
     }
     select:
       road_class, vmt_2019, vmt_2023, vmt_2024
@@ -2206,6 +1924,7 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
       class_share_of_miles_2019 is mile_share_2019
       # percent
       class_share_of_miles_2024 is mile_share_2024
+      offsetting_deaths_in_other_classes_2019_to_2024 is pick offset_19 when share_moved_19 else null
       unknown_road_type_deaths_2019 is unk_2019
       unknown_road_type_deaths_2024 is unk_2024
       # percent
@@ -2217,49 +1936,39 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
       rate_2024 is deaths_2024 / nullif(vmt_2024 / 100, 0)
       rate_2024_upper_bound is (deaths_2024 + unk_2024) / nullif(vmt_2024 / 100, 0)
       rate_change_2023_to_2024 is
-        pick 'Not tested: 2023 or 2024 not in the query'
-        when n_2023 = 0 or n_2024 = 0
-        pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)'
-        when suspect_2023 > 0 or suspect_2024 > 0
-        pick 'Not tested: road-class coding shifted (class share of deaths moved over 8 points, its share of miles under 3)'
-        when shifted_23
-        pick 'Too few deaths to test'
-        when deaths_2023 + deaths_2024 < 10
-        pick 'Not tested'
-        when z_lo_23 is null or z_hi_23 is null
-        pick 'Up, beyond chance'
-        when z_lo_23 > 1.96
-        pick 'Down, beyond chance'
-        when z_hi_23 < - 1.96
-        pick 'Within chance'
-        when z_lo_23 >= - 1.96 and z_hi_23 <= 1.96
+        pick 'Not tested: 2023 or 2024 not in the query' when n_2023 = 0 or n_2024 = 0
+        pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)' when states_in_query = 1 and (suspect_2023 > 0 or suspect_2024 > 0)
+        pick 'Too few deaths to test' when deaths_2023 + deaths_2024 < 10
+        pick 'Not tested' when z_lo_23 is null or z_hi_23 is null
+        pick 'Up, beyond chance even if coding moved deaths between classes' when share_moved_23 and deaths_2024 > deaths_2023 and z_lo_adj_23 > 1.96
+        pick 'Down, beyond chance even if coding moved deaths between classes' when share_moved_23 and deaths_2024 < deaths_2023 and z_hi_adj_23 < -1.96
+        pick 'Not tested: class share of deaths moved over 8 points and other classes offset the change (possible coding shift)' when share_moved_23 and ((deaths_2024 > deaths_2023 and z_lo_23 > 1.96) or (deaths_2024 < deaths_2023 and z_hi_23 < -1.96))
+        pick 'Up, beyond chance' when z_lo_23 > 1.96
+        pick 'Down, beyond chance' when z_hi_23 < -1.96
+        pick 'Within chance' when z_lo_23 >= -1.96 and z_hi_23 <= 1.96
         else 'Not tested: deaths with unknown road type could change this'
       rate_change_2019_to_2024 is
-        pick 'Not tested: 2019 or 2024 not in the query'
-        when n_2019 = 0 or n_2024 = 0
-        pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)'
-        when suspect_2019 > 0 or suspect_2024 > 0
-        pick 'Not tested: road-class coding shifted (class share of deaths moved over 8 points, its share of miles under 3)'
-        when shifted_19
-        pick 'Too few deaths to test'
-        when deaths_2019 + deaths_2024 < 10
-        pick 'Not tested'
-        when z_lo_19 is null or z_hi_19 is null
-        pick 'Up, beyond chance'
-        when z_lo_19 > 1.96
-        pick 'Down, beyond chance'
-        when z_hi_19 < - 1.96
-        pick 'Within chance'
-        when z_lo_19 >= - 1.96 and z_hi_19 <= 1.96
+        pick 'Not tested: 2019 or 2024 not in the query' when n_2019 = 0 or n_2024 = 0
+        pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)' when states_in_query = 1 and (suspect_2019 > 0 or suspect_2024 > 0)
+        pick 'Too few deaths to test' when deaths_2019 + deaths_2024 < 10
+        pick 'Not tested' when z_lo_19 is null or z_hi_19 is null
+        pick 'Up, beyond chance even if coding moved deaths between classes' when share_moved_19 and deaths_2024 > deaths_2019 and z_lo_adj_19 > 1.96
+        pick 'Down, beyond chance even if coding moved deaths between classes' when share_moved_19 and deaths_2024 < deaths_2019 and z_hi_adj_19 < -1.96
+        pick 'Not tested: class share of deaths moved over 8 points and other classes offset the change (possible coding shift)' when share_moved_19 and ((deaths_2024 > deaths_2019 and z_lo_19 > 1.96) or (deaths_2024 < deaths_2019 and z_hi_19 < -1.96))
+        pick 'Up, beyond chance' when z_lo_19 > 1.96
+        pick 'Down, beyond chance' when z_hi_19 < -1.96
+        pick 'Within chance' when z_lo_19 >= -1.96 and z_hi_19 <= 1.96
         else 'Not tested: deaths with unknown road type could change this'
+      coding_checks is pick 'Applied (one state)' when states_in_query = 1 else 'Not applied: several states pooled (coding checks are per state; run one state)'
       note_2024 is '2024 is not final (Annual Report File; earlier years rose 0.5-0.7% when finalised)'
     order_by: road_class
   }
+
 }
 
 #" State x road class x year with the rest of the US: deaths per mile compared, tested, ranked.
 #(agent) Grain: state x road class x year; each row stores the rest of the US and the state's freeway figures, so any filter is safe. Keep `road_class` in the group_by.
-#(agent) Unknown road type can only raise a class rate: labels hold for any placement of it (`rate_upper_bound`), else 'Not tested'. Coding suspects (Hawaii) are not tested or ranked. Ranks need 51 states, 30+ deaths.
+#(agent) Unknown road type can only raise a class rate: labels hold for any placement of the state's unknowns (`rate_upper_bound`), else 'Not tested'; rest-of-US unknowns (0.4% to 1.25% of deaths by year) are not bounded. Coding suspects (Hawaii) are not tested or ranked; coding breaks (`road_class_coding_breaks`) are ranked with a note. Ranks need 51 states, 30+ deaths.
 source: road_class_by_state_year is road_exposure -> {
   group_by: `year`, state_name, road_class
   aggregate:
@@ -2267,6 +1976,7 @@ source: road_class_by_state_year is road_exposure -> {
     deaths_no_miles_n is deaths.sum() { where: vmt_millions = 0 }
     state_road_type_unknown_n is sy.deaths_road_type_unknown.sum()
     mix_suspect_n is sy.count() { where: sy.road_class_mix_suspect }
+    coding_breaks_n is sy.road_class_coding_breaks.max()
     state_deaths_all_n is sy.deaths.sum()
     deaths_sq_n is deaths_sq_mi.sum()
     vmt_n is vmt_millions.sum()
@@ -2336,8 +2046,7 @@ source: road_class_by_state_year is road_exposure -> {
     rest_freeway_vmt is rest_freeway_vmt_n.sum()
     #" Share of the state's deaths (all classes) with unknown road type or rural/urban in these years.
     # percent
-    road_type_unknown_share is state_road_type_unknown_n.sum() / nullif(state_deaths_all_n.sum(), 0
-    )
+    road_type_unknown_share is state_road_type_unknown_n.sum() / nullif(state_deaths_all_n.sum(), 0)
     #" Whether unknown road type is large enough to distort the class rates (over 5%, or 2-5%).
     road_type_note is pick "Road-class coding suspect: a class with 15%+ of the state's miles has under 1% of its deaths" when road_class_coding_suspect_years > 0 pick "Road type unknown for over 5% of the state's deaths: rates are floors (see rate_upper_bound)" when road_type_unknown_share > 0.05 pick "Road type unknown for 2-5% of the state's deaths: rates are floors" when road_type_unknown_share > 0.02 else "Road type known for over 98% of the state's deaths"
     #" Whether deaths without reported miles are a material share (over 5%) of this row's deaths.
@@ -2347,52 +2056,33 @@ source: road_class_by_state_year is road_exposure -> {
     #" Deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt is deaths_with_miles / nullif(vmt_millions_total / 100, 0)
     #" Lower end of the 95% interval on the rate (Poisson, widened for multi-death crashes).
-    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)) / nullif(vmt_millions_total / 100, 0)
     #" Upper end of the 95% interval on the rate (Poisson, widened for multi-death crashes).
-    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))) / nullif(vmt_millions_total / 100, 0)
     #" The same rate in the rest of the US.
     rest_of_us_rate is rest_deaths / nullif(rest_vmt / 100, 0)
     #" Test statistic, rate vs rest of US given the miles.
-    z_rate_vs_rest is (deaths_with_miles - (deaths_with_miles + rest_deaths) * vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)
-    ) / sqrt(nullif(
-      (deaths_sq_with_miles + rest_deaths_sq) * (
-        vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)
-      ) * (rest_vmt / nullif(vmt_millions_total + rest_vmt, 0)),
-      0
-    ))
+    z_rate_vs_rest is (deaths_with_miles - (deaths_with_miles + rest_deaths) * vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) / sqrt(nullif((deaths_sq_with_miles + rest_deaths_sq) * (vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) * (rest_vmt / nullif(vmt_millions_total + rest_vmt, 0)), 0))
     #" The state's deaths with unknown road type in these years (they belong to some class; none is in this rate).
     state_road_type_unknown is state_road_type_unknown_n.sum()
     #" Highest possible rate: this class's deaths plus all the state's unknown-road-type deaths (the rate is between the two).
-    rate_upper_bound is (deaths_with_miles + state_road_type_unknown) / nullif(vmt_millions_total / 100, 0
-    )
+    rate_upper_bound is (deaths_with_miles + state_road_type_unknown) / nullif(vmt_millions_total / 100, 0)
     #" Test statistic with every unknown-road-type death placed in this class.
-    z_rate_upper_vs_rest is ((deaths_with_miles + state_road_type_unknown) - ((deaths_with_miles + state_road_type_unknown) + rest_deaths) * vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)
-    ) / sqrt(nullif(
-      ((deaths_sq_with_miles + state_road_type_unknown) + rest_deaths_sq) * (
-        vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)
-      ) * (rest_vmt / nullif(vmt_millions_total + rest_vmt, 0)),
-      0
-    ))
+    z_rate_upper_vs_rest is ((deaths_with_miles + state_road_type_unknown) - ((deaths_with_miles + state_road_type_unknown) + rest_deaths) * vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) / sqrt(nullif(((deaths_sq_with_miles + state_road_type_unknown) + rest_deaths_sq) * (vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) * (rest_vmt / nullif(vmt_millions_total + rest_vmt, 0)), 0))
     #" State-years in the query flagged for road-class coding (a class with 15%+ of miles has under 1% of deaths: Hawaii 2019, 2021, 2023, 2024; DC 2022).
     road_class_coding_suspect_years is mix_suspect_n.sum()
+    #" Years where this state's road-class coding broke (a class's death share jumped 8+ points with miles steady, offset by other classes); null if none. Rows spanning or compared across a break mix two codings.
+    road_class_coding_breaks is coding_breaks_n.max()
     #" Rate against the rest of the US: beyond chance or not.
     rate_vs_rest_of_us is pick 'No miles' when vmt_millions_total = 0 pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)' when road_class_coding_suspect_years > 0 pick 'Too few deaths to test' when deaths_with_miles + state_road_type_unknown < 10 pick 'Not tested' when z_rate_vs_rest is null or z_rate_upper_vs_rest is null pick 'Higher, beyond chance' when z_rate_vs_rest > 1.96 pick 'Lower, beyond chance' when z_rate_upper_vs_rest < - 1.96 pick 'Within chance' when z_rate_vs_rest >= - 1.96 and z_rate_upper_vs_rest <= 1.96 else 'Not tested: deaths with unknown road type could change this'
     #" This road class's rate divided by the state's own interstate and freeway rate.
-    ratio_to_own_freeway_rate is (deaths_with_miles / nullif(vmt_millions_total, 0)) / nullif(freeway_deaths / nullif(freeway_vmt, 0), 0
-    )
+    ratio_to_own_freeway_rate is (deaths_with_miles / nullif(vmt_millions_total, 0)) / nullif(freeway_deaths / nullif(freeway_vmt, 0), 0)
     #" Lower end of the log-scale 95% interval on that ratio.
-    ratio_low_95 is ratio_to_own_freeway_rate * exp(- 1.96 * sqrt(deaths_sq_with_miles / nullif(deaths_with_miles * deaths_with_miles, 0
-    )
-      + freeway_deaths_sq / nullif(freeway_deaths * freeway_deaths, 0)))
+    ratio_low_95 is ratio_to_own_freeway_rate * exp(- 1.96 * sqrt(deaths_sq_with_miles / nullif(deaths_with_miles * deaths_with_miles, 0) + freeway_deaths_sq / nullif(freeway_deaths * freeway_deaths, 0)))
     #" Upper end of the log-scale 95% interval on that ratio.
-    ratio_high_95 is ratio_to_own_freeway_rate * exp(1.96 * sqrt(deaths_sq_with_miles / nullif(deaths_with_miles * deaths_with_miles, 0
-    )
-      + freeway_deaths_sq / nullif(freeway_deaths * freeway_deaths, 0)))
+    ratio_high_95 is ratio_to_own_freeway_rate * exp(1.96 * sqrt(deaths_sq_with_miles / nullif(deaths_with_miles * deaths_with_miles, 0) + freeway_deaths_sq / nullif(freeway_deaths * freeway_deaths, 0)))
     #" The same ratio in the rest of the US.
-    rest_of_us_ratio_to_freeway is (rest_deaths / nullif(rest_vmt, 0)) / nullif(rest_freeway_deaths / nullif(rest_freeway_vmt, 0), 0
-    )
+    rest_of_us_ratio_to_freeway is (rest_deaths / nullif(rest_vmt, 0)) / nullif(rest_freeway_deaths / nullif(rest_freeway_vmt, 0), 0)
     #" Last data year in the query (2024 is not final).
     last_year is `year`.max()
 
@@ -2401,7 +2091,7 @@ source: road_class_by_state_year is road_exposure -> {
     group_by: state_name, road_class
     aggregate:
       deaths_with_road_type, deaths_with_miles, deaths_without_miles, miles_note
-      road_type_unknown_share, road_type_note, road_class_coding_suspect_years, rate_upper_bound
+      road_type_unknown_share, road_type_note, road_class_coding_suspect_years, road_class_coding_breaks, rate_upper_bound
       vmt_millions_total, deaths_per_100m_vmt, deaths_per_100m_vmt_low_95
       deaths_per_100m_vmt_high_95, rest_of_us_rate, rate_vs_rest_of_us, ratio_to_own_freeway_rate
       ratio_low_95, ratio_high_95, rest_of_us_ratio_to_freeway, last_year
@@ -2411,6 +2101,10 @@ source: road_class_by_state_year is road_exposure -> {
         pick deaths_per_100m_vmt
         when deaths_with_miles >= 30 and road_class_coding_suspect_years = 0
         else null
+      upper_basis is
+        pick rate_upper_bound
+        when deaths_with_miles >= 30 and road_class_coding_suspect_years = 0
+        else null
       ratio_basis is
         pick ratio_to_own_freeway_rate
         when deaths_with_miles >= 30 and road_class_coding_suspect_years = 0
@@ -2418,6 +2112,7 @@ source: road_class_by_state_year is road_exposure -> {
     calculate:
       rank_r is rank() { partition_by: road_class; order_by: rate_basis desc }
       rank_q is rank() { partition_by: road_class; order_by: ratio_basis desc }
+      rank_u is rank() { partition_by: road_class; order_by: upper_basis desc }
   } -> {
     select:
       state_name, road_class, deaths_with_road_type, deaths_with_miles, deaths_without_miles
@@ -2430,6 +2125,20 @@ source: road_class_by_state_year is road_exposure -> {
           and deaths_with_miles >= 30
           and road_class_coding_suspect_years = 0
         else null
+      # The same rank using the highest possible rate (all the state's unknown-road-type deaths in this class); a large gap from rank_rate means the rank depends on where the unknowns belong.
+      rank_by_upper_bound is
+        pick rank_u
+        when states_compared = states_in_data
+          and deaths_with_miles >= 30
+          and road_class_coding_suspect_years = 0
+        else null
+      road_class_coding_breaks
+      rank_note is
+        pick concat("Ranked on the floor rate; this state changed road-class coding (", road_class_coding_breaks, "), so class rates may not match other states' coding")
+        when road_class_coding_breaks is not null
+        pick 'Ranked on the floor rate (known road type only); see rank_by_upper_bound'
+        when road_type_unknown_share > 0.02
+        else 'Ranked on the floor rate'
       ratio_to_own_freeway_rate
       ratio_low_95 is pick null when road_class = 'Interstate or freeway' else ratio_low_95
       ratio_high_95 is pick null when road_class = 'Interstate or freeway' else ratio_high_95
@@ -2504,62 +2213,37 @@ source: state_rates_by_year is state_years -> {
     #" Pedestrian deaths per 100,000 residents (per resident-year over several years).
     pedestrian_deaths_per_100k_residents is pedestrian_deaths / nullif(residents / 100000, 0)
     #" Lower end of the Poisson 95% interval on the pedestrian rate (pedestrians killed per crash vary little, 1.03x).
-    pedestrian_per_100k_low_95 is (pick 0 when pedestrian_deaths = 0 else pedestrian_deaths * pow(1 - 1 / nullif(9 * pedestrian_deaths, 0) - 1.96 / nullif(3 * sqrt(pedestrian_deaths), 0), 3)
-    ) / nullif(residents / 100000, 0)
+    pedestrian_per_100k_low_95 is (pick 0 when pedestrian_deaths = 0 else pedestrian_deaths * pow(1 - 1 / nullif(9 * pedestrian_deaths, 0) - 1.96 / nullif(3 * sqrt(pedestrian_deaths), 0), 3)) / nullif(residents / 100000, 0)
     #" Upper end of the Poisson 95% interval on the pedestrian rate.
-    pedestrian_per_100k_high_95 is (pedestrian_deaths + 1) * pow(1 - 1 / (9 * (pedestrian_deaths + 1)) + 1.96 / (3 * sqrt(pedestrian_deaths + 1)), 3
-    ) / nullif(residents / 100000, 0)
+    pedestrian_per_100k_high_95 is (pedestrian_deaths + 1) * pow(1 - 1 / (9 * (pedestrian_deaths + 1)) + 1.96 / (3 * sqrt(pedestrian_deaths + 1)), 3) / nullif(residents / 100000, 0)
     #" Rest-of-US pedestrian deaths per 100,000 residents.
-    rest_of_us_pedestrian_per_100k is rest_pedestrian_deaths / nullif(rest_residents / 100000, 0
-    )
+    rest_of_us_pedestrian_per_100k is rest_pedestrian_deaths / nullif(rest_residents / 100000, 0)
     #" Test statistic, pedestrian rate per resident vs rest of US (Poisson, given residents).
-    z_pedestrian_per_resident is (pedestrian_deaths - (pedestrian_deaths + rest_pedestrian_deaths) * residents / nullif(residents + rest_residents, 0)
-    ) / sqrt(nullif(
-      (pedestrian_deaths + rest_pedestrian_deaths) * (
-        residents / nullif(residents + rest_residents, 0)
-      ) * (rest_residents / nullif(residents + rest_residents, 0)),
-      0
-    ))
+    z_pedestrian_per_resident is (pedestrian_deaths - (pedestrian_deaths + rest_pedestrian_deaths) * residents / nullif(residents + rest_residents, 0)) / sqrt(nullif((pedestrian_deaths + rest_pedestrian_deaths) * (residents / nullif(residents + rest_residents, 0)) * (rest_residents / nullif(residents + rest_residents, 0)), 0))
     #" Pedestrian rate per resident against the rest of the US: beyond chance or not.
     pedestrian_per_resident_vs_rest_of_us is pick 'Too few deaths to test' when pedestrian_deaths < 10 pick 'Not tested' when z_pedestrian_per_resident is null pick 'Higher, beyond chance' when z_pedestrian_per_resident > 1.96 pick 'Lower, beyond chance' when z_pedestrian_per_resident < - 1.96 else 'Within chance'
     #" Deaths per 100 million vehicle-miles.
     deaths_per_100m_vmt is deaths_with_miles / nullif(vmt_millions_total / 100, 0)
     #" Lower end of the 95% interval on deaths per 100 million vehicle-miles.
-    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_low_95 is (pick 0 when deaths_with_miles = 0 else greatest(deaths_with_miles - (deaths_with_miles - deaths_with_miles * pow(1 - 1 / nullif(9 * deaths_with_miles, 0) - 1.96 / nullif(3 * sqrt(deaths_with_miles), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1)), 0)) / nullif(vmt_millions_total / 100, 0)
     #" Upper end of the 95% interval on deaths per 100 million vehicle-miles.
-    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))
-    ) / nullif(vmt_millions_total / 100, 0)
+    deaths_per_100m_vmt_high_95 is (deaths_with_miles + ((deaths_with_miles + 1) * pow(1 - 1 / (9 * (deaths_with_miles + 1)) + 1.96 / (3 * sqrt(deaths_with_miles + 1)), 3) - deaths_with_miles) * sqrt(greatest(coalesce(deaths_sq_with_miles / nullif(deaths_with_miles, 0), 1), 1))) / nullif(vmt_millions_total / 100, 0)
     #" Rest-of-US deaths per 100 million vehicle-miles.
     rest_of_us_per_100m_vmt is rest_deaths_with_miles / nullif(rest_vmt / 100, 0)
     #" Test statistic, per-mile rate vs rest of US.
-    z_per_mile is (deaths_with_miles - (deaths_with_miles + rest_deaths_with_miles) * vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)
-    ) / sqrt(nullif(
-      (deaths_sq_with_miles + rest_deaths_sq_with_miles) * (
-        vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)
-      ) * (rest_vmt / nullif(vmt_millions_total + rest_vmt, 0)),
-      0
-    ))
+    z_per_mile is (deaths_with_miles - (deaths_with_miles + rest_deaths_with_miles) * vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) / sqrt(nullif((deaths_sq_with_miles + rest_deaths_sq_with_miles) * (vmt_millions_total / nullif(vmt_millions_total + rest_vmt, 0)) * (rest_vmt / nullif(vmt_millions_total + rest_vmt, 0)), 0))
     #" Per-mile rate against the rest of the US: beyond chance or not.
     per_mile_vs_rest_of_us is pick 'Not tested' when z_per_mile is null pick 'Higher, beyond chance' when z_per_mile > 1.96 pick 'Lower, beyond chance' when z_per_mile < - 1.96 else 'Within chance'
     #" Deaths per 100,000 residents (per resident-year over several years).
     deaths_per_100k_residents is total_deaths / nullif(residents / 100000, 0)
     #" Lower end of the 95% interval on deaths per 100,000 residents.
-    deaths_per_100k_residents_low_95 is (pick 0 when total_deaths = 0 else greatest(total_deaths - (total_deaths - total_deaths * pow(1 - 1 / nullif(9 * total_deaths, 0) - 1.96 / nullif(3 * sqrt(total_deaths), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1)), 0)
-    ) / nullif(residents / 100000, 0)
+    deaths_per_100k_residents_low_95 is (pick 0 when total_deaths = 0 else greatest(total_deaths - (total_deaths - total_deaths * pow(1 - 1 / nullif(9 * total_deaths, 0) - 1.96 / nullif(3 * sqrt(total_deaths), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1)), 0)) / nullif(residents / 100000, 0)
     #" Upper end of the 95% interval on deaths per 100,000 residents.
-    deaths_per_100k_residents_high_95 is (total_deaths + ((total_deaths + 1) * pow(1 - 1 / (9 * (total_deaths + 1)) + 1.96 / (3 * sqrt(total_deaths + 1)), 3) - total_deaths) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1))
-    ) / nullif(residents / 100000, 0)
+    deaths_per_100k_residents_high_95 is (total_deaths + ((total_deaths + 1) * pow(1 - 1 / (9 * (total_deaths + 1)) + 1.96 / (3 * sqrt(total_deaths + 1)), 3) - total_deaths) * sqrt(greatest(coalesce(deaths_sq_total / nullif(total_deaths, 0), 1), 1))) / nullif(residents / 100000, 0)
     #" Rest-of-US deaths per 100,000 residents.
     rest_of_us_per_100k_residents is rest_deaths / nullif(rest_residents / 100000, 0)
     #" Test statistic, per-resident rate vs rest of US.
-    z_per_resident is (total_deaths - (total_deaths + rest_deaths) * residents / nullif(residents + rest_residents, 0)
-    ) / sqrt(nullif(
-      (deaths_sq_total + rest_deaths_sq) * (
-        residents / nullif(residents + rest_residents, 0)
-      ) * (rest_residents / nullif(residents + rest_residents, 0)),
-      0
-    ))
+    z_per_resident is (total_deaths - (total_deaths + rest_deaths) * residents / nullif(residents + rest_residents, 0)) / sqrt(nullif((deaths_sq_total + rest_deaths_sq) * (residents / nullif(residents + rest_residents, 0)) * (rest_residents / nullif(residents + rest_residents, 0)), 0))
     #" Per-resident rate against the rest of the US: beyond chance or not.
     per_resident_vs_rest_of_us is pick 'Not tested' when z_per_resident is null pick 'Higher, beyond chance' when z_per_resident > 1.96 pick 'Lower, beyond chance' when z_per_resident < - 1.96 else 'Within chance'
     #" Last data year in the query (2024 is not final).
@@ -2608,7 +2292,7 @@ source: state_rates_by_year is state_years -> {
 }
 
 #" County x year: deaths, pedestrian deaths and residents, for per-resident county rates.
-#(agent) Deaths count where the crash happened, not where people lived. Rates over several years are average yearly rates. No county miles.
+#(agent) Deaths count where the crash happened, not where people lived. Rates over several years are average yearly rates. No county miles. Leaves out 14 deaths with no county code (Arizona, Alaska, Montana, Louisiana).
 #(agent) Connecticut 2020-2024 (Census planning regions vs FARS counties) and retired Alaska codes have no residents (`geography_note`): never sum counties for a state rate (use `state_rates_by_year`).
 source: county_years is motherduck.table('fars.county_years') extend {
   measure:
@@ -2619,15 +2303,13 @@ source: county_years is motherduck.table('fars.county_years') extend {
     #" Deaths in counties with residents here (the numerator of the per-resident rates).
     deaths_with_residents is deaths.sum() { where: population > 0 }
     #" Deaths per 100,000 residents per year.
-    deaths_per_100k_residents is deaths.sum() { where: population > 0 } / nullif(population.sum() / 100000, 0
-    )
+    deaths_per_100k_residents is deaths.sum() { where: population > 0 } / nullif(population.sum() / 100000, 0)
     #" Pedestrians killed.
     total_pedestrian_deaths is pedestrian_deaths.sum()
     #" Pedestrians killed in the dark on non-freeway arterials.
     total_pedestrian_deaths_dark_arterial is pedestrian_deaths_dark_arterial.sum()
     #" Pedestrian deaths per 100,000 residents per year.
-    pedestrian_deaths_per_100k_residents is pedestrian_deaths.sum() { where: population > 0 } / nullif(population.sum() / 100000, 0
-    )
+    pedestrian_deaths_per_100k_residents is pedestrian_deaths.sum() { where: population > 0 } / nullif(population.sum() / 100000, 0)
     #" Alcohol-impaired-driving deaths (NHTSA imputed method).
     total_alcohol_impaired_deaths is alcohol_impaired_deaths.sum()
 
@@ -2679,6 +2361,7 @@ source: county_years is motherduck.table('fars.county_years') extend {
         ) * sqrt(phi)
       deaths_prior_year
       vs_prior_year is
+        pick 'Not tested: no earlier year (data start in 2019)' when `year` = 2019
         pick 'Not tested: the year before is not in the query' when deaths_prior_year is null
         pick 'Too few deaths to test'                          when deaths + deaths_prior_year < 10
         pick 'Not tested'                                      when z_prior is null
@@ -2762,11 +2445,9 @@ source: county_rates_by_year is county_years -> {
     #" Deaths per 100,000 residents per year.
     deaths_per_100k_residents is deaths_with_residents / nullif(resident_years / 100000, 0)
     #" Lower end of the 95% interval (Poisson, widened for multi-death crashes).
-    deaths_per_100k_low_95 is (pick 0 when deaths_with_residents = 0 else greatest(deaths_with_residents - (deaths_with_residents - deaths_with_residents * pow(1 - 1 / nullif(9 * deaths_with_residents, 0) - 1.96 / nullif(3 * sqrt(deaths_with_residents), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_residents / nullif(deaths_with_residents, 0), 1), 1)), 0)
-    ) / nullif(resident_years / 100000, 0)
+    deaths_per_100k_low_95 is (pick 0 when deaths_with_residents = 0 else greatest(deaths_with_residents - (deaths_with_residents - deaths_with_residents * pow(1 - 1 / nullif(9 * deaths_with_residents, 0) - 1.96 / nullif(3 * sqrt(deaths_with_residents), 0), 3)) * sqrt(greatest(coalesce(deaths_sq_with_residents / nullif(deaths_with_residents, 0), 1), 1)), 0)) / nullif(resident_years / 100000, 0)
     #" Upper end of the 95% interval (Poisson, widened for multi-death crashes).
-    deaths_per_100k_high_95 is (deaths_with_residents + ((deaths_with_residents + 1) * pow(1 - 1 / (9 * (deaths_with_residents + 1)) + 1.96 / (3 * sqrt(deaths_with_residents + 1)), 3) - deaths_with_residents) * sqrt(greatest(coalesce(deaths_sq_with_residents / nullif(deaths_with_residents, 0), 1), 1))
-    ) / nullif(resident_years / 100000, 0)
+    deaths_per_100k_high_95 is (deaths_with_residents + ((deaths_with_residents + 1) * pow(1 - 1 / (9 * (deaths_with_residents + 1)) + 1.96 / (3 * sqrt(deaths_with_residents + 1)), 3) - deaths_with_residents) * sqrt(greatest(coalesce(deaths_sq_with_residents / nullif(deaths_with_residents, 0), 1), 1))) / nullif(resident_years / 100000, 0)
     #" Rest-of-state deaths per 100,000 residents.
     rest_of_state_per_100k is rest_of_state_deaths / nullif(rest_of_state_residents / 100000, 0)
     #" Deaths expected in the county at the rest-of-state rate.
@@ -2778,17 +2459,13 @@ source: county_rates_by_year is county_years -> {
     #" Pedestrians killed in the dark on non-freeway arterials.
     pedestrian_deaths_dark_arterial is peds_dark_arterial_n.sum()
     #" Pedestrian deaths per 100,000 residents per year.
-    pedestrian_deaths_per_100k_residents is pedestrian_deaths_with_residents / nullif(resident_years / 100000, 0
-    )
+    pedestrian_deaths_per_100k_residents is pedestrian_deaths_with_residents / nullif(resident_years / 100000, 0)
     #" Lower end of the Poisson 95% interval on the pedestrian rate.
-    pedestrian_per_100k_low_95 is (pick 0 when pedestrian_deaths_with_residents = 0 else pedestrian_deaths_with_residents * pow(1 - 1 / nullif(9 * pedestrian_deaths_with_residents, 0) - 1.96 / nullif(3 * sqrt(pedestrian_deaths_with_residents), 0), 3)
-    ) / nullif(resident_years / 100000, 0)
+    pedestrian_per_100k_low_95 is (pick 0 when pedestrian_deaths_with_residents = 0 else pedestrian_deaths_with_residents * pow(1 - 1 / nullif(9 * pedestrian_deaths_with_residents, 0) - 1.96 / nullif(3 * sqrt(pedestrian_deaths_with_residents), 0), 3)) / nullif(resident_years / 100000, 0)
     #" Upper end of the Poisson 95% interval on the pedestrian rate.
-    pedestrian_per_100k_high_95 is (pedestrian_deaths_with_residents + 1) * pow(1 - 1 / (9 * (pedestrian_deaths_with_residents + 1)) + 1.96 / (3 * sqrt(pedestrian_deaths_with_residents + 1)), 3
-    ) / nullif(resident_years / 100000, 0)
+    pedestrian_per_100k_high_95 is (pedestrian_deaths_with_residents + 1) * pow(1 - 1 / (9 * (pedestrian_deaths_with_residents + 1)) + 1.96 / (3 * sqrt(pedestrian_deaths_with_residents + 1)), 3) / nullif(resident_years / 100000, 0)
     #" Rest-of-state pedestrian deaths per 100,000 residents.
-    rest_of_state_pedestrian_per_100k is rest_of_state_pedestrian_deaths / nullif(rest_of_state_residents / 100000, 0
-    )
+    rest_of_state_pedestrian_per_100k is rest_of_state_pedestrian_deaths / nullif(rest_of_state_residents / 100000, 0)
     #" County pedestrian rate against the rest of the state: beyond chance only when the state rate is outside the county's interval.
     pedestrian_vs_rest_of_state is pick 'Not comparable: no Census residents for this county code in these years' when coalesce(resident_years, 0) = 0 pick 'Too few deaths to test' when pedestrian_deaths_with_residents + rest_of_state_pedestrian_deaths / nullif(rest_of_state_residents, 0) * resident_years < 5 pick 'Not tested' when rest_of_state_pedestrian_per_100k is null pick 'Higher, beyond chance' when rest_of_state_pedestrian_per_100k < pedestrian_per_100k_low_95 pick 'Lower, beyond chance' when rest_of_state_pedestrian_per_100k > pedestrian_per_100k_high_95 else 'Within chance'
 
@@ -2890,19 +2567,11 @@ source: alcohol_imputations is motherduck.table('fars.alcohol_imputations') exte
     extend: {
       dimension:
         total_var is coalesce(within_var, 0) + 1.1 * coalesce(between_var, 0)
-        df is
-          pick 1000000 when between_var is null or between_var = 0
-          else 9 * pow(1 + coalesce(within_var, 0) / (1.1 * between_var), 2)
+        df is pick 1000000 when between_var is null or between_var = 0 else 9 * pow(1 + coalesce(within_var, 0) / (1.1 * between_var), 2)
         t_total is 1.96 + 2.3724 / df + 2.8227 / (df * df)
         prior_mean is pick prior_row_mean when prior_row_year = `year` - 1 else null
-        prior_var is
-          pick coalesce(prior_row_within, 0) + 1.1 * coalesce(prior_row_between, 0)
-          when prior_row_year = `year` - 1
-          else null
-        z_prior is (alcohol_impaired_deaths - prior_mean) / sqrt(nullif(
-          total_var + prior_var,
-          0
-        ))
+        prior_var is pick coalesce(prior_row_within, 0) + 1.1 * coalesce(prior_row_between, 0) when prior_row_year = `year` - 1 else null
+        z_prior is (alcohol_impaired_deaths - prior_mean) / sqrt(nullif(total_var + prior_var, 0))
     }
     select:
       `year`, state_name, alcohol_impaired_deaths
