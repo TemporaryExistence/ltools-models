@@ -1166,6 +1166,9 @@ source: persons_by_state_year is persons -> {
     #" Pedestrians as a share of all people killed.
     # percent
     pedestrian_share_of_deaths is pedestrian_deaths / nullif(deaths, 0)
+    #" Pedestrian deaths divided by deaths.
+    # percent
+    pedestrian_share is pedestrian_deaths / nullif(deaths, 0)
     #" Lower end of the Wilson 95% interval on the pedestrian share.
     # percent
     pedestrian_share_low_95 is (pedestrian_share_of_deaths + 1.9208 / nullif(deaths, 0) - 1.96 * sqrt(pedestrian_share_of_deaths * (1 - pedestrian_share_of_deaths) / nullif(deaths, 0) + 0.9604 / nullif(deaths * deaths, 0))
