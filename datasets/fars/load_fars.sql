@@ -344,8 +344,8 @@ SELECT state_name, year_from, year_to, grain, road_class,
   deaths_change::INT AS deaths_change, offsetting_deaths::INT AS offsetting_deaths,
   road_class || ' share of deaths ' || CASE WHEN death_share_change > 0 THEN '+' ELSE '' END || round(100 * death_share_change, 1)
     || ' points, its share of VM-2 miles ' || CASE WHEN miles_share_change > 0 THEN '+' ELSE '' END || round(100 * miles_share_change, 1)
-    || ' points (z ' || round(z_share, 1) || '); other ' || CASE grain WHEN 'Road class' THEN 'classes' ELSE 'group' END
-    || ' moved ' || offsetting_deaths::INT || ' deaths the other way' AS evidence
+    || ' points (z ' || round(z_share, 1) || ')'
+    || CASE grain WHEN 'Road class' THEN '; other classes moved ' || offsetting_deaths::INT || ' deaths the other way' ELSE '' END AS evidence
 FROM pairs
 WHERE abs(death_share_change) > 0.08 AND abs(miles_share_change) < 0.03 AND abs(z_share) > 3 AND (grain = 'Road group' OR offsetting_deaths >= 0.5 * abs(deaths_change))
 ORDER BY grain, state_name, year_from, road_class;
