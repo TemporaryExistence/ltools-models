@@ -55,8 +55,8 @@ source: hours_blank_months is ntd_rows -> {
 #(agent) (2) 216 rows in the latest 12 months (86 agencies; 153 rows in August 2026) report trips but leave revenue
 #(agent) hours blank in the NTD file (MBTA, Maryland MTA and Pittsburgh buses in August 2026; VIA San Antonio's contracted
 #(agent) demand response in July and August 2026). service_vs_2019 and revenue_hours_change(_pct) leave those months out
-#(agent) on both sides (hours_blank_pair); revenue_hours_12m and hours by month or year count them as zero, so 2026 hours
-#(agent) read low. (3) Late filers understate the latest 12 months.
+#(agent) on both sides (hours_blank_pair); in revenue_hours_12m and hours by month or year those months add nothing, so
+#(agent) 2026 hours read low. (3) Late filers understate the latest 12 months.
 #(agent) (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
 #(agent) Narrow a saved view by refining it: run: transit -> nc_agencies_below_2019 + { where: agency_label ~ '%Chapel%' }.
 source: transit is ntd_rows extend {
@@ -108,7 +108,9 @@ source: transit is ntd_rows extend {
     counts_not_comparable_with_2019 is ntd_id = '40007'
     #" True on a latest-12-month row that reports trips but has revenue hours blank in the NTD file (the file's own
     #" blank, not a load error; 216 rows, mostly August 2026), and on the same service's same calendar month of 2019.
-    #" Comparisons of service with 2019 leave these pairs out on both sides.
+    #" Comparisons of service with 2019 leave these pairs out on both sides, so a service with several blank months
+    #" is compared on its other months only; for a seasonal service that can read high or low (8 services have 3 or
+    #" more blank months; Hampton Jitney has hours only for September to December 2025).
     hours_blank_pair is hours_blank.ntd_id is not null
       and (year(report_month) = 2019 or (report_month >= @2025-09-01 and report_month < @2026-09-01))
 
