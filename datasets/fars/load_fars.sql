@@ -316,8 +316,9 @@ FULL JOIN d_all ON d_all.year = v.year AND d_all.state_name = v.state_name AND d
 --     (two-proportion z over 3) while its share of VM-2 miles moves under 3 points, and the state's other classes move
 --     at least half as many deaths the other way (deaths moved between classes, not a change on the road).
 --     grain 'Road class' = the four classes (freeway, arterial, collector, local). grain 'Road group' = interstate or
---     freeway vs all other roads; there a pair counts only when both groups meet the rule (a move between two groups shows on
---     both sides). Built from road_exposure (section 7). Same rule as verify/coding_break_scan.sql's road-class check.
+--     freeway vs all other roads; there the offset condition is not used (with two groups a real rise on one side can hide
+--     a move, Washington 2020-2021), so both groups are listed. Built from road_exposure (section 7). Same rule as
+--     verify/coding_break_scan.sql's road-class check.
 CREATE OR REPLACE TABLE ltools.fars.road_class_coding_breaks AS
 WITH cls AS (
   SELECT 'Road class' AS grain, year, state_name, road_class, sum(deaths) AS d, sum(vmt_millions) AS v
@@ -337,9 +338,6 @@ WITH cls AS (
     (b.ds - a.ds) / sqrt(((a.d + b.d) / (a.tot + b.tot)) * (1 - (a.d + b.d) / (a.tot + b.tot)) * (1 / a.tot + 1 / b.tot)) AS z_share,
     b.ds - a.ds AS death_share_change, b.vs - a.vs AS miles_share_change
   FROM cls_s a JOIN cls_s b ON b.grain = a.grain AND b.state_name = a.state_name AND b.road_class = a.road_class AND b.year = a.year + 1
-), hit AS (
-  SELECT *, count(*) OVER (PARTITION BY grain, state_name, year_from) AS classes_hit FROM pairs
-  WHERE abs(death_share_change) > 0.08 AND abs(miles_share_change) < 0.03 AND abs(z_share) > 3 AND offsetting_deaths >= 0.5 * abs(deaths_change)
 )
 SELECT state_name, year_from, year_to, grain, road_class,
   round(death_share_change, 4) AS death_share_change, round(miles_share_change, 4) AS miles_share_change, round(z_share, 2) AS z_share,
@@ -348,7 +346,8 @@ SELECT state_name, year_from, year_to, grain, road_class,
     || ' points, its share of VM-2 miles ' || CASE WHEN miles_share_change > 0 THEN '+' ELSE '' END || round(100 * miles_share_change, 1)
     || ' points (z ' || round(z_share, 1) || '); other ' || CASE grain WHEN 'Road class' THEN 'classes' ELSE 'group' END
     || ' moved ' || offsetting_deaths::INT || ' deaths the other way' AS evidence
-FROM hit WHERE grain = 'Road class' OR classes_hit >= 2
+FROM pairs
+WHERE abs(death_share_change) > 0.08 AND abs(miles_share_change) < 0.03 AND abs(z_share) > 3 AND (grain = 'Road group' OR offsetting_deaths >= 0.5 * abs(deaths_change))
 ORDER BY grain, state_name, year_from, road_class;
 
 -- 8. One row per state (and 'United States') per year: deaths, alcohol-impaired-driving deaths three ways, miles and

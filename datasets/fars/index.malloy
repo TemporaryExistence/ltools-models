@@ -2017,8 +2017,8 @@ source: road_exposure is motherduck.table('fars.road_exposure') extend {
 
 }
 
-#" Known road-class coding breaks (load_fars.sql section 7b): state, year pair, classes, evidence.
-#(agent) A break = deaths moved between classes from one year to the next with no matching move in FHWA's miles. grain 'Road class' (four classes; 10 states) is what `road_class_by_state_year` withholds; grain 'Road group' (freeway vs other roads; Maryland 2020-2021 only) is what `road_group_by_state_year` withholds.
+#" Known road-class coding breaks: state, year pair, classes, evidence.
+#(agent) A break = deaths moved between classes from one year to the next with no matching move in FHWA's miles. grain 'Road class' (four classes; 10 states) is what `road_class_by_state_year` withholds; grain 'Road group' (freeway vs other roads; Maryland, New Hampshire and Washington 2020-2021, Wyoming 2023-2024) is what `road_group_by_state_year` withholds.
 source: road_class_coding_breaks is motherduck.table('fars.road_class_coding_breaks')
 
 #" State x road class x year with the rest of the US: deaths per mile compared, tested, ranked.
@@ -2136,7 +2136,7 @@ source: road_class_by_state_year is road_exposure -> {
     #" Possible road-class coding changes in this state (year pairs); null if none. Such a state's class rates are not compared or ranked in any year.
     road_class_coding_breaks is brk.breaks.max()
     #" Rate against the rest of the US: beyond chance or not.
-    rate_vs_rest_of_us is pick 'No miles' when vmt_millions_total = 0 pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths)' when road_class_coding_suspect_years > 0 pick concat('Not tested: possible road-class coding change (', road_class_coding_breaks, '); class rates may not compare with other states; compare road_group_by_state_year') when road_class_coding_breaks is not null pick 'Too few deaths to test' when deaths_with_miles + state_road_type_unknown < 10 pick 'Not tested' when z_rate_vs_rest is null or z_rate_upper_vs_rest is null pick 'Higher, beyond chance' when z_rate_vs_rest > 1.96 pick 'Lower, beyond chance' when z_rate_upper_vs_rest < - 1.96 pick 'Within chance' when z_rate_vs_rest >= - 1.96 and z_rate_upper_vs_rest <= 1.96 else 'Not tested: deaths with unknown road type could change this'
+    rate_vs_rest_of_us is pick 'No miles' when vmt_millions_total = 0 pick 'Not tested: road-class coding suspect (a class with 15%+ of miles has under 1% of deaths); compare road_group_by_state_year' when road_class_coding_suspect_years > 0 pick concat('Not tested: possible road-class coding change (', road_class_coding_breaks, '); class rates may not compare with other states; compare road_group_by_state_year') when road_class_coding_breaks is not null pick 'Too few deaths to test' when deaths_with_miles + state_road_type_unknown < 10 pick 'Not tested' when z_rate_vs_rest is null or z_rate_upper_vs_rest is null pick 'Higher, beyond chance' when z_rate_vs_rest > 1.96 pick 'Lower, beyond chance' when z_rate_upper_vs_rest < - 1.96 pick 'Within chance' when z_rate_vs_rest >= - 1.96 and z_rate_upper_vs_rest <= 1.96 else 'Not tested: deaths with unknown road type could change this'
     #" This road class's rate divided by the state's own interstate and freeway rate.
     ratio_to_own_freeway_rate is (deaths_with_miles / nullif(vmt_millions_total, 0)) / nullif(freeway_deaths / nullif(freeway_vmt, 0), 0)
     #" Lower end of the log-scale 95% interval on that ratio.
@@ -2206,9 +2206,9 @@ source: road_class_by_state_year is road_exposure -> {
   }
 }
 
-#" State x year, interstate or freeway vs other roads, with the rest of the US: deaths per mile compared, tested, ranked for every state.
-#(agent) Trap this solves: states recode the same roads between arterial, collector and local from one year to the next with no change in miles (South Carolina's arterial deaths fell 803 to 548 in 2020-2022 while its collector deaths rose 65 to 305), so four-class rates of 10 states do not compare; freeway vs other roads holds those moves inside 'Other roads', so compare states here.
-#(agent) Grain: state x year x group; rows store the rest of the US, so any filter is safe. `rest_of_us_*` is what the test compares with; `us_*` is the US total. Unknown road type is bounded as in `road_class_by_state_year`. Only Maryland 2020-2021 moved deaths between freeways and other roads (`road_class_coding_breaks`, grain 'Road group'): not compared or ranked. Ranks need 51 states, 30+ deaths.
+#" State x year, interstate or freeway vs other roads, with the rest of the US: deaths per mile compared, tested, ranked; Maryland, New Hampshire, Washington and Wyoming (freeway coding change) withheld.
+#(agent) Trap this solves: states recode the same roads between arterial, collector and local from one year to the next with no change in miles (South Carolina's arterial deaths fell 803 to 548 in 2020-2022 while its collector deaths rose 65 to 305), so four-class rates of 10 states do not compare; freeway vs other roads holds those moves inside 'Other roads', so compare states here (47 of 51).
+#(agent) Grain: state x year x group; rows store the rest of the US, so any filter is safe. `rest_of_us_*` is what the test compares with; `us_*` is the US total. Unknown road type is bounded as in `road_class_by_state_year`. Four states moved deaths across the freeway line with no matching move in miles (`road_class_coding_breaks`, grain 'Road group': Maryland, New Hampshire and Washington 2020-2021, Wyoming 2023-2024): not compared or ranked in any year, reason on the row. Ranks need 51 states, 30+ deaths.
 source: road_group_by_state_year is road_class_by_state_year -> {
   group_by: `year`, state_name, road_class_group
   aggregate:
@@ -2266,7 +2266,7 @@ source: road_group_by_state_year is road_class_by_state_year -> {
     #" Last data year in the query (2024 is not final).
     last_year is `year`.max()
 
-  #" Every state, interstate or freeway vs other roads: rate with interval and upper bound, vs rest of US, US rate, rank. Compares all 51 but Maryland.
+  #" Each state, interstate or freeway vs other roads: rate with interval and upper bound, vs rest of US, US rate, rank. Compares 47 of 51; Maryland, New Hampshire, Washington and Wyoming withheld (freeway coding change).
   view: state_deaths_per_mile_by_road_group is {
     group_by: state_name, road_class_group
     aggregate:
