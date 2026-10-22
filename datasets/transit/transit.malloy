@@ -28,6 +28,14 @@ source: urbanized_areas is ntd_rows -> {
   aggregate: population is max(uza_population_2020)
 }
 
+#" Service-months in the latest 12 (September 2025 to August 2026) where the NTD file reports trips but leaves vehicle
+#" revenue hours blank: one row per agency, mode, type of service and calendar month. Joined back to mark those months.
+source: hours_blank_months is ntd_rows -> {
+  where: report_month >= @2025-09-01 and report_month < @2026-09-01 and trips > 0 and vehicle_revenue_hours is null
+  group_by: ntd_id, mode_code, tos_code
+    month_of_year is month(report_month)
+}
+
 #" US public transit ridership and service, every agency reporting to the FTA National Transit Database, by agency,
 #" mode, type of service and month, January 2002 to August 2026. One row per agency x mode x type of service x month.
 #" Trips are unlinked passenger trips (each boarding counts once, so a bus-to-train transfer is two trips); service is
@@ -44,12 +52,17 @@ source: urbanized_areas is ntd_rows -> {
 #(agent) yoy_change, per-resident and per-hour figures in the same row count it as reported. For an area that includes
 #(agent) GoRaleigh, latest per-resident and per-hour values can't be compared with 2019 values, and any trend that
 #(agent) crosses July 2024 (by year, by month) steps up there. yoy_change compares two windows after the jump.
-#(agent) (2) VIA (San Antonio) reports about a quarter of its usual demand-response hours for July and August 2026
-#(agent) (late filing). (3) Late filers understate the latest 12 months.
+#(agent) (2) 216 rows in the latest 12 months (86 agencies; 153 rows in August 2026) report trips but leave revenue
+#(agent) hours blank in the NTD file (MBTA, Maryland MTA and Pittsburgh buses in August 2026; VIA San Antonio's contracted
+#(agent) demand response in July and August 2026). service_vs_2019 and revenue_hours_change(_pct) leave those months out
+#(agent) on both sides (hours_blank_pair); revenue_hours_12m and hours by month or year count them as zero, so 2026 hours
+#(agent) read low. (3) Late filers understate the latest 12 months.
 #(agent) (4) GoCary is missing after 2011. (5) 2026 is a partial year (January to August) in any by-year view.
 #(agent) Narrow a saved view by refining it: run: transit -> nc_agencies_below_2019 + { where: agency_label ~ '%Chapel%' }.
 source: transit is ntd_rows extend {
   join_one: uza is urbanized_areas on uace_code = uza.uace_code
+  join_one: hours_blank is hours_blank_months on ntd_id = hours_blank.ntd_id and mode_code = hours_blank.mode_code
+    and tos_code = hours_blank.tos_code and month(report_month) = hours_blank.month_of_year
 
   dimension:
     #" Calendar year of the month.
@@ -93,6 +106,11 @@ source: transit is ntd_rows extend {
     #" Agencies whose boarding counts can't be compared with 2019: GoRaleigh (NTD 40007), whose bus boardings doubled
     #" in July 2024 on 5.5% more service hours, likely a counting change (inferred; no document found).
     counts_not_comparable_with_2019 is ntd_id = '40007'
+    #" True on a latest-12-month row that reports trips but has revenue hours blank in the NTD file (the file's own
+    #" blank, not a load error; 216 rows, mostly August 2026), and on the same service's same calendar month of 2019.
+    #" Comparisons of service with 2019 leave these pairs out on both sides.
+    hours_blank_pair is hours_blank.ntd_id is not null
+      and (year(report_month) = 2019 or (report_month >= @2025-09-01 and report_month < @2026-09-01))
 
   measure:
     #" Unlinked passenger trips (boardings).
@@ -113,7 +131,7 @@ source: transit is ntd_rows extend {
     #" Trips in calendar 2019, the pre-pandemic baseline.
     trips_2019 is trips_total { where: report_month ? @2019 }
     #" Trips in the latest 12 months of this snapshot (September 2025 – August 2026). Agencies that file late are
-    #" understated (VIA San Antonio's demand response for July and August 2026 is about a quarter of normal).
+    #" understated.
     trips_latest_12m is trips_total { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
     #" Trips in the 12 months before that (September 2024 – August 2025).
     trips_prior_12m is trips_total { where: report_month >= @2024-09-01 and report_month < @2025-09-01 }
@@ -136,19 +154,22 @@ source: transit is ntd_rows extend {
 
     #" Service supplied: vehicle revenue hours in calendar 2019.
     revenue_hours_2019 is revenue_hours { where: report_month ? @2019 }
-    #" Service supplied: vehicle revenue hours in the latest 12 months (September 2025 – August 2026). Late filers
-    #" are understated (VIA San Antonio's demand response for July and August 2026).
+    #" Service supplied: vehicle revenue hours in the latest 12 months (September 2025 – August 2026), as reported.
+    #" Months whose hours the NTD file leaves blank count as zero (hours_blank_pair; mostly August 2026).
     revenue_hours_12m is revenue_hours { where: report_month >= @2025-09-01 and report_month < @2026-09-01 }
     #" Service now as a share of 2019 service, on the same agencies as recovery_vs_2019 (flagged agencies left out),
-    #" so the two can be compared: did riders follow the buses? Blank for GoRaleigh; its service is in
-    #" goraleigh_138_percent_check.
+    #" so the two can be compared: did riders follow the buses? Months with hours blank in the NTD file are left out
+    #" on both sides (hours_blank_pair). Blank for GoRaleigh; its service is in goraleigh_138_percent_check.
     # percent
-    service_vs_2019 is revenue_hours_12m { where: not counts_not_comparable_with_2019 } / nullif(revenue_hours_2019 { where: not counts_not_comparable_with_2019 }, 0)
-    #" Vehicle revenue hours added since 2019: latest 12 months minus calendar 2019 (negative = service cut).
-    revenue_hours_change is revenue_hours_12m - revenue_hours_2019
-    #" Percent change in vehicle revenue hours, latest 12 months vs calendar 2019.
+    service_vs_2019 is revenue_hours_12m { where: not counts_not_comparable_with_2019 and not hours_blank_pair }
+      / nullif(revenue_hours_2019 { where: not counts_not_comparable_with_2019 and not hours_blank_pair }, 0)
+    #" Vehicle revenue hours added since 2019: latest 12 months minus calendar 2019 (negative = service cut). Months
+    #" with hours blank in the NTD file are left out on both sides (hours_blank_pair).
+    revenue_hours_change is revenue_hours_12m - revenue_hours_2019 { where: not hours_blank_pair }
+    #" Percent change in vehicle revenue hours, latest 12 months vs calendar 2019, months with blank hours left out
+    #" on both sides (hours_blank_pair).
     # percent
-    revenue_hours_change_pct is revenue_hours_12m / nullif(revenue_hours_2019, 0) - 1
+    revenue_hours_change_pct is revenue_hours_12m / nullif(revenue_hours_2019 { where: not hours_blank_pair }, 0) - 1
     #" Agencies that ran service in the latest 12 months (any row with revenue hours, September 2025 – August 2026).
     agencies_12m is count(ntd_id) { where: report_month >= @2025-09-01 and report_month < @2026-09-01 and vehicle_revenue_hours > 0 }
 

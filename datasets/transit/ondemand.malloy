@@ -141,8 +141,9 @@ source: ondemand_annual is motherduck.sql("""
     # currency
     cost_per_hour_2024 is operating_expenses.sum() { where: report_year = 2024 } / nullif(vehicle_revenue_hours.sum() { where: report_year = 2024 and operating_expenses > 0 }, 0)
     #" All on-demand hours in the latest 12 months of the MONTHLY file (September 2025 to August 2026), urban agencies
-    #" only. Several agencies file late: VIA (San Antonio) reports about a quarter of its usual hours for July and
-    #" August 2026, so its latest-12-month figure is understated.
+    #" only. Some agencies' recent hours are blank in the NTD file though their trips are reported: VIA (San Antonio)
+    #" has hours only for its directly operated service in July and August 2026 (about a quarter of usual), so its
+    #" latest-12-month figure is understated.
     ondemand_hours_latest_12m is hours_latest_12m.sum()
     #" Momentum since the annual data: latest-12-month on-demand hours against calendar 2024 in the same monthly file.
     #" ALL on-demand service, ADA paratransit INCLUDED (the monthly file does not split them); for a mostly-ADA agency
@@ -153,7 +154,8 @@ source: ondemand_annual is motherduck.sql("""
     #" True when the agency reported on-demand trips with an ADA breakdown in both 2022 and 2024, so a 2022-to-2024
     #" change is real growth and not a first report (merger, new reporter ID, move from rural to urban reporting).
     reported_both_years is ondemand_hours { where: report_year = 2022 and counts_for_growth } > 0 and ondemand_hours { where: report_year = 2024 and counts_for_growth } > 0
-    #" Fewest months (of the latest 12) any of the agency's on-demand rows reported hours; under 12 means late filing.
+    #" Fewest months (of the latest 12) any of the agency's on-demand rows reported hours; under 12 means hours are
+    #" missing for some months (left blank in the NTD file or not filed).
     months_reported_latest_12m_min is months_reported_latest_12m.min()
 
   #" WHO TO CALL FIRST (for a microtransit software or turnkey-service company): urban agencies ranked by NEW
