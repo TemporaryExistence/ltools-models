@@ -311,8 +311,48 @@ FROM ltools.fars.vmt v
 FULL JOIN d_all ON d_all.year = v.year AND d_all.state_name = v.state_name AND d_all.rural_urban = v.rural_urban
   AND d_all.road_function_code = v.road_function_code;
 
+-- 7b. Known road-class coding breaks: the reference the model joins (one row per state, year pair, grain and class).
+--     A break between consecutive years: a class's share of the state's classified deaths moves over 8 points
+--     (two-proportion z over 3) while its share of VM-2 miles moves under 3 points, and the state's other classes move
+--     at least half as many deaths the other way (deaths moved between classes, not a change on the road).
+--     grain 'Road class' = the four classes (freeway, arterial, collector, local). grain 'Road group' = interstate or
+--     freeway vs all other roads; there a pair counts only when both groups meet the rule (a move between two groups shows on
+--     both sides). Built from road_exposure (section 7). Same rule as verify/coding_break_scan.sql's road-class check.
+CREATE OR REPLACE TABLE ltools.fars.road_class_coding_breaks AS
+WITH cls AS (
+  SELECT 'Road class' AS grain, year, state_name, road_class, sum(deaths) AS d, sum(vmt_millions) AS v
+  FROM ltools.fars.road_exposure WHERE state_name <> 'United States' GROUP BY ALL
+  UNION ALL
+  SELECT 'Road group', year, state_name,
+    CASE WHEN road_class = 'Interstate or freeway' THEN 'Interstate or freeway' ELSE 'Other roads' END, sum(deaths), sum(vmt_millions)
+  FROM ltools.fars.road_exposure WHERE state_name <> 'United States' GROUP BY ALL
+), cls_s AS (
+  SELECT *, d / sum(d) OVER (PARTITION BY grain, year, state_name) AS ds, v / sum(v) OVER (PARTITION BY grain, year, state_name) AS vs,
+    sum(d) OVER (PARTITION BY grain, year, state_name) AS tot FROM cls
+), pairs AS (
+  SELECT a.grain, a.state_name, a.year AS year_from, b.year AS year_to, a.road_class, b.d - a.d AS deaths_change,
+    (SELECT sum(greatest(-sign(b.d - a.d) * (b2.d - a2.d), 0)) FROM cls_s a2 JOIN cls_s b2 ON b2.grain = a2.grain
+       AND b2.state_name = a2.state_name AND b2.road_class = a2.road_class AND b2.year = a2.year + 1
+     WHERE a2.grain = a.grain AND a2.state_name = a.state_name AND a2.year = a.year AND a2.road_class <> a.road_class) AS offsetting_deaths,
+    (b.ds - a.ds) / sqrt(((a.d + b.d) / (a.tot + b.tot)) * (1 - (a.d + b.d) / (a.tot + b.tot)) * (1 / a.tot + 1 / b.tot)) AS z_share,
+    b.ds - a.ds AS death_share_change, b.vs - a.vs AS miles_share_change
+  FROM cls_s a JOIN cls_s b ON b.grain = a.grain AND b.state_name = a.state_name AND b.road_class = a.road_class AND b.year = a.year + 1
+), hit AS (
+  SELECT *, count(*) OVER (PARTITION BY grain, state_name, year_from) AS classes_hit FROM pairs
+  WHERE abs(death_share_change) > 0.08 AND abs(miles_share_change) < 0.03 AND abs(z_share) > 3 AND offsetting_deaths >= 0.5 * abs(deaths_change)
+)
+SELECT state_name, year_from, year_to, grain, road_class,
+  round(death_share_change, 4) AS death_share_change, round(miles_share_change, 4) AS miles_share_change, round(z_share, 2) AS z_share,
+  deaths_change::INT AS deaths_change, offsetting_deaths::INT AS offsetting_deaths,
+  road_class || ' share of deaths ' || CASE WHEN death_share_change > 0 THEN '+' ELSE '' END || round(100 * death_share_change, 1)
+    || ' points, its share of VM-2 miles ' || CASE WHEN miles_share_change > 0 THEN '+' ELSE '' END || round(100 * miles_share_change, 1)
+    || ' points (z ' || round(z_share, 1) || '); other ' || CASE grain WHEN 'Road class' THEN 'classes' ELSE 'group' END
+    || ' moved ' || offsetting_deaths::INT || ' deaths the other way' AS evidence
+FROM hit WHERE grain = 'Road class' OR classes_hit >= 2
+ORDER BY grain, state_name, year_from, road_class;
+
 -- 8. One row per state (and 'United States') per year: deaths, alcohol-impaired-driving deaths three ways, miles and
---    residents, for per-mile and per-resident rates and the 23 CFR 1300.23 impaired-driving tier.
+--    residents, for per-mile and per-resident rates and the 23 CFR 1300.23 impaired-driving tier. Run 7 and 7b first.
 --    deaths_road_type_unknown: deaths with unknown road function or rural/urban (not in road_exposure); a coding break
 --    shows here first (Missouri 2023-2024). Pedestrian deaths by state for per-resident pedestrian rates.
 --    deaths_without_miles: deaths in road cells (rural/urban x road function) where FHWA's VM-2 shows no miles ('-');
@@ -359,28 +399,10 @@ WITH d AS (
           sum(vmt_millions) / sum(sum(vmt_millions)) OVER (PARTITION BY year, state_name) AS vshare
         FROM ltools.fars.road_exposure WHERE state_name <> 'United States' GROUP BY year, state_name, road_class)
   GROUP BY ALL
-), cls AS (
-  SELECT year, state_name, road_class, sum(deaths) AS d, sum(vmt_millions) AS v
-  FROM ltools.fars.road_exposure WHERE state_name <> 'United States' GROUP BY year, state_name, road_class
-), cls_s AS (
-  SELECT *, d / sum(d) OVER (PARTITION BY year, state_name) AS ds, v / sum(v) OVER (PARTITION BY year, state_name) AS vs,
-    sum(d) OVER (PARTITION BY year, state_name) AS tot FROM cls
-), brk_pairs AS (
-  -- Road-class coding break between consecutive years: a class's share of the state's classified deaths moves over 8
-  -- points (two-proportion z over 3) while its share of miles moves under 3 points, and the state's other classes move
-  -- the other way by at least half as many deaths (deaths moved between classes). South Carolina 2020-2022, Washington
-  -- 2019-2020, Hawaii 2019-2021 and a few others.
-  SELECT a.state_name, a.year AS y0, b.year AS y1, a.road_class, b.d - a.d AS dd,
-    (SELECT sum(greatest(-sign(b.d - a.d) * (b2.d - a2.d), 0)) FROM cls_s a2 JOIN cls_s b2 ON b2.state_name = a2.state_name
-       AND b2.road_class = a2.road_class AND b2.year = a2.year + 1
-     WHERE a2.state_name = a.state_name AND a2.year = a.year AND a2.road_class <> a.road_class) AS offset_deaths,
-    (b.ds - a.ds) / sqrt(((a.d + b.d) / (a.tot + b.tot)) * (1 - (a.d + b.d) / (a.tot + b.tot)) * (1 / a.tot + 1 / b.tot)) AS z_share,
-    b.ds - a.ds AS dshare, b.vs - a.vs AS dmiles
-  FROM cls_s a JOIN cls_s b ON b.state_name = a.state_name AND b.road_class = a.road_class AND b.year = a.year + 1
 ), brk AS (
-  SELECT state_name, string_agg(DISTINCT y0 || '-' || y1, ', ' ORDER BY y0 || '-' || y1) AS road_class_coding_breaks
-  FROM brk_pairs WHERE abs(dshare) > 0.08 AND abs(dmiles) < 0.03 AND abs(z_share) > 3 AND offset_deaths >= 0.5 * abs(dd)
-  GROUP BY state_name
+  -- Road-class coding breaks (four classes) from the reference table built in section 7b.
+  SELECT state_name, string_agg(DISTINCT year_from || '-' || year_to, ', ' ORDER BY year_from || '-' || year_to) AS road_class_coding_breaks
+  FROM ltools.fars.road_class_coding_breaks WHERE grain = 'Road class' GROUP BY state_name
 ), p AS (
   SELECT year, state_name, sum(population) AS population FROM ltools.fars.county_population GROUP BY ALL
   UNION ALL
