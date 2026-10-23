@@ -259,6 +259,9 @@ export default function Dashboard() {
     aggregate:
       hospital_count, discharges, true_excess_per_year, true_excess_cost_per_year, excess_readmissions_per_year,
       beyond_chance_binomial_per_year_min, beyond_chance_binomial_per_year_max
+      cms_four is excess_readmissions_per_year { where: posterior_covered }
+      floor_four_min is beyond_chance_binomial_per_year_min { where: posterior_covered }
+      floor_four_max is beyond_chance_binomial_per_year_max { where: posterior_covered }
       cost_per_readmission is excess_cost_per_year / excess_readmissions_per_year
   }` });
   const condQ = useQuery({ malloy: `run: measure_results -> true_excess_by_condition` });
@@ -376,9 +379,9 @@ export default function Dashboard() {
           holds at every volume and is roughly normal, hospitals whose true rate is above expected have about {tot ? int(tot.true_excess_per_year) : "–"} excess
           readmissions a year on heart attack, heart failure, pneumonia and COPD, {tot && hfpn ? pct(hfpn / N(tot.true_excess_per_year)) : "–"} of them pneumonia and heart failure.
           Hip/knee replacement and bypass surgery are not estimated: their ratio changes with hospital size, so one centre does not hold.
-          That is above CMS's own shrunken estimate ({tot ? int(tot.excess_readmissions_per_year) : "–"}) and above a hard floor:
+          On the same four conditions that is above CMS's own shrunken estimate ({tot ? int(tot.cms_four) : "–"}) and above a hard floor:
           actual readmissions above expected exceed what chance alone gives by at least
-          {tot ? ` ${int(Math.min(N(tot.beyond_chance_binomial_per_year_min), N(tot.beyond_chance_binomial_per_year_max)))} to ${int(Math.max(N(tot.beyond_chance_binomial_per_year_min), N(tot.beyond_chance_binomial_per_year_max)))}` : " –"} a year.
+          {tot ? ` ${int(Math.min(N(tot.floor_four_min), N(tot.floor_four_max)))} to ${int(Math.max(N(tot.floor_four_min), N(tot.floor_four_max)))}` : " –"} a year.
         </p>
         <Status qs={[condQ]} />
         <div className="od-two">
