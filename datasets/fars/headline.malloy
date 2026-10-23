@@ -1,0 +1,109 @@
+// Headline: which states count fewer road deaths as speeding-related, and how much of that is coding?
+//
+// Finding (2022-2024): Florida counts 11.1% of its road deaths as speeding-related (1,116 of 10,061), the lowest of
+// any state; the rest of the US counts 30.3%. Of the vehicles its crash reports recorded at 10+ mph over the posted
+// limit, Florida coded 36.5% as speeding (750 of 2,054). The 11 other states that record speed and limit for half or
+// more of vehicles coded 56.6% (California, 1,023 of 1,806) to 78.6% (Virginia, 679 of 864). Florida also records
+// fewer fast vehicles (15.6% of vehicles with speed and limit recorded, Virginia 25.6%), so the coding is part of the
+// gap, not all of it.
+// If I knew that, I would compare states on deaths in crashes with a recorded fast vehicle, only among states that
+// record speed and limit for half or more of vehicles (Texas: 7.0%), and ask the state's FARS analyst how the flag is
+// coded before ranking it. Who acts: state highway safety
+// offices, NHTSA's FARS staff, anyone ranking states on speeding deaths.
+// Hypotheses written before the queries: units/ltools/outputs/ltp-rubric/HYPOTHESES.md (work repo, commit 63719d76).
+
+import { fast_vehicles_by_state_year, crashes_by_state_year } from 'fars.malloy'
+
+#" Speeding coding by state and year: of vehicles recorded 10+ mph over the limit, the share coded speeding, beside the speeding share of deaths.
+#(agent) Grain: state x year. Pool years with a where on `year`; every measure sums over the rows kept. Compare states only with 100+ fast vehicles in the years kept and speed and limit recorded for half or more of vehicles.
+source: speeding_coding is fast_vehicles_by_state_year extend {
+  // Join guard: both sources are one row per state and year, so join_one on both keys cannot fan out.
+  join_one: deaths_side is crashes_by_state_year on state_name = deaths_side.state_name and `year` = deaths_side.`year`
+
+  measure:
+    // Denominator: vehicles with BOTH a recorded travel speed and a posted limit. Many states leave speed blank
+    // (Texas records it for 7.0% of vehicles, Florida 88.5%), so a state's fast vehicles are a sample of its crashes
+    // whose size and selection depend on how often officers record speed.
+    #" Of vehicles with a recorded speed and limit, the share recorded 10+ mph over.
+    # percent
+    fast_share_of_recorded is fast_n.sum() / nullif(speed_known_n.sum(), 0)
+    // The official FARS measure: deaths in crashes the report flags speeding-related, over all deaths. It moves with
+    // the flag rate (flagged_share_of_10_over) as well as with how fast people drive.
+    #" Share of deaths in crashes FARS flags speeding-related.
+    # percent
+    speeding_share_of_deaths is deaths_side.speeding_related_deaths / nullif(deaths_side.deaths, 0)
+    #" Deaths.
+    deaths is deaths_side.deaths
+    #" Deaths in crashes flagged speeding-related.
+    speeding_deaths is deaths_side.speeding_related_deaths
+    #" Deaths in crashes with a vehicle recorded 10+ mph over the limit (the count that does not depend on the flag).
+    deaths_with_fast_vehicle is deaths_side.deaths_vehicle_10_over_limit
+
+  // Minimum count: views compare a state only with 100+ fast vehicles in the years kept. Under that, its flagged
+  // share has a 95% interval wider than about +/- 10 points; it stays in the drill-down table.
+
+  #" How often is a fast vehicle coded speeding? By state, 2022-2024 pooled, states with 100+ fast vehicles, highest share first.
+  #(agent) Texas, Louisiana and New Jersey top this list but record speed for under 30% of vehicles; for a like-for-like comparison read `where_speed_is_recorded`.
+  view: how_often_is_a_fast_vehicle_coded_speeding is {
+    where: `year` >= 2022
+    group_by: state_name
+    aggregate:
+      vehicles_10_over, vehicles_10_over_flagged, flagged_share_of_10_over, flagged_share_low_95, flagged_share_high_95
+      flagged_share_vs_rest_of_us, speed_and_limit_known_share
+    having: vehicles_10_over >= 100
+    order_by: flagged_share_of_10_over desc
+  }
+
+  // Coverage guard: the like-for-like comparison keeps states recording speed and limit for half or more of their
+  // vehicles, so the fast vehicles are most of the state's crashes rather than a small, selected subset.
+  #" Same, only states that record speed and limit for half or more of vehicles (2022-2024): the like-for-like comparison.
+  view: where_speed_is_recorded is {
+    where: `year` >= 2022
+    group_by: state_name
+    aggregate:
+      vehicles_10_over, vehicles_10_over_flagged, flagged_share_of_10_over, flagged_share_low_95, flagged_share_high_95
+      speed_and_limit_known_share, fast_share_of_recorded, speeding_share_of_deaths
+    having: vehicles_10_over >= 100 and speed_and_limit_known_share >= 0.5
+    order_by: flagged_share_of_10_over desc
+  }
+
+  // Tested before the query (H-F3): across the 25 comparable states the speeding share of deaths correlates 0.514
+  // with the flagged share and 0.426 with the fast share, but without Florida the order reverses (0.285 and 0.345).
+  // So this view shows the pattern state by state; it does not support a general "the flag drives the count" claim.
+  #" Does a state's speeding share of deaths follow its coding or its fast driving? By state, 2022-2024, comparable states.
+  view: does_the_speeding_count_follow_the_coding is {
+    where: `year` >= 2022
+    group_by: state_name
+    aggregate:
+      speeding_share_of_deaths, flagged_share_of_10_over, fast_share_of_recorded, deaths, speeding_deaths
+      deaths_with_fast_vehicle, vehicles_10_over
+    having: vehicles_10_over >= 100
+    order_by: speeding_share_of_deaths
+  }
+
+  // Flaw named here: 2024 is NHTSA's Annual Report File, not final (earlier years rose 0.5-0.7% when finalised).
+  // North Carolina's rise from 63.9% (2022) to 88.3% (2024) is beyond chance while its deaths in crashes with a fast
+  // vehicle did not change beyond chance (634 and 598): its speeding-related count rose with the coding.
+  #" Did the coding change? Flagged share by year, 2019-2024, for Florida, Virginia and North Carolina (2024 not final).
+  view: did_the_coding_change is {
+    where: state_name = ('Florida' | 'Virginia' | 'North Carolina')
+    // Year as text so tables and the chart axis show 2019, not 2,019.
+    group_by: crash_year is `year`::string, state_name
+    aggregate: vehicles_10_over, flagged_share_of_10_over, rest_of_us_flagged_share
+    order_by: crash_year, state_name
+  }
+
+  #" Drill-down: every state, then each year: fast vehicles, flagged share with interval, speed recorded, and deaths.
+  view: state_by_year is {
+    group_by: state_name
+    aggregate: vehicles_10_over, flagged_share_of_10_over, speed_and_limit_known_share, speeding_share_of_deaths
+    nest: by_year is {
+      group_by: crash_year is `year`::string
+      aggregate:
+        vehicles_10_over, vehicles_10_over_flagged, flagged_share_of_10_over, flagged_share_low_95
+        flagged_share_high_95, speed_and_limit_known_share, deaths, speeding_deaths, deaths_with_fast_vehicle
+      order_by: crash_year
+    }
+    order_by: vehicles_10_over desc
+  }
+}

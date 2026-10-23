@@ -1,0 +1,7 @@
+##" Every fatal US road crash 2019-2024 (NHTSA FARS) with vehicle-miles and population: deaths by state, county, road type, time, alcohol, speeding and pedestrians, with chance tests. 2024 is not final.
+## dataset { title="US Fatal Road Crashes (FARS 2019 - 2024)" }
+
+// The model is in fars.malloy; headline.malloy holds the headline question (dashboards/speeding_coding.malloy).
+import { speeding_coding } from 'headline.malloy'
+import { crashes, crashes_by_state_year, vehicles, fast_vehicles_by_state_year, persons, persons_by_state_year, pedestrians_by_county_year, state_years, road_exposure, road_class_coding_breaks, road_class_by_state_year, road_group_by_state_year, state_rates_by_year, county_years, county_rates_by_year, alcohol_imputations, county_population, nc_speeding_definitions, state_field_coverage, holiday_comparison, killed_drivers_alcohol_by_age, two_vehicle_crashes, driver_licence_by_state_year, state_denominators } from 'fars.malloy'
+export { speeding_coding, crashes, crashes_by_state_year, vehicles, fast_vehicles_by_state_year, persons, persons_by_state_year, pedestrians_by_county_year, state_years, road_exposure, road_class_coding_breaks, road_class_by_state_year, road_group_by_state_year, state_rates_by_year, county_years, county_rates_by_year, alcohol_imputations, county_population, nc_speeding_definitions, state_field_coverage, holiday_comparison, killed_drivers_alcohol_by_age, two_vehicle_crashes, driver_licence_by_state_year, state_denominators }

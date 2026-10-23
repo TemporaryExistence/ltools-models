@@ -1,5 +1,3 @@
-##" Every fatal US road crash 2019-2024 (NHTSA FARS) with vehicle-miles and population: deaths by state, county, road type, time, alcohol, speeding and pedestrians, with chance tests. 2024 is not final.
-## dataset { title="US Fatal Road Crashes (FARS 2019 - 2024)" }
 
 // Loaded by load_fars.sql into MotherDuck ltools.fars (222,695 crashes, 544,030 persons, 343,261 vehicles, 2019-2024).
 // Sources: NHTSA FARS national CSVs (downloaded 2026-10-20); FHWA Highway Statistics VM-2 2019-2024; Census county

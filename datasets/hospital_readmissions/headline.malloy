@@ -1,0 +1,114 @@
+// Headline: do Medicare readmission penalties last?
+//
+// Finding: penalties look more stable than they are. A hospital's cut correlates 0.770 with the next file's, which
+// shares two of its three discharge years (2,928 hospitals), but 0.400 with the file two on, which shares none and
+// also follows the FY 2027 rule change (2,882). The FY 2025 worst tenth (289 hospitals, mean cut 1.32%) keeps 43.4% of
+// its distance from the average by FY 2027 (0.789%). The other side: of hospitals with no FY 2025 cut and eligible in
+// FY 2027, 61.8% were cut in FY 2027 (310 of 502).
+// If I knew a top-tenth hospital keeps under half its distance from the average two files on, I would budget its
+// penalty two files on near 0.217 + 0.427 x this year's cut rather than at this year's cut (the next file shares
+// discharges and runs steeper: 0.079 + 0.819 x), and require a comparison group before crediting a program with a
+// fall. Who acts: hospital CFOs and quality directors; state hospital associations.
+// Flaw named here: FY 2027 changed the basis (two years of discharges, Medicare Advantage stays added, a refitted risk
+// model), and both pairs that reach FY 2027 cross that change. Between those two the correlation still falls, 0.573
+// (one shared year) to 0.400 (none), so shared discharges explain part of the apparent stability; how much of the rest
+// is the rule change cannot be split with three files.
+// Hypotheses written before the queries: units/ltools/outputs/ltp-rubric/HYPOTHESES.md (work repo, commit 63719d76).
+
+import { payment_file_pairs, payment_hospital_row } from 'readmissions.malloy'
+
+// One row per hospital: how many file pairs it is in (3 = in all three payment files). Used as a join guard so a
+// comparison across pairs can be made on the same hospitals.
+source: files_per_hospital is payment_file_pairs -> {
+  group_by: facility_id
+  aggregate: pairs is count()
+}
+
+#" Do readmission penalties last? Views by file pair, cut band and state.
+#(agent) Grain: hospital x file pair (FY 2025/2026, FY 2026/2027, FY 2025/2027). Always group or filter by `file_pair`: a measure over all pairs mixes three comparisons. Judge persistence on FY 2025 to FY 2027, which shares no discharges.
+source: penalty_persistence is payment_file_pairs extend {
+  // Join guards: payment_hospital_row is one row per hospital and fiscal year, so each join matches at most one row.
+  join_one: earlier is payment_hospital_row on facility_id = earlier.facility_id and fiscal_year_a = earlier.fiscal_year
+  join_one: later is payment_hospital_row on facility_id = later.facility_id and fiscal_year_b = later.fiscal_year
+  join_one: files is files_per_hospital on facility_id = files.facility_id
+
+  dimension:
+    #" Hospital name (from the later file).
+    hospital_name is later.facility_name
+    #" True when the hospital is in all three payment files (the same hospitals in every pair).
+    in_all_three_files is files.pairs = 3
+    #" True when CMS could cut the hospital in the later file (a measure with 25+ eligible discharges).
+    eligible_later is later.scored_measures > 0
+    // Bands of the earlier cut. The 1.5%+ band is about the top 2-3%; the cap is 3%.
+    #" Earlier file's cut in bands, percent of base operating DRG payments.
+    earlier_cut_band is
+      pick '0: no cut' when cut_a = 0
+      pick '1: under 0.25%' when cut_a < 0.25
+      pick '2: 0.25-0.5%' when cut_a < 0.5
+      pick '3: 0.5-1%' when cut_a < 1
+      pick '4: 1-1.5%' when cut_a < 1.5
+      else '5: 1.5% or more'
+
+  measure:
+    // Denominator for both means: every hospital in both files of the pair, penalized or not, so the means are the
+    // "average" a top-tenth hospital regresses toward.
+    #" Mean cut in the earlier file, percent, all hospitals in both files.
+    mean_cut_a is cut_a.avg()
+    #" Mean cut in the later file, percent, all hospitals in both files.
+    mean_cut_b is cut_b.avg()
+    // Distance kept = (top tenth's later mean - later mean) / (top tenth's earlier mean - earlier mean). 1 means the
+    // worst tenth stays as far above average; 0 means it is back at the average.
+    #" Share of the earlier top tenth's distance above the average that remains in the later file.
+    # percent
+    distance_kept is (top_tenth_mean_cut_b - mean_cut_b) / nullif(top_tenth_mean_cut_a - mean_cut_a, 0)
+    #" Share of hospitals cut in the later file.
+    # percent
+    cut_later_share is count() { where: cut_b > 0 } / nullif(count(), 0)
+
+  #" Do penalties last? By file pair: shared discharge years, cut correlation, and how much of the worst tenth's distance from the average remains.
+  #(agent) Adjacent pairs share discharges, so their correlation overstates persistence; read FY 2025 to FY 2027. Both pairs reaching FY 2027 also cross its rule change (two years, Medicare Advantage added).
+  view: do_penalties_last is {
+    group_by: file_pair, shared_discharge_years
+    aggregate:
+      hospitals, cut_correlation, top_tenth_hospitals, top_tenth_mean_cut_a, mean_cut_a, top_tenth_mean_cut_b, mean_cut_b
+      distance_kept, top_tenth_stayed, top_tenth_stay_by_chance, next_cut_intercept, next_cut_slope
+    order_by: shared_discharge_years desc
+  }
+
+  // Composition guard: the three pairs hold slightly different hospitals (2,928, 2,894, 2,882). Keeping the 2,878 in
+  // all three files shows the fall in correlation is not a change in which hospitals are compared.
+  #" Same, only hospitals in all three files.
+  view: same_hospitals_in_every_pair is {
+    where: in_all_three_files
+    group_by: file_pair, shared_discharge_years
+    aggregate: hospitals, cut_correlation, mean_cut_a, mean_cut_b
+    order_by: shared_discharge_years desc
+  }
+
+  #" Where does this year's cut land two files on? FY 2025 cut band against the FY 2027 mean cut and share cut.
+  view: where_a_cut_lands_two_files_on is {
+    where: file_pair = 'FY2025 to FY2027'
+    group_by: earlier_cut_band
+    aggregate: hospitals, mean_cut_a, mean_cut_b, cut_later_share
+    order_by: earlier_cut_band
+  }
+
+  // Eligibility guard: a hospital with no measure of 25+ discharges in FY 2027 cannot be cut, so it is left out.
+  #" Is a penalty-free year safe? Hospitals with no FY 2025 cut and eligible in FY 2027: how many were cut in FY 2027, and by how much.
+  view: penalty_free_then_cut is {
+    where: file_pair = 'FY2025 to FY2027' and cut_a = 0 and eligible_later
+    aggregate: hospitals, cut_later_share, mean_cut_b
+  }
+
+  #" Drill-down: by state, then each hospital's FY 2025 and FY 2027 cut (files that share no discharges).
+  view: state_then_hospital is {
+    where: file_pair = 'FY2025 to FY2027'
+    group_by: state
+    aggregate: hospitals, mean_cut_a, mean_cut_b, cut_later_share
+    nest: hospitals_in_state is {
+      group_by: hospital_name, facility_id, earlier_cut_band, cut_fy2025 is cut_a, cut_fy2027 is cut_b
+      order_by: cut_fy2025 desc
+    }
+    order_by: hospitals desc
+  }
+}

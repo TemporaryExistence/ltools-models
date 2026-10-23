@@ -1,0 +1,42 @@
+import "../headline.malloy"
+
+// Question page for the readmissions headline (headline.malloy has the finding, the reasons and the flaws).
+// Tiles: the headline numbers, the correlation by shared discharge years, where each FY 2025 cut band lands in FY
+// 2027, the same comparison on the hospitals in all three files, and a drill-down by state then hospital. FY 2027 changed the program's basis (two years, Medicare Advantage
+// added), so both pairs reaching FY 2027 cross that change.
+
+#" Do Medicare readmission penalties last? Penalty files that share discharges agree; files that share none agree much less.
+# artifact { title="Do readmission penalties last?" } dashboard { columns=6 }
+query: penalty_persistence_page is penalty_persistence -> {
+  # colspan=2
+  aggregate:
+    # label="Cut correlation, files sharing 2 discharge years (FY 2025/2026)"
+    # number="0.000"
+    correlation_files_sharing_two_years is cut_correlation { where: file_pair = 'FY2025 to FY2026' }
+    # label="Cut correlation, files sharing none (FY 2025/2027)"
+    # number="0.000"
+    correlation_files_sharing_none is cut_correlation { where: file_pair = 'FY2025 to FY2027' }
+    # label="FY 2025 worst tenth: distance from average kept by FY 2027"
+    # percent
+    worst_tenth_distance_kept_by_fy2027 is distance_kept { where: file_pair = 'FY2025 to FY2027' }
+    # label="FY 2025 worst tenth (289): mean cut FY 2025, %"
+    # number="0.000"
+    worst_tenth_mean_cut_fy2025 is top_tenth_mean_cut_a { where: file_pair = 'FY2025 to FY2027' }
+    # label="Same hospitals: mean cut FY 2027, %"
+    # number="0.000"
+    worst_tenth_mean_cut_fy2027 is top_tenth_mean_cut_b { where: file_pair = 'FY2025 to FY2027' }
+    # label="No FY 2025 cut, eligible FY 2027 (502): cut in FY 2027"
+    # percent
+    no_fy2025_cut_but_cut_in_fy2027 is cut_later_share { where: file_pair = 'FY2025 to FY2027' and cut_a = 0 and eligible_later }
+  # colspan=3
+  nest:
+    # break
+    # bar_chart { x=file_pair y=cut_correlation }
+    do_penalties_last
+    # bar_chart { x=earlier_cut_band y=['mean_cut_a', 'mean_cut_b'] }
+    where_a_cut_lands_two_files_on
+    # colspan=6
+    same_hospitals_in_every_pair
+    # colspan=6
+    state_then_hospital
+}

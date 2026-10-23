@@ -1,0 +1,45 @@
+import "../headline.malloy"
+
+// Question page for the road-deaths headline (headline.malloy has the finding, the reasons and the flaws).
+// Tiles: the headline numbers and the state comparisons (2022-2024), the coding by year (2019-2024), the speeding
+// share of deaths by state, and a drill-down by state then year. 2024 is NHTSA's Annual Report File, not final.
+
+#" Which states count fewer road deaths as speeding-related, and how much of that is how crash reports code speeding? 2022-2024.
+# artifact { title="Which states code fewer speeding deaths?" } dashboard { columns=6 }
+query: speeding_coding_page is speeding_coding -> {
+  # colspan=2
+  aggregate:
+    # percent
+    # label="Florida: speeding share of deaths"
+    florida_speeding_share_of_deaths is speeding_share_of_deaths { where: state_name = 'Florida' and `year` >= 2022 }
+    # percent
+    # label="Rest of US: speeding share of deaths"
+    rest_of_us_speeding_share_of_deaths is speeding_share_of_deaths { where: state_name != 'Florida' and `year` >= 2022 }
+    # label="Florida: vehicles 10+ mph over"
+    florida_fast_vehicles is vehicles_10_over { where: state_name = 'Florida' and `year` >= 2022 }
+    # percent
+    # label="Florida: of those, coded speeding"
+    florida_fast_coded_speeding is flagged_share_of_10_over { where: state_name = 'Florida' and `year` >= 2022 }
+    # label="Virginia: vehicles 10+ mph over"
+    virginia_fast_vehicles is vehicles_10_over { where: state_name = 'Virginia' and `year` >= 2022 }
+    # percent
+    # label="Virginia: of those, coded speeding"
+    virginia_fast_coded_speeding is flagged_share_of_10_over { where: state_name = 'Virginia' and `year` >= 2022 }
+    # label="North Carolina: vehicles 10+ mph over"
+    north_carolina_fast_vehicles is vehicles_10_over { where: state_name = 'North Carolina' and `year` >= 2022 }
+    # percent
+    # label="North Carolina: of those, coded speeding"
+    north_carolina_fast_coded_speeding is flagged_share_of_10_over { where: state_name = 'North Carolina' and `year` >= 2022 }
+  # colspan=3
+  nest:
+    # break
+    # bar_chart { x=state_name y=flagged_share_of_10_over }
+    where_speed_is_recorded
+    # line_chart { x=crash_year y=flagged_share_of_10_over series=state_name }
+    did_the_coding_change
+    # bar_chart { x=state_name y=speeding_share_of_deaths }
+    # colspan=6
+    does_the_speeding_count_follow_the_coding
+    # colspan=6
+    state_by_year
+}

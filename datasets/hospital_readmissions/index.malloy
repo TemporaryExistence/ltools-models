@@ -1,0 +1,7 @@
+##" Medicare's Hospital Readmissions Reduction Program (CMS): 30-day readmissions for six conditions at about 3,000 US hospitals, discharges July 2021 to June 2024, with FY 2025 to FY 2027 payment cuts. For which hospitals, states and conditions have excess readmissions beyond chance, what they cost, what drives each cut and what lasts. Data: CMS public files (loaded 2026-10-23).
+## dataset { title="Hospital Readmissions (Medicare HRRP FY 2026)" }
+
+// The model is in readmissions.malloy; headline.malloy holds the headline question (dashboards/penalty_persistence.malloy).
+import { penalty_persistence } from 'headline.malloy'
+import { hospital_info, hospitals, payment_measures, payment_hospitals, payment_file_pairs, spread_prior, measure_results, penalty_basis, null_selection } from 'readmissions.malloy'
+export { penalty_persistence, hospital_info, hospitals, payment_measures, payment_hospitals, payment_file_pairs, spread_prior, measure_results, penalty_basis, null_selection }
