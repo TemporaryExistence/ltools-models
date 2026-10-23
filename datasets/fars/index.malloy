@@ -2776,7 +2776,7 @@ source: nc_speeding_definitions is motherduck.table('fars.nc_speeding_definition
 
 #" How fully each state fills weather, EMS times, belt use, recorded speed, drug tests, distraction and charges, with a comparable label per field.
 #(agent) Grain: state x year x rural/urban (counts). Check a field in `field_coverage_by_state` before comparing states on it: dropping unknown codes, the usual SQL move, gives confident wrong shares (Virginia's crashes read 88% wet; six large states have EMS times for under 10% of crashes).
-#(agent) Labels: 'Comparable' when 80%+ of records hold a usable value, 'Use with care' at 50-80%, 'Not comparable' under 50% or when a yearly share moved 30+ points. Answer views give a figure only where its field is comparable and say why not otherwise.
+#(agent) Labels: 'Comparable' when 80%+ of records hold a usable value (an unknown is not one: distraction 96 or 99, charges 97 or 99), 'Use with care' at 50-80%, 'Not comparable' under 50% or when a yearly share moved 30+ points. Answer views give a figure only where its field is comparable and say why not otherwise.
 #(agent) EMS times are signed intervals wrapped across midnight: a notification 3 minutes before the crash is -3, not 1,437. The drug lab list changed in 2022: compare lab results within 2019-2021 or within 2022-2024.
 source: state_field_coverage is motherduck.table('fars.state_field_coverage') extend {
   measure:
@@ -2808,12 +2808,12 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
     #" Share of killed drivers tested for drugs.
     # percent
     drug_tested_share is killed_drivers_drug_tested.sum() / nullif(killed_drivers.sum(), 0)
-    #" Share of drivers whose distraction is reported (not only 'not reported').
+    #" Share of drivers whose distraction is known (not only 'not reported' or 'unknown if distracted').
     # percent
-    distraction_reported_share is 1 - drivers_distraction_not_reported.sum() / nullif(drivers.sum(), 0)
-    #" Share of surviving drivers tested at .08+ whose charges are reported.
+    distraction_known_share is 1 - drivers_distraction_unknown.sum() / nullif(drivers.sum(), 0)
+    #" Share of surviving drivers tested at .08+ whose charges are known (not only 'not reported' or 'unknown').
     # percent
-    charges_reported_share is 1 - surviving_drivers_08_violations_not_reported.sum() / nullif(surviving_drivers_08.sum(), 0)
+    charges_known_share is 1 - surviving_drivers_08_charges_unknown.sum() / nullif(surviving_drivers_08.sum(), 0)
 
   #" Every state: share of records filled for each field, with a comparable label per field (also 'Not comparable' when a yearly share moved 30+ points).
   view: field_coverage_by_state is {
@@ -2822,8 +2822,8 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
       cr is crashes.sum(), wu is crashes_weather_unknown.sum(), rv is crashes_response_time_valid.sum(), nv is crashes_notification_time_valid.sum()
       nb is crashes_notified_before_crash.sum(), tu is crashes_not_coded_untransported.sum(), hv is crashes_hospital_time_valid.sum()
       pvo is killed_pv_occupants.sum(), pvu is killed_pv_restraint_unknown.sum(), veh is vehicles.sum(), vsr is vehicles_speed_recorded.sum()
-      kd is killed_drivers.sum(), kdt is killed_drivers_drug_tested.sum(), drv is drivers.sum(), dnr is drivers_distraction_not_reported.sum()
-      s8 is surviving_drivers_08.sum(), s8nr is surviving_drivers_08_violations_not_reported.sum()
+      kd is killed_drivers.sum(), kdt is killed_drivers_drug_tested.sum(), drv is drivers.sum(), dnr is drivers_distraction_unknown.sum()
+      s8 is surviving_drivers_08.sum(), s8nr is surviving_drivers_08_charges_unknown.sum()
   } -> {
     group_by: state_name
     aggregate:
@@ -2836,8 +2836,8 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
       belt_use_known_share is 1 - pvu.sum() / nullif(pvo.sum(), 0)
       speed_recorded_share is vsr.sum() / nullif(veh.sum(), 0)
       drug_tested_share is kdt.sum() / nullif(kd.sum(), 0)
-      distraction_reported_share is 1 - dnr.sum() / nullif(drv.sum(), 0)
-      charges_reported_share is 1 - s8nr.sum() / nullif(s8.sum(), 0)
+      distraction_known_share is 1 - dnr.sum() / nullif(drv.sum(), 0)
+      charges_known_share is 1 - s8nr.sum() / nullif(s8.sum(), 0)
       w_swing is max(pick 1 - wu / cr when cr >= 20 else null) - min(pick 1 - wu / cr when cr >= 20 else null)
       r_swing is max(pick rv / cr when cr >= 20 else null) - min(pick rv / cr when cr >= 20 else null)
       n_swing is max(pick nv / cr when cr >= 20 else null) - min(pick nv / cr when cr >= 20 else null)
@@ -2864,10 +2864,10 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
       recorded_speed is pick 'Not comparable: filled share moved 30+ points between years' when s_swing >= 0.3 pick 'Comparable' when speed_recorded_share >= 0.8 pick 'Use with care: 50-80% filled' when speed_recorded_share >= 0.5 else 'Not comparable: under 50% filled'
       drug_tested_share
       drug_tests is pick 'Not comparable: tested share moved 30+ points between years' when g_swing >= 0.3 pick 'Comparable' when drug_tested_share >= 0.8 pick 'Use with care: 50-80% tested' when drug_tested_share >= 0.5 else 'Not comparable: under 50% tested'
-      distraction_reported_share
-      distraction is pick 'Not comparable: filled share moved 30+ points between years' when d_swing >= 0.3 pick 'Comparable' when distraction_reported_share >= 0.8 pick 'Use with care: 50-80% filled' when distraction_reported_share >= 0.5 else 'Not comparable: under 50% filled'
-      charges_reported_share
-      charges is pick 'Not comparable: filled share moved 30+ points between years' when c_swing >= 0.3 pick 'Comparable' when charges_reported_share >= 0.8 pick 'Use with care: 50-80% filled' when charges_reported_share >= 0.5 else 'Not comparable: under 50% filled'
+      distraction_known_share
+      distraction is pick 'Not comparable: filled share moved 30+ points between years' when d_swing >= 0.3 pick 'Comparable' when distraction_known_share >= 0.8 pick 'Use with care: 50-80% filled' when distraction_known_share >= 0.5 else 'Not comparable: under 50% filled'
+      charges_known_share
+      charges is pick 'Not comparable: filled share moved 30+ points between years' when c_swing >= 0.3 pick 'Comparable' when charges_known_share >= 0.8 pick 'Use with care: 50-80% filled' when charges_known_share >= 0.5 else 'Not comparable: under 50% filled'
     order_by: state_name
   }
 
@@ -2944,13 +2944,13 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
   view: driver_records_by_state is {
     group_by: state_name, `year`
     aggregate:
-      drv is drivers.sum(), dnr is drivers_distraction_not_reported.sum(), ph is drivers_phone_distraction.sum(), kd is killed_drivers.sum(), kdt is killed_drivers_drug_tested.sum()
-      kdp is killed_drivers_drugs_police_reported.sum(), kdl is killed_drivers_drug_lab_positive.sum(), s8 is surviving_drivers_08.sum(), s8c is surviving_drivers_08_charged.sum()
+      drv is drivers.sum(), dnr is drivers_distraction_unknown.sum(), ph is drivers_phone_distraction.sum(), kd is killed_drivers.sum(), kdt is killed_drivers_drug_tested.sum()
+      kdp is killed_drivers_drugs_police_reported.sum(), kdl is killed_drivers_drug_lab_positive.sum(), s8 is surviving_drivers_08.sum(), s8c is surviving_drivers_08_charged.sum(), s8nr is surviving_drivers_08_charges_unknown.sum()
   } -> {
     group_by: state_name
     aggregate:
       drivers is drv.sum()
-      distraction_reported_share is 1 - dnr.sum() / nullif(drv.sum(), 0)
+      distraction_known_share is 1 - dnr.sum() / nullif(drv.sum(), 0)
       d_swing is max(pick 1 - dnr / drv when drv >= 20 else null) - min(pick 1 - dnr / drv when drv >= 20 else null)
       phone_rate is 1000 * ph.sum() / nullif(drv.sum(), 0)
       killed_drivers is kd.sum()
@@ -2960,17 +2960,19 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
       lab_share is kdl.sum() / nullif(kdt.sum(), 0)
       surviving_drivers_08 is s8.sum()
       charged_share is s8c.sum() / nullif(s8.sum(), 0)
+      charges_known_share is 1 - s8nr.sum() / nullif(s8.sum(), 0)
+      c_swing is max(pick 1 - s8nr / s8 when s8 >= 20 else null) - min(pick 1 - s8nr / s8 when s8 >= 20 else null)
   } -> {
     select:
-      state_name, drivers, distraction_reported_share
-      distraction is pick 'Not comparable: filled share moved 30+ points between years' when d_swing >= 0.3 pick 'Comparable' when distraction_reported_share >= 0.8 pick 'Use with care: 50-80% filled' when distraction_reported_share >= 0.5 else 'Not comparable: under 50% filled'
-      phone_distraction_per_1000_drivers is pick phone_rate when distraction_reported_share >= 0.8 and d_swing < 0.3 else null
+      state_name, drivers, distraction_known_share
+      distraction is pick 'Not comparable: filled share moved 30+ points between years' when d_swing >= 0.3 pick 'Comparable' when distraction_known_share >= 0.8 pick 'Use with care: 50-80% filled' when distraction_known_share >= 0.5 else 'Not comparable: under 50% filled'
+      phone_distraction_per_1000_drivers is pick phone_rate when distraction_known_share >= 0.8 and d_swing < 0.3 else null
       killed_drivers, drug_tested_share
       drug_tests is pick 'Not comparable: tested share moved 30+ points between years' when g_swing >= 0.3 pick 'Comparable' when drug_tested_share >= 0.8 pick 'Use with care: 50-80% tested' when drug_tested_share >= 0.5 else 'Not comparable: under 50% tested'
       police_reported_drugs_share_of_tested is pick police_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
       lab_positive_share_of_tested is pick lab_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
       surviving_drivers_08
-      charged_share_recorded is charged_share
+      charged_share_recorded is pick charged_share when charges_known_share >= 0.8 and c_swing < 0.3 else null
     order_by: state_name
   }
 }
@@ -2980,8 +2982,8 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
 #(agent) Chance: daily deaths vary 1.7 times as much as Poisson, so 'beyond chance' means outside the 95% range of 273 ordinary dates over the same six years (five-year range when a query holds five; 'Not tested' with fewer). National counts, not per-mile risk: no daily traffic data.
 source: holiday_comparison is motherduck.table('fars.holiday_comparison') extend {
   measure:
-    #" Holiday occurrences (years) in the query.
-    holidays is count(holiday_year) { where: day_role = 'Holiday' }
+    #" Holiday dates in the query (one per holiday per year); null when time windows are mixed, as windows overlap.
+    holidays is pick count(holiday_date) { where: day_role = 'Holiday' } when count(time_window) = 1 else null
     #" Deaths per holiday date in the window.
     holiday_deaths_per_date is deaths.sum() { where: day_role = 'Holiday' } / nullif(holidays, 0)
     #" Deaths per matched date (same weekday 1-3 weeks either side, other holidays left out).
@@ -3002,10 +3004,10 @@ source: holiday_comparison is motherduck.table('fars.holiday_comparison') extend
     matched_sober_deaths_per_date is sum(sober_deaths * date_weight) { where: day_role = 'Same weekday, 1-3 weeks either side' } / nullif(holidays, 0)
     #" Holiday over matched, sober-crash deaths.
     sober_ratio is holiday_sober_deaths_per_date / nullif(matched_sober_deaths_per_date, 0)
-    #" Memorial Day and Labor Day only: deaths per Sunday 1-3 weeks either side of the Sunday before.
-    sunday_deaths_per_date is sum(deaths * date_weight) { where: day_role = 'Sunday, 1-3 weeks either side' } / nullif(count(holiday_year) { where: day_role = 'Sunday, 1-3 weeks either side' }, 0)
-    #" Holiday deaths per date over the nearby Sundays' (Memorial Day and Labor Day).
-    ratio_to_sundays is holiday_deaths_per_date / nullif(sunday_deaths_per_date, 0)
+    #" Memorial Day and Labor Day only: deaths per Sunday 1-3 weeks either side of the Sunday before (null when time windows are mixed).
+    sunday_deaths_per_date is pick sum(deaths * date_weight) { where: day_role = 'Sunday, 1-3 weeks either side' } / nullif(count(holiday_date) { where: day_role = 'Sunday, 1-3 weeks either side' }, 0) when count(time_window) = 1 else null
+    #" Holiday deaths per date over the nearby Sundays' (one holiday: Memorial Day or Labor Day).
+    ratio_to_sundays is pick holiday_deaths_per_date / nullif(sunday_deaths_per_date, 0) when count(holiday) = 1 else null
     #" All deaths against the ordinary-date range: beyond chance or not.
     deaths_vs_ordinary_dates is pick 'Not tested: one holiday and one time_window at a time' when count(holiday) > 1 or count(time_window) > 1 pick 'Not tested: the chance range needs five or six years' when holidays < 5 pick 'Higher, beyond chance' when deaths_ratio > (pick band_high.max() when holidays = 6 else band5_high.max()) pick 'Lower, beyond chance' when deaths_ratio < (pick band_low.min() when holidays = 6 else band5_low.min()) else 'Within chance'
     #" Alcohol-crash deaths against the ordinary-date range.
@@ -3212,14 +3214,14 @@ source: driver_licence_by_state_year is motherduck.table('fars.driver_licence_by
 
 #" Deaths per resident, mile, registered vehicle and licensed driver by state, with each denominator's step from the year before, so a rate moved by a denominator re-estimate shows.
 #(agent) Grain: state x year. Registrations (FHWA MV-1) and licensed drivers (DL-22) exist for 2019 and 2022-2024 only. Rates per vehicle and per driver are shown but not ranked: FHWA's counts jump (New York vehicles 9.4M to 21.0M in 2024, a switch to state data; Arkansas drivers +29% in 2024). `denominator_steps` names the step.
-#(agent) Per-mile change: when a state's VM-2 miles moved 4+ points away from the US change in a year (23 of 153 state-years 2022-2024; Indiana +22% in 2022), read the per-resident change first (`miles_step`). Motorcycles: registrations are not riders (Montana 375 per 1,000 residents vs US 28); compare riders' deaths per resident.
+#(agent) Per-mile change: `miles_step` is relative to the US: 'Miles stepped vs US' when a state's VM-2 miles moved 4+ points away from the US change that year (23 of 153 state-years 2022-2024; Indiana +22% in 2022); read the per-resident change first. 'Within 4 points of US' is not 'miles flat': read `miles_change` too (Florida +4-5% a year 2022-2024). Motorcycles: registrations are not riders (Montana 375 per 1,000 residents vs US 28); compare riders' deaths per resident.
 source: state_denominators is motherduck.table('fars.state_denominators') extend {
   dimension:
     #" This year's VM-2 miles over last year's, minus 1.
     # percent
     miles_change is vmt_millions / nullif(prior_vmt_millions, 0) - 1
-    #" 'Miles stepped' when the state's miles changed 4+ points more (or less) than US miles that year: a per-mile change then is mostly the miles.
-    miles_step is pick 'Not tested: no earlier year' when prior_vmt_millions is null pick 'Miles stepped: read the per-resident change first' when abs(vmt_millions / nullif(prior_vmt_millions, 0) - 1 - us_vmt_change) >= 0.04 else 'No step'
+    #" Relative miles step: the state's one-year miles change minus the US change, 4+ points either way; it does not judge the state's own miles change.
+    miles_step is pick 'Not tested: no earlier year' when prior_vmt_millions is null pick 'Miles stepped vs US (4+ points from the US change): read the per-resident change first' when abs(vmt_millions / nullif(prior_vmt_millions, 0) - 1 - us_vmt_change) >= 0.04 else 'Within 4 points of the US change: check miles_change'
     #" Registered vehicles' change from the previous loaded table (2019 for 2022), beyond the population change.
     # percent
     registrations_step_beyond_population is (registered_vehicles / nullif(prior_registered_vehicles, 0)) / nullif(population / nullif(prior_table_population, 0), 0) - 1

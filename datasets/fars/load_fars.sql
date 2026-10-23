@@ -515,8 +515,9 @@ LEFT JOIN p ON p.year = coalesce(pop.year, c.year) AND p.county_fips = coalesce(
 --     testing of killed drivers (person DSTATUS 2 = test given; DRUGS 1 = police-reported drug involvement; Drugs file
 --     lab result positive: 2019-2021 codes 100-996 or 998, 2022+ codes 100-9994, 9996 or 9998, i.e. any drug including
 --     medicines, and the list changed in 2022); driver distraction (one row per driver with a driver present, Distract
---     code 16 dropped; 'not reported' = only code 96; phone = codes 5, 6, 15); violations charged for surviving drivers
---     tested at .08+ (any Violatn code other than 0 none, 95 no driver, 97 not reported, 99 unknown).
+--     code 16 dropped; unknown = every code is 96 not reported or 99 reported as unknown if distracted; phone = codes 5, 6,
+--     15); violations charged for surviving drivers tested at .08+ (any Violatn code other than 0 none, 95 no driver,
+--     97 not reported, 99 unknown; unknown = every code is 97 or 99). An unknown is not a usable value (review 10 B1).
 CREATE OR REPLACE TABLE ltools.fars.state_field_coverage AS
 WITH a AS (
   SELECT YEAR AS year, YEAR * 1000000 + ST_CASE AS crash_key, STATENAME AS state_name,
@@ -581,7 +582,7 @@ WITH a AS (
 ), dd AS (
   SELECT cr.year, cr.state_name, cr.rural_urban,
     count(*) AS drivers_distraction_rows,
-    count(*) FILTER (WHERE dis.codes = [96]) AS drivers_distraction_not_reported,
+    count(*) FILTER (WHERE list_has_all([96, 99], dis.codes)) AS drivers_distraction_unknown,
     count(*) FILTER (WHERE list_has_any(dis.codes, [5, 6, 15])) AS drivers_phone_distraction
   FROM dis JOIN ltools.fars.crashes cr ON cr.crash_key = dis.crash_key
   WHERE NOT list_contains(dis.codes, 16) GROUP BY ALL
@@ -591,7 +592,7 @@ WITH a AS (
   SELECT cr.year, cr.state_name, cr.rural_urban,
     count(*) AS surviving_drivers_08,
     count(*) FILTER (WHERE NOT list_has_all([0, 95, 97, 99], vio.codes)) AS surviving_drivers_08_charged,
-    count(*) FILTER (WHERE vio.codes = [97]) AS surviving_drivers_08_violations_not_reported
+    count(*) FILTER (WHERE list_has_all([97, 99], vio.codes)) AS surviving_drivers_08_charges_unknown
   FROM per_raw p
   JOIN vio ON vio.year = p.data_year AND vio.ST_CASE = p.ST_CASE AND vio.VEH_NO = p.VEH_NO
   JOIN ltools.fars.crashes cr ON cr.crash_key = p.data_year * 1000000 + p.ST_CASE
@@ -604,10 +605,10 @@ SELECT c.state_name || '-' || c.year AS state_year_key, c.*,
   coalesce(kd.killed_drivers, 0) AS killed_drivers, coalesce(kd.killed_drivers_drug_tested, 0) AS killed_drivers_drug_tested,
   coalesce(kd.killed_drivers_drugs_police_reported, 0) AS killed_drivers_drugs_police_reported,
   coalesce(kd.killed_drivers_drug_lab_positive, 0) AS killed_drivers_drug_lab_positive,
-  coalesce(dd.drivers_distraction_rows, 0) AS drivers, coalesce(dd.drivers_distraction_not_reported, 0) AS drivers_distraction_not_reported,
+  coalesce(dd.drivers_distraction_rows, 0) AS drivers, coalesce(dd.drivers_distraction_unknown, 0) AS drivers_distraction_unknown,
   coalesce(dd.drivers_phone_distraction, 0) AS drivers_phone_distraction,
   coalesce(sd.surviving_drivers_08, 0) AS surviving_drivers_08, coalesce(sd.surviving_drivers_08_charged, 0) AS surviving_drivers_08_charged,
-  coalesce(sd.surviving_drivers_08_violations_not_reported, 0) AS surviving_drivers_08_violations_not_reported
+  coalesce(sd.surviving_drivers_08_charges_unknown, 0) AS surviving_drivers_08_charges_unknown
 FROM c
 LEFT JOIN pv USING (year, state_name, rural_urban)
 LEFT JOIN sp USING (year, state_name, rural_urban)
