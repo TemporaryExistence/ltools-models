@@ -439,7 +439,7 @@ export default function Dashboard() {
         </div>
         <p className="act">
           For a hospital deciding whether to chase its penalty: if the gap is inside two chance bands, fund readmission
-          work on the care it avoids ({cost ? money(cost) : "–"} of hospital care each), not to remove the cut. For a hospital association
+          work on the care it avoids ({cost ? money(cost) : "–"} of hospital care each, a cost of care, not the hospital's saving: Medicare pays a readmission as its own stay), not to remove the cut. For a hospital association
           commenting on CMS's next payment rule: ask CMS to penalize only gaps beyond an interval.
           No separate dollar value: these counts move with the chosen cut-off. The money is the excess in panel 1.
         </p>
