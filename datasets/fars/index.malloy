@@ -2972,7 +2972,7 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
       police_reported_drugs_share_of_tested is pick police_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
       lab_positive_share_of_tested is pick lab_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
       surviving_drivers_08
-      charged_share_recorded is pick charged_share when charges_known_share >= 0.8 and c_swing < 0.3 else null
+      charged_share_recorded is pick charged_share when charges_known_share >= 0.8 and (c_swing is null or c_swing < 0.3) else null
     order_by: state_name
   }
 }
