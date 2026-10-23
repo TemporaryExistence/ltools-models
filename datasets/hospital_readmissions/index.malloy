@@ -3,5 +3,5 @@
 
 // The model is in readmissions.malloy; headline.malloy holds the headline question (dashboards/penalty_persistence.malloy).
 import { penalty_persistence } from 'headline.malloy'
-import { hospital_info, hospitals, payment_measures, payment_hospitals, payment_file_pairs, spread_prior, measure_results, penalty_basis, null_selection } from 'readmissions.malloy'
-export { penalty_persistence, hospital_info, hospitals, payment_measures, payment_hospitals, payment_file_pairs, spread_prior, measure_results, penalty_basis, null_selection }
+import { hospital_info, hospitals, payment_measures, payment_hospitals, payment_hospital_row, payment_file_pairs, spread_prior, measure_results, penalty_basis, null_selection } from 'readmissions.malloy'
+export { penalty_persistence, hospital_info, hospitals, payment_measures, payment_hospitals, payment_hospital_row, payment_file_pairs, spread_prior, measure_results, penalty_basis, null_selection }
