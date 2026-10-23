@@ -129,7 +129,7 @@ source: payment_measures is motherduck.table('hospital_readmissions.payment_meas
     // (the hospital's cut x estimated base payments, split by each measure's part; a capped hospital's 3% split in
     // proportion), US dollars a year. Blank for FY 2025 and FY 2027 rows: only the FY 2026 Impact File is loaded, so
     // those years have no base.
-    #" Estimated FY 2026 penalty dollars from these measures.
+    #" Estimated FY 2026 penalty dollars from these measures, US dollars a year; blank, not 0, outside FY 2026.
     #(agent) An estimate: CMS publishes no base payment per hospital, so the base is rebuilt from the FY 2026 IPPS Impact File (cases x case mix x national rate at the wage index); the national total is about $336M, with other reasonable bases $315M to $345M. Blank, not 0, outside FY 2026.
     # currency
     penalty_dollars_est is pick penalty_dollars_part_est.sum() when count() { where: fiscal_year = 2026 } > 0 else null
@@ -164,12 +164,12 @@ source: payment_hospitals is motherduck.table('hospital_readmissions.payment_hos
   dimension:
     // (FY 2026 rows only; blank for FY 2025 and FY 2027, whose Impact Files are not loaded).
     // cut / 100 x estimated base operating DRG payments. Blank outside FY 2026.
-    #" Estimated FY 2026 penalty dollars for the hospital.
+    #" Estimated FY 2026 penalty dollars for the hospital (cut x estimated base); blank outside FY 2026.
     #(agent) An estimate built from the Impact File, not a CMS figure; give it as about, with the national range $315M to $345M.
     penalty_dollars_est_row is payment_reduction_pct / 100 * base_payments_est_fy2026
     // 0 below the cap; blank where there is no base (FY 2025 and FY 2027 rows, whose Impact Files are not loaded).
     // Blank outside FY 2026.
-    #" Estimated FY 2026 dollars the 3% cap forgives: (summed parts - 3) / 100 x estimated base.
+    #" Estimated FY 2026 dollars the 3% cap forgives: (summed parts - 3) / 100 x estimated base; blank outside FY 2026.
     #(agent) At the cap the file shows 3.00% and hides the uncapped sum (`cut_points_uncapped`); the first avoided readmissions there buy nothing until the sum falls below 3.
     forgiven_by_cap_est_row is
       pick (cut_points_uncapped - 3) / 100 * base_payments_est_fy2026 when cut_points_uncapped > 3 and base_payments_est_fy2026 is not null
@@ -212,7 +212,7 @@ source: payment_hospitals is motherduck.table('hospital_readmissions.payment_hos
     #" Hospital-years with an estimated base payment (FY 2026 rows with an Impact File row).
     dollar_rows is count() { where: base_payments_est_fy2026 is not null }
     // Blank for FY 2025 and FY 2027: only the FY 2026 Impact File is loaded.
-    #" Estimated FY 2026 penalty dollars a year (cut x estimated base).
+    #" Estimated FY 2026 penalty dollars a year (cut x estimated base); blank for FY 2025 and FY 2027.
     #(agent) An estimate (Impact File base, about $336M nationally, range $315M to $345M), never a CMS figure, and not the hospital's loss on readmissions alone: the cut applies to every Medicare fee-for-service stay. Blank, not $0, outside FY 2026.
     # currency
     penalty_dollars_est is pick penalty_dollars_est_row.sum() when dollar_rows > 0 else null
@@ -224,7 +224,7 @@ source: payment_hospitals is motherduck.table('hospital_readmissions.payment_hos
     # percent
     payment_weighted_cut is penalty_dollars_est / nullif(base_payments_est, 0)
     // Blank for FY 2025 and FY 2027 (no base loaded for those years).
-    #" Estimated FY 2026 dollars forgiven by the 3% cap.
+    #" Estimated FY 2026 dollars forgiven by the 3% cap; blank for FY 2025 and FY 2027.
     # currency
     forgiven_by_cap_est is pick forgiven_by_cap_est_row.sum() when dollar_rows > 0 else null
     #" Hospitals whose summed parts exceed the 3% cap.
@@ -589,17 +589,17 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
   internal dimension:
     // (predicted - expected rate) / 100. Shrunken scale, not actual readmissions.
     // three years. Shrunken scale, not actual readmissions.
-    #" CMS's estimate of readmissions above (positive) or below (negative) expected for this row.
+    #" CMS's estimate of readmissions above (positive) or below (negative) expected for this row, three years. Shrunken scale, not actual readmissions.
     excess_readmissions_row is eligible_discharges * (predicted_rate_pct - expected_rate_pct) / 100
   dimension:
     // (ERR - peer median) / 100. Shrunken scale, not actual readmissions.
     // Shrunken scale, not actual readmissions.
-    #" CMS's estimate of readmissions above the peer group median for this row, three years.
+    #" CMS's estimate of readmissions above the peer group median for this row, three years. Shrunken scale, not actual readmissions.
     readmissions_above_median_row is eligible_discharges * expected_rate_pct * (excess_readmission_ratio - peer_group_median_err) / 100
   internal dimension:
     // (10 or fewer; no published count is below 11 and none is 0, so zeros sit inside the suppression).
     // or 0 where CMS shows "Too Few to Report".
-    #" Lowest possible actual readmissions for the row: the published count.
+    #" Lowest possible actual readmissions for the row: the published count, or 0 where CMS shows "Too Few to Report".
     readmissions_min is readmissions_published ?? (pick 0 when readmissions_status = 'Too Few to Report' else null)
     #" Highest possible actual readmissions for the row: the published count, or 10 where suppressed.
     readmissions_max is readmissions_published ?? (pick 10 when readmissions_status = 'Too Few to Report' else null)
@@ -751,7 +751,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" Actual readmissions minus the count a peer-median hospital would have, three years.
     observed_above_median_row is readmissions_published - eligible_discharges * expected_rate_pct * peer_group_median_err / 100
     // (1 - p), p = expected rate.
-    #" Binomial variance of the count at an average hospital on this row: eligible discharges x p x.
+    #" Binomial variance of the count at an average hospital on this row: eligible discharges x p x (1 - p).
     expected_var_row is eligible_discharges * (expected_rate_pct / 100) * (1 - expected_rate_pct / 100)
   dimension:
     #" z of the actual count against expected, lower bound (hidden counts at 0).
@@ -875,7 +875,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     weighted_err is predicted_readmissions / nullif(expected_readmissions, 0)
     // rows below count as zero. Shrunken scale: actual counts are larger (see `observed_excess_readmissions`).
     // Shrunken: actual counts are larger.
-    #" CMS's estimate of excess readmissions, three years, rows above expected only.
+    #" CMS's estimate of excess readmissions, three years, rows above expected only. Shrunken: actual counts are larger.
     excess_readmissions is sum(greatest(excess_readmissions_row, 0)) { where: has_err }
     #" CMS's estimate of excess readmissions per year (three-year count / 3).
     excess_readmissions_per_year is excess_readmissions / 3
@@ -889,10 +889,10 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" Actual readmissions above expected, three years, on rows with a published count only.
     observed_excess_readmissions is sum(greatest(observed_excess_row, 0)) { where: has_err and readmissions_published is not null }
     // on penalized rows with a published count, three years.
-    #" Actual readmissions above what a peer-median hospital would have.
+    #" Actual readmissions above what a peer-median hospital would have, penalized rows with a published count, three years.
     observed_above_median is observed_above_median_row.sum() { where: penalty_indicator and readmissions_published is not null }
     // (actual - expected) with suppressed rows at 0. Includes chance variation.
-    #" Actual excess readmissions, three years, lower bound: positive.
+    #" Actual excess readmissions, three years, lower bound (hidden counts at 0). Includes chance variation.
     actual_excess_min is sum(greatest(actual_excess_row_min, 0)) { where: has_err and eligible_discharges is not null }
     #" Actual excess readmissions, three years, upper bound: suppressed rows at 10.
     actual_excess_max is sum(greatest(actual_excess_row_max, 0)) { where: has_err and eligible_discharges is not null }
@@ -916,7 +916,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
   measure:
     // (actual - expected), exact Poisson (column chance_excess, computed in the load SQL).
     // (actual - expected) if every hospital sat exactly at its expected rate.
-    #" Chance-only positive excess per year: the sum of positive.
+    #" Chance-only positive excess per year: positive (actual - expected) summed if every hospital sat at its expected rate.
     chance_excess_per_year is chance_excess.sum() / 3
     #" Chance-only positive excess per year under the same suppression rule as `actual_excess_per_year_min` (counts of 10 or fewer read as 0).
     chance_excess_per_year_min is chance_excess_floor.sum() / 3
@@ -942,12 +942,12 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" High end of the 95% interval for excess beyond chance per year.
     beyond_chance_per_year_high is greatest(beyond_chance_per_year_min + 1.96 * chance_sd_per_year_min, beyond_chance_per_year_max + 1.96 * chance_sd_per_year_max)
     // 2020 dollars at $18,100 per readmission (care used, not a hospital saving).
-    #" Cost of hospital care per year of excess beyond chance, low end.
+    #" Cost of hospital care per year of excess beyond chance, low end (care used, not a hospital saving).
     # currency
     beyond_chance_cost_per_year_low is beyond_chance_per_year_low * 18100
     // (care used, not a hospital saving).
     // 2020 dollars at $18,100 per readmission (care used, not a hospital saving).
-    #" Cost of hospital care per year of excess beyond chance, high end.
+    #" Cost of hospital care per year of excess beyond chance, high end (care used, not a hospital saving).
     # currency
     beyond_chance_cost_per_year_high is beyond_chance_per_year_high * 18100
   internal measure:
@@ -994,7 +994,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     // SD spread_tau, at every volume). Inferred; the binomial floor is a lower bound on it. For a state or hospital
     // subset it gives the national pattern applied to those patients, not a measurement of the subset.
     // Inferred; for a subset it is the national pattern applied, not a measurement.
-    #" Estimated true excess readmissions per year, heart attack, heart failure, pneumonia and COPD.
+    #" Estimated true excess readmissions per year, heart attack, heart failure, pneumonia and COPD. Inferred; for a subset it is the national pattern applied, not a measurement.
     true_excess_per_year is pick sum(expected_count_row * true_excess_factor) { where: has_err and eligible_discharges is not null } / 3 when true_excess_rows > 0 else null
     // (per-measure ends; the joint national interval for the four conditions resampling whole hospitals,
     // queries/r4/vc3.py, 50,000 resamples, is narrower: 4,380 to 6,390). Covers hospital sampling only, not the
@@ -1004,7 +1004,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" High end, sum of each measure's high factor.
     true_excess_per_year_high is pick sum(expected_count_row * true_excess_factor_high) { where: has_err and eligible_discharges is not null } / 3 when true_excess_rows > 0 else null
     // 2020 dollars at $18,100 per readmission (care used, not a hospital saving).
-    #" Cost of hospital care per year of the estimated true excess.
+    #" Cost of hospital care per year of the estimated true excess (care used, not a hospital saving).
     # currency
     true_excess_cost_per_year is true_excess_per_year * 18100
     #" Low end of the cost, same per-measure ends as `true_excess_per_year_low`.
@@ -1015,7 +1015,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     true_excess_cost_per_year_high is true_excess_per_year_high * 18100
     // lower bound (inferred; prior from F3's spread; hip/knee and CABG not estimated).
     // pneumonia and COPD rows, three years.
-    #" Posterior (empirical-Bayes) gap above the peer median on penalized heart attack, heart failure.
+    #" Posterior (empirical-Bayes) gap above the peer median on penalized rows of the four conditions, three years, lower bound. Inferred.
     posterior_gap_min is posterior_gap_row_min.sum() { where: penalty_indicator }
     #" Same, upper bound.
     posterior_gap_max is posterior_gap_row_max.sum() { where: penalty_indicator }
@@ -1023,7 +1023,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     posterior_var_penalized is posterior_var_row.sum() { where: penalty_indicator }
     // lower bound (the base of `real_share_of_gap_at_floor`).
     // pneumonia and COPD rows, three years.
-    #" Actual readmissions above a peer-median hospital's count on penalized heart attack, heart failure.
+    #" Actual readmissions above a peer-median hospital's count on penalized rows of the four conditions, three years, lower bound.
     actual_above_median_covered_min is actual_above_median_row_min.sum() { where: penalty_indicator and posterior_covered }
     #" Same, upper bound (hidden counts at 10).
     actual_above_median_covered_max is actual_above_median_row_max.sum() { where: penalty_indicator and posterior_covered }
@@ -1051,7 +1051,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     // HCUP Statistical Brief #307; a cost of care, not a Medicare payment and not what a hospital saves, since
     // Medicare pays the readmission as its own stay; same figure for every condition).
     // (a floor; care used, not a hospital saving).
-    #" Cost of hospital care of CMS's estimated excess readmissions per year, 2020 dollars at $18,100.
+    #" Cost of hospital care of CMS's estimated excess readmissions per year, 2020 dollars at $18,100 (care used, not a hospital saving).
     # currency
     excess_cost_per_year is excess_readmissions_per_year * 18100
     #" Net readmissions above expected per 1,000 eligible discharges (negative = fewer than expected).
@@ -1061,7 +1061,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     // (shrunken; an actual readmission moves it by 0.16 to 0.86 depending on measure and volume, so actual counts are
     // about 1.2 to 6 times larger; see `actual_above_median_min`/`_max`).
     // Shrunken: actual counts run about 1.2 to 6 times larger.
-    #" CMS's estimate of readmissions above the peer group median on penalized rows, three years.
+    #" CMS's estimate of readmissions above the peer group median on penalized rows, three years. Shrunken: actual counts run about 1.2 to 6 times larger.
     readmissions_above_median is readmissions_above_median_row.sum() { where: penalty_indicator }
     // (CMS risk-adjusted, this hospital's patients).
     #" Predicted readmission rate weighted by discharges, percent.
@@ -1102,7 +1102,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     // heart failure, pneumonia and COPD only; lower bound (hidden counts at 0); blank where the group has none of
     // them. Inferred.
     // four conditions only, lower bound. Inferred.
-    #" Estimated true excess readmissions per year for this group from its own counts (empirical Bayes).
+    #" Estimated true excess readmissions per year for this group from its own counts (empirical Bayes), four conditions, lower bound. Inferred.
     posterior_excess_per_year_min is pick posterior_excess_row_min.sum() / 3 when posterior_rows > 0 else null
     #" Same, upper bound (hidden counts at 10).
     posterior_excess_per_year_max is pick posterior_excess_row_max.sum() / 3 when posterior_rows > 0 else null
@@ -1112,7 +1112,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" High end: upper bound plus 1.96 posterior SDs.
     posterior_excess_per_year_high is pick posterior_excess_row_max.sum() / 3 + 1.96 * sqrt(posterior_excess_var_row_max.sum()) / 3 when posterior_rows > 0 else null
     // 2020 dollars at $18,100 per readmission (care used, not a hospital saving).
-    #" Cost of hospital care per year of that estimate, lower bound.
+    #" Cost of hospital care per year of that estimate, lower bound (care used, not a hospital saving).
     # currency
     posterior_excess_cost_per_year_min is posterior_excess_per_year_min * 18100
     #" Same, upper bound.
@@ -1131,7 +1131,7 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     penalized_again_share is penalized_again_fy2027 / nullif(scored_fy2027, 0)
     // (hidden counts at 0). Inferred.
     // (true rate at the peer median in both periods), lower bound. Inferred.
-    #" Share expected to be penalized again by chance alone with the shared year.
+    #" Share expected to be penalized again by chance alone with the shared year, lower bound. Inferred.
     # percent
     repeat_chance_share_min is repeat_chance_min.avg() { where: penalty_indicator and fy2027.scored }
     #" Same, upper bound (hidden counts at 10).
