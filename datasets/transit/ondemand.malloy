@@ -2,30 +2,8 @@
 // Transit Database ANNUAL tables, report years 2022-2024 (public domain; built by build_ondemand_annual.sql).
 // Kept in its own file so the monthly model (transit.malloy) still compiles if this Parquet is not deployed yet.
 
-#" On-demand transit by agency, type of service and year (FTA National Transit Database annual data, 2022 to 2024,
-#" mode "Demand response"). Use this, not the monthly `transit` source, for any question about MICROTRANSIT or
-#" general-public on-demand service: the monthly file lumps ADA paratransit (mandated rides for riders with
-#" disabilities, booked ahead) together with microtransit (app-booked rides open to anyone). This source carries the
-#" ADA-related trips and sponsored (third-party-paid) trips each agency reports, so the two can be separated.
-#" Start with the views `agencies_scaling_microtransit` (who to call), `microtransit_market_size` (the money),
-#" `mostly_paratransit_agencies` (who looks big but is not a microtransit buyer), `paratransit_without_microtransit`
-#" (large agencies with no general-public on-demand yet) and `rural_dial_a_ride_growth`.
-#" Caveats: (1) general-public HOURS and SPEND are estimates: each row's hours and operating expense are split by its
-#" share of trips that are neither ADA nor sponsored; ADA trips tend to be longer, so this may overstate the
-#" general-public share somewhat. (2) The NTD does not separate app-based microtransit from older general-public
-#" dial-a-ride; both count as general public here. (3) Rural and reduced reporters do not report ADA trips; for them
-#" the split uses the 2024 service-schedule flags (open to the general public vs ADA only), a yes/no, not a share.
-#" (4) Operating expense is what the agency spends to run the service (contractor fees included for purchased
-#" transportation); the NTD does not show software spend. (5) Some agencies re-flag trips between ADA and general
-#" public from year to year (Stark Area RTA, Canton: ADA share 93% in 2022, 11% in 2024); growth measures use
-#" new_service_hours_added, which caps an agency's general-public growth at its total on-demand growth.
-#" Raw columns: trips (all on-demand boardings), ada_trips (ADA-related boardings), sponsored_trips (boardings paid
-#" for by a third party), vehicle_revenue_hours, vehicle_revenue_miles, operating_expenses (US dollars a year), one
-#" row per agency x type_of_service x report_year. Sum across type_of_service for an agency total.
-#" Finding an agency: names are the agency's own (Access Services, METRO, VIA) with its headquarters city, which may
-#" not be the metro a person names ("Access Services in LA" is "Access Services (El Monte, CA)"); search with
-#" agency_label ~ '%Access%' or urban_area ~ '%Los Angeles%'. To narrow any saved view, refine it:
-#" run: ondemand_annual -> agency_detail + { where: agency_label ~ '%Access Services%' }
+#" On-demand transit by agency, type of service and year (FTA National Transit Database annual data, 2022 to 2024, mode "Demand response").
+#(agent) Use this, not the monthly `transit` source, for any question about MICROTRANSIT or general-public on-demand service: the monthly file lumps ADA paratransit (mandated rides for riders with disabilities, booked ahead) together with microtransit (app-booked rides open to anyone). This source carries the ADA-related trips and sponsored (third-party-paid) trips each agency reports, so the two can be separated. Start with the views `agencies_scaling_microtransit` (who to call), `microtransit_market_size` (the money), `mostly_paratransit_agencies` (who looks big but is not a microtransit buyer), `paratransit_without_microtransit` (large agencies with no general-public on-demand yet) and `rural_dial_a_ride_growth`. Caveats: (1) general-public HOURS and SPEND are estimates: each row's hours and operating expense are split by its share of trips that are neither ADA nor sponsored; ADA trips tend to be longer, so this may overstate the general-public share somewhat. (2) The NTD does not separate app-based microtransit from older general-public dial-a-ride; both count as general public here. (3) Rural and reduced reporters do not report ADA trips; for them the split uses the 2024 service-schedule flags (open to the general public vs ADA only), a yes/no, not a share. (4) Operating expense is what the agency spends to run the service (contractor fees included for purchased transportation); the NTD does not show software spend. (5) Some agencies re-flag trips between ADA and general public from year to year (Stark Area RTA, Canton: ADA share 93% in 2022, 11% in 2024); growth measures use new_service_hours_added, which caps an agency's general-public growth at its total on-demand growth. Raw columns: trips (all on-demand boardings), ada_trips (ADA-related boardings), sponsored_trips (boardings paid for by a third party), vehicle_revenue_hours, vehicle_revenue_miles, operating_expenses (US dollars a year), one row per agency x type_of_service x report_year. Sum across type_of_service for an agency total. Finding an agency: names are the agency's own (Access Services, METRO, VIA) with its headquarters city, which may not be the metro a person names ("Access Services in LA" is "Access Services (El Monte, CA)"); search with agency_label ~ '%Access%' or urban_area ~ '%Los Angeles%'. To narrow any saved view, refine it: run: ondemand_annual -> agency_detail + { where: agency_label ~ '%Access Services%' }
 source: ondemand_annual is motherduck.sql("""
   -- ada_basis_mixed: this agency x type of service has hours in 2022 and 2024 (urban reporting) but an ADA trip
   -- breakdown in only one of the two years. Such a series is left out of 2022-2024 growth in BOTH years.

@@ -16,10 +16,8 @@ given:
   # label="Your agency" suggest { source=cost_peer_gaps dimension=agency_name }
   MY_AGENCY :: filter<string> is f'City of Charlotte North Carolina'
 
-#" NTD annual data (Time Series 2.1) with money in 2024 dollars and the cost-per-rider measures. One row per agency x
-#" mode x type of service x report year, 2015 to 2024. cost_per_trip = cost_per_revenue_hour / trips_per_revenue_hour.
-#" Density bands use the agency's primary urbanized area (2020 Census population / land area); rural reporters have none.
-#" Passenger miles are reported by full reporters only, so cost_per_passenger_mile uses only rows that report them.
+#" NTD annual data (Time Series 2.1) with money in 2024 dollars and the cost-per-rider measures.
+#(agent) One row per agency x mode x type of service x report year, 2015 to 2024. cost_per_trip = cost_per_revenue_hour / trips_per_revenue_hour. Density bands use the agency's primary urbanized area (2020 Census population / land area); rural reporters have none. Passenger miles are reported by full reporters only, so cost_per_passenger_mile uses only rows that report them.
 source: ntd_cost is ntd_annual_financials extend {
   dimension:
     #" Mode family: Bus (local bus, bus rapid transit, trolleybus, commuter bus, publico), Demand response (dial-a-ride,
@@ -82,14 +80,8 @@ source: ntd_cost is ntd_annual_financials extend {
   }
 }
 
-#" One row per local-bus agency x year (urban full reporters, 5,000+ bus revenue hours), 2015-2024, 2024 dollars,
-#" compared with its PEER GROUP: same urbanized-area density band and bus size band (revenue hours: under 50k, 50k-200k,
-#" 200k-1M; agencies with 1M+ hours are one group whatever their density). peer_median_* = median of the agencies in the
-#" group. save_to_median = what the agency would save carrying the same riders at the peer-median cost per trip (0 when
-#" at or below it). save_riders_per_hr + save_cost_per_hr = save_to_median split by lever: the gap in riders per hour
-#" (fewer than peers) and the gap in cost per hour (more than peers), shared in proportion to their log gaps.
-#" pt_share = share of bus hours run by a contractor (purchased transportation). GoRaleigh (40007) boardings
-#" from July 2024 can't be compared with earlier years (see transit's counts_not_comparable_with_2019).
+#" One row per local-bus agency x year (urban full reporters, 5,000+ bus revenue hours), 2015-2024, 2024 dollars, compared with its PEER GROUP.
+#(agent) One row per local-bus agency x year (urban full reporters, 5,000+ bus revenue hours), 2015-2024, 2024 dollars, compared with its PEER GROUP: same urbanized-area density band and bus size band (revenue hours: under 50k, 50k-200k, 200k-1M; agencies with 1M+ hours are one group whatever their density). peer_median_* = median of the agencies in the group. save_to_median = what the agency would save carrying the same riders at the peer-median cost per trip (0 when at or below it). save_riders_per_hr + save_cost_per_hr = save_to_median split by lever: the gap in riders per hour (fewer than peers) and the gap in cost per hour (more than peers), shared in proportion to their log gaps. pt_share = share of bus hours run by a contractor (purchased transportation). GoRaleigh (40007) boardings from July 2024 can't be compared with earlier years (see transit's counts_not_comparable_with_2019).
 source: cost_peer_gaps is motherduck.table('transit.cost_peer_gaps') extend {
   dimension:
     #" Agency name with its state.
@@ -145,10 +137,9 @@ source: cost_peer_gaps is motherduck.table('transit.cost_peer_gaps') extend {
   }
 }
 
-#" 2024 local-bus agencies (peer groups of 8+) with their cost quartile WITHIN their peer group (1 = cheapest quarter of
-#" agencies with the same density and size) and what they look like: riders and cost per hour, average speed (miles /
-#" hours), average load (passenger miles / revenue miles), contracted share of hours, demand-response share of the whole
-#" budget, revenue hours and boardings per UZA resident (only where the agency is the UZA's only bus operator), fare per trip.
+#" 2024 local-bus agencies (peer groups of 8+) with their cost quartile WITHIN their peer group (1 = cheapest quarter of agencies with the same density and size) and what they look like: riders and cost per hour.
+#(agent) 2024 local-bus agencies (peer groups of 8+) with their cost quartile WITHIN their peer group (1 = cheapest quarter of agencies with the same density and size) and what they look like: riders and cost per hour, average speed (miles / hours).
+#(agent) 2024 local-bus agencies (peer groups of 8+) with their cost quartile WITHIN their peer group (1 = cheapest quarter of agencies with the same density and size) and what they look like: riders and cost per hour, average speed (miles / hours), average load (passenger miles / revenue miles), contracted share of hours, demand-response share of the whole budget, revenue hours and boardings per UZA resident (only where the agency is the UZA's only bus operator), fare per trip.
 source: cost_agency_profile is motherduck.table('transit.cost_agency_profile') extend {
   measure:
     agencies is count()
@@ -179,12 +170,8 @@ source: cost_agency_profile is motherduck.table('transit.cost_agency_profile') e
   }
 }
 
-#" One row per US bus network redesign 2014-2023 (hand-built list with a source URL each; policy/network_redesigns.csv),
-#" analysed as a matched event study on MONTHLY NTD local-bus data: each agency against the 10 agencies of similar size
-#" (12-month boardings within 3x) whose riders per revenue hour tracked it best 36 to 13 months before launch.
-#" eff_* = change in log gap vs that baseline (0.10 is about +10%): tph = riders per hour, trips = boardings, hours =
-#" revenue hours; y1 = months +6..+17, y2 = +18..+29. pre_check = months -12..-1 (near 0 = good match). placebo_p_y1 =
-#" share of placebo agencies given the same date with an effect at least as large.
+#" One row per US bus network redesign 2014-2023 (hand-built list with a source URL each; policy/network_redesigns.csv), analysed as a matched event study on MONTHLY NTD local-bus data.
+#(agent) One row per US bus network redesign 2014-2023 (hand-built list with a source URL each; policy/network_redesigns.csv), analysed as a matched event study on MONTHLY NTD local-bus data: each agency against the 10 agencies of similar size (12-month boardings within 3x) whose riders per revenue hour tracked it best 36 to 13 months before launch. eff_* = change in log gap vs that baseline (0.10 is about +10%): tph = riders per hour, trips = boardings, hours = revenue hours; y1 = months +6..+17, y2 = +18..+29. pre_check = months -12..-1 (near 0 = good match). placebo_p_y1 = share of placebo agencies given the same date with an effect at least as large.
 source: network_redesign_results is motherduck.table('transit.network_redesign_results') extend {
   measure:
     redesigns is count()
@@ -212,10 +199,9 @@ source: network_redesign_results is motherduck.table('transit.network_redesign_r
   }
 }
 
-#" Agencies whose local bus switched between directly operated and contracted (purchased transportation), 2016-2023,
-#" urban full reporters with 10,000+ bus hours: change from the two years before to years +1..+2 after, minus the
-#" same change at non-switching agencies of similar size and the same starting arrangement (log points).
-#" Several switches are reporting reclassifications of long-standing management contracts, not new contracts.
+#" Agencies whose local bus switched between directly operated and contracted (purchased transportation), 2016-2023, urban full reporters with 10,000+ bus hours.
+#(agent) Agencies whose local bus switched between directly operated and contracted (purchased transportation), 2016-2023, urban full reporters with 10,000+ bus hours: change from the two years before to years +1..+2 after.
+#(agent) Agencies whose local bus switched between directly operated and contracted (purchased transportation), 2016-2023, urban full reporters with 10,000+ bus hours: change from the two years before to years +1..+2 after, minus the same change at non-switching agencies of similar size and the same starting arrangement (log points). Several switches are reporting reclassifications of long-standing management contracts, not new contracts.
 source: contracting_switches is motherduck.table('transit.contracting_switches') extend {
   measure:
     switches is count()
@@ -233,9 +219,8 @@ source: contracting_switches is motherduck.table('transit.contracting_switches')
 #" FTA region (log points; -0.14 is about 13% lower). Weighted by matched pairs.
 source: contracting_cross_section is motherduck.table('transit.contracting_cross_section')
 
-#" General-public on-demand (microtransit-like: 80%+ of on-demand trips neither ADA nor sponsored) against the SAME
-#" agency's local bus, 2024, agencies with 10,000+ on-demand trips. ratio = on-demand cost per trip / bus cost per trip.
-#" breakeven_bus_trips_per_hour = riders per bus hour below which a bus trip costs more than this agency's on-demand trip.
+#" General-public on-demand (microtransit-like: 80%+ of on-demand trips neither ADA nor sponsored) against the SAME agency's local bus, 2024.
+#(agent) General-public on-demand (microtransit-like: 80%+ of on-demand trips neither ADA nor sponsored) against the SAME agency's local bus, 2024, agencies with 10,000+ on-demand trips. ratio = on-demand cost per trip / bus cost per trip. breakeven_bus_trips_per_hour = riders per bus hour below which a bus trip costs more than this agency's on-demand trip.
 source: ondemand_vs_bus is motherduck.table('transit.ondemand_vs_bus') extend {
   measure:
     agencies is count()

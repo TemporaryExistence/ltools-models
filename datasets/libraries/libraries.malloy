@@ -21,9 +21,8 @@ given:
 
 source: branches_table is motherduck.table('libraries.library_branches')
 
-#" FY2023 snapshot: one row per US public library system (fiscal year ending mid-2023 for most states), from the
-#" IMLS Public Libraries Survey. For trends, FY2024 figures and money questions use library_years instead.
-#" Dollars are US dollars as reported. population_served is the library's legal service area, not county residents.
+#" FY2023 snapshot: one row per US public library system (fiscal year ending mid-2023 for most states), from the IMLS Public Libraries Survey.
+#(agent) For trends, FY2024 figures and money questions use library_years instead. Dollars are US dollars as reported. population_served is the library's legal service area, not county residents.
 source: library_systems is motherduck.table('libraries.library_systems') extend {
   primary_key: library_id
   dimension:
@@ -253,12 +252,8 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
 
 }
 
-#" One row per US public library system per fiscal year, FY2018 – FY2024 (IMLS Public Libraries Survey; fiscal
-#" year = the year it ends, mostly June). Use this source for trends, FY2024 figures and money questions.
-#" Money columns (US dollars as reported, not inflation-adjusted): operating_spend (total operating budget),
-#" collection_spend (materials budget = print_spend + econtent_spend + other materials), econtent_spend (e-books,
-#" e-audio, e-video, databases, e-serials), print_spend. Use columns: visits, circulation (all borrowing),
-#" digital_circulation, physical_circulation. population_served is the legal service area.
+#" One row per US public library system per fiscal year, FY2018 – FY2024 (IMLS Public Libraries Survey; fiscal year = the year it ends, mostly June).
+#(agent) Use this source for trends, FY2024 figures and money questions. Money columns (US dollars as reported, not inflation-adjusted): operating_spend (total operating budget), collection_spend (materials budget = print_spend + econtent_spend + other materials), econtent_spend (e-books, e-audio, e-video, databases, e-serials), print_spend. Use columns: visits, circulation (all borrowing), digital_circulation, physical_circulation. population_served is the legal service area.
 #(agent) FY2024 borrowing: 2,791 systems left total borrowing blank (2,781 digital; incl. Chicago, Miami-Dade, Broward
 #(agent) and every system in IA, MA, OR, FL, PR) but nearly all reported physical, and the digital questions changed.
 #(agent) Compare FY2024 borrowing with earlier years on physical_per_capita, comparable systems only
@@ -267,6 +262,7 @@ source: library_years_base is motherduck.table('libraries.library_systems_by_yea
 #(agent) closures from March 2020, 500k FY2024); which year is off is not known, so its change is between -33% (vs
 #(agent) FY2018) and -62% (vs FY2019).
 #(agent) Leave size band '6 Not comparable' out of comparisons (see size_band).
+#(agent) Dataset guide (moved here from the model description, which list_sources shows on every question): Every US public library system and branch in the IMLS Public Libraries Survey: FY2023 in detail, plus every system FY2018 - FY2024 (use, spend, e-content and print budgets) and US Census county population 2010 - 2025, so library use and spend can be read per county resident and against population growth. Built to answer buyer questions: which libraries an e-book vendor should call and how big that opportunity is (econtent_prospects -> econtent_opportunity_headline: $17.2M a year across 1,064 libraries, top 25 hold $10.1M; then libraries_to_pitch_digital_content; high_demand_low_spend is a separate second list, never added to the headline), how big the library e-content market is (library_years -> econtent_market_by_year: $724M in FY2024; not econtent_prospects, which covers benchmarked systems only), which fast-growing counties underfund their libraries and what closing the gap costs (county_spend_gap -> fast_growing_counties_underfunding_libraries), value per dollar by system size (library_years -> systems_by_size_value_per_dollar) and recovery since 2019 (library_years -> library_use_recovery_since_2019). Added 2026-10-07 (library_value.malloy): peer-adjusted value per dollar for every system against its 25 most similar systems (library_value -> system_vs_peers, more_money_more_use, value_bands), what cutting hours or budget loses (library_cut_effects -> effects; library_cut_menu -> menu: visits and checkouts lost per $1M or 1,000 hours, same year and five years; library_hour_events; library_branch_events), and where the next state or federal library dollar does most good (state_aid_targets -> next_dollar_ranking by county; state_aid_fairness: state aid per resident by poverty third; state_library_distance -> by_distance: offline households by miles to a library). Defaults to North Carolina; pick any state. Sources: IMLS Public Libraries Survey FY2018 - FY2024 (public-use files, no licence required) and US Census county population estimates (Vintage 2025 and 2020), downloaded 2026-10-06; FY2024 totals checked against IMLS's own file on 2026-10-07. FY2024 borrowing caveats are on library_years.
 source: library_years is library_years_base extend {
   // Views live here, not on library_years_base, so sources built on the base (econtent_*) don't inherit them.
   #" National trend, one row per fiscal year: use, spend and digital share. FY2024 borrowing and digital share are not
@@ -509,12 +505,9 @@ source: econtent_candidates_base is library_years_base extend {
   }
 }
 
-#" FY2024 library systems that could in principle be benchmarked on digital content (meet the public-library
-#" definition, comparable size band, report borrowing and digital borrowing, spend on their collection), with
-#" benchmark_status saying whether each one was used. One row per system (its FY2024 record). Use who_was_left_out to
-#" see how many were dropped and why. Systems that did not report FY2024 borrowing (2,234, holding $132.6M of FY2024
-#" e-content spend) are filtered out before this source, so who_was_left_out does not list them; they are most of the
-#" difference between the $724M market and the $585.7M benchmarked spend.
+#" FY2024 library systems that could in principle be benchmarked on digital content (meet the public-library definition, comparable size band, report borrowing and digital borrowing, spend on their collection).
+#(agent) FY2024 library systems that could in principle be benchmarked on digital content (meet the public-library definition, comparable size band, report borrowing and digital borrowing, spend on their collection), with benchmark_status saying whether each one was used.
+#(agent) One row per system (its FY2024 record). Use who_was_left_out to see how many were dropped and why. Systems that did not report FY2024 borrowing (2,234, holding $132.6M of FY2024 e-content spend) are filtered out before this source, so who_was_left_out does not list them; they are most of the difference between the $724M market and the $585.7M benchmarked spend.
 source: econtent_candidates is econtent_candidates_base extend {}
 
 // Systems benchmarked on digital content (5,084): FY2024 candidates with more than 0 digital loans, their own
@@ -561,9 +554,8 @@ source: econtent_band_ranks is econtent_systems -> {
     band_count is sum_window(one_system) { partition_by: size_band }
 }
 
-#" Typical (median) FY2022 – FY2024 ratios for each size band: digital share of borrowing, e-content share of the
-#" collection budget, and e-content dollars per digital loan. Median = the middle system, or the average of the two
-#" middle systems when the band has an even count.
+#" Typical (median) FY2022 – FY2024 ratios for each size band: digital share of borrowing, e-content share of the collection budget, and e-content dollars per digital loan.
+#(agent) Median = the middle system, or the average of the two middle systems when the band has an even count.
 source: econtent_band_typical is econtent_band_ranks -> {
   group_by: size_band
   aggregate:
@@ -576,33 +568,7 @@ source: econtent_band_typical is econtent_band_ranks -> {
 }
 
 #" E-content prospects: who to call to sell e-books / e-audio to public libraries, and how many dollars are at stake.
-#" START HERE: view econtent_opportunity_headline (the answer in one row) and libraries_to_pitch_digital_content (the
-#" call list). HEADLINE: 1,064 libraries to pitch, $17.2M a year of e-content spend at the typical share; the top 25
-#" hold $10.1M (59%). The three prospect groups are SEPARATE SEGMENTS - never add them into one total: the $10.6M
-#" 'High demand, low spend' list is a second list, and the $17.0M 'Check for a shared collection' group is a screen
-#" kept out of every headline (the buyer may be a consortium). View econtent_opportunity_by_segment shows them side
-#" by side. ROW GRAIN: one row per benchmarked library system (5,084 systems, one row each). The row is the system's
-#" FY2024 record (its key system_year_id is that FY2024 id), carrying ratios pooled over FY2022 – FY2024; count
-#" systems with benchmarked_systems. MARKET SIZE is not on this source: the US library e-content market is
-#" library_years -> econtent_market_by_year ($724M in FY2024, +73% since FY2018). econtent_spend_fy2024 here is only
-#" the benchmarked systems' FY2024 spend ($585.7M). Of the $138M difference, $132.6M is 2,234 systems that did not
-#" report FY2024 borrowing (they are not in econtent_candidates either); the rest is the groups in who_was_left_out.
-#" Every ratio is averaged over FY2022 – FY2024 (pooled), against the median for its size band. prospect_type: 'Pitch the library' = below typical on BOTH digital borrowing and e-content
-#" share, paying for its own loans; 'High demand, low spend' = below typical on e-content share but at or above
-#" typical on digital borrowing (patrons already borrow digitally; under-spending likely means holds queues - the
-#" classic e-content pitch; NYPL is the largest); 'Check for a shared collection' = below on e-content share and
-#" spending under half the typical e-content dollars per digital loan. That last group is a COST-PER-LOAN SCREEN, not
-#" proof of a consortium: Hennepin County MN does lend through a shared OverDrive collection (Twin Cities Metro
-#" eLibrary), but Wake County NC runs its own OverDrive collection, and cheap loans also come from cost-per-circ
-#" licences or older titles. Check before calling. econtent_gap = average yearly collection budget x (band median
-#" e-content share - own share): extra e-content dollars a year at the typical share. HONEST LIMITS: library
-#" collection budgets are roughly fixed, so this is budget that would SHIFT from print to digital, not new money; for
-#" a vendor it is share-of-wallet. Dollars are as reported, not inflation-adjusted. Peers' share may not be the right
-#" target (some communities prefer print). E-content spend includes databases, and some states buy databases for
-#" their libraries (NC LIVE, GALILEO in GA, TexShare in TX), so libraries there look lower on e-content share. The
-#" incumbent (OverDrive) already sees each library's own spend; the list is most useful to challengers and to
-#" library boards benchmarking themselves. The digital share of borrowing pools FY2022-FY2024, and FY2024's digital
-#" questions changed (whole states left digital blank), so FY2024 digital figures are not comparable with earlier years.
+#(agent) START HERE: view econtent_opportunity_headline (the answer in one row) and libraries_to_pitch_digital_content (the call list). HEADLINE: 1,064 libraries to pitch, $17.2M a year of e-content spend at the typical share; the top 25 hold $10.1M (59%). The three prospect groups are SEPARATE SEGMENTS - never add them into one total: the $10.6M 'High demand, low spend' list is a second list, and the $17.0M 'Check for a shared collection' group is a screen kept out of every headline (the buyer may be a consortium). View econtent_opportunity_by_segment shows them side by side. ROW GRAIN: one row per benchmarked library system (5,084 systems, one row each). The row is the system's FY2024 record (its key system_year_id is that FY2024 id), carrying ratios pooled over FY2022 – FY2024; count systems with benchmarked_systems. MARKET SIZE is not on this source: the US library e-content market is library_years -> econtent_market_by_year ($724M in FY2024, +73% since FY2018). econtent_spend_fy2024 here is only the benchmarked systems' FY2024 spend ($585.7M). Of the $138M difference, $132.6M is 2,234 systems that did not report FY2024 borrowing (they are not in econtent_candidates either); the rest is the groups in who_was_left_out. Every ratio is averaged over FY2022 – FY2024 (pooled), against the median for its size band. prospect_type: 'Pitch the library' = below typical on BOTH digital borrowing and e-content share, paying for its own loans; 'High demand, low spend' = below typical on e-content share but at or above typical on digital borrowing (patrons already borrow digitally; under-spending likely means holds queues - the classic e-content pitch; NYPL is the largest); 'Check for a shared collection' = below on e-content share and spending under half the typical e-content dollars per digital loan. That last group is a COST-PER-LOAN SCREEN, not proof of a consortium: Hennepin County MN does lend through a shared OverDrive collection (Twin Cities Metro eLibrary), but Wake County NC runs its own OverDrive collection, and cheap loans also come from cost-per-circ licences or older titles. Check before calling. econtent_gap = average yearly collection budget x (band median e-content share - own share): extra e-content dollars a year at the typical share. HONEST LIMITS: library collection budgets are roughly fixed, so this is budget that would SHIFT from print to digital, not new money; for a vendor it is share-of-wallet. Dollars are as reported, not inflation-adjusted. Peers' share may not be the right target (some communities prefer print). E-content spend includes databases, and some states buy databases for their libraries (NC LIVE, GALILEO in GA, TexShare in TX), so libraries there look lower on e-content share. The incumbent (OverDrive) already sees each library's own spend; the list is most useful to challengers and to library boards benchmarking themselves. The digital share of borrowing pools FY2022-FY2024, and FY2024's digital questions changed (whole states left digital blank), so FY2024 digital figures are not comparable with earlier years.
 source: econtent_prospects is econtent_systems extend {
   join_one: band_typical is econtent_band_typical with size_band
   dimension:
@@ -884,13 +850,8 @@ source: county_population is motherduck.table('libraries.county_population') ext
   }
 }
 
-#" Library use and spend per COUNTY RESIDENT: one row per library system x county it has a building in x fiscal
-#" year (FY2018 – FY2024). A regional system (several counties) is shared out across its counties by population
-#" (pop_weight), so counties can be compared per resident. Every system in a county counts toward it (e.g. Orange
-#" County NC = Orange County Public Library + Chapel Hill Public Library). Dollars as reported, not inflation-adjusted.
-#" CAVEATS: Durham visits swing between FY2018 and FY2020 (see library_years); FY2024 total and digital borrowing are
-#" blank for many systems (physical is reported).
-#" For "what would it cost to close the gap" questions use county_spend_gap.
+#" Library use and spend per COUNTY RESIDENT: one row per library system x county it has a building in x fiscal year (FY2018 – FY2024).
+#(agent) A regional system (several counties) is shared out across its counties by population (pop_weight), so counties can be compared per resident. Every system in a county counts toward it (e.g. Orange County NC = Orange County Public Library + Chapel Hill Public Library). Dollars as reported, not inflation-adjusted. CAVEATS: Durham visits swing between FY2018 and FY2020 (see library_years); FY2024 total and digital borrowing are blank for many systems (physical is reported). For "what would it cost to close the gap" questions use county_spend_gap.
 source: county_libraries is motherduck.table('libraries.library_counties') extend {
   join_one: sys is library_years on system_year_id = sys.system_year_id
   join_one: cp is county_population on county_year_id = cp.county_year_id
@@ -1020,15 +981,9 @@ source: state_county_median is county_spend_base -> {
   primary_key: state
 }
 
-#" One row per US county (FY2024): library operating spend per resident (all systems serving the county, regional
-#" systems shared by population), population growth 2020 – 2024, visits per resident, and the cost a year to bring
-#" the county up to the MEDIAN county in its own state. Use it for "which growing counties underfund their
-#" libraries" and "what would it cost county X to reach the state median". Example: Johnston County NC spends $8.60
-#" per resident (lowest in NC; the NC median county spends $23.71), so reaching the median would cost about $3.8M a
-#" year on top of the ~$2.1M allocated today (two systems serve it: Public Library of Johnston County & Smithfield,
-#" and Hocutt-Ellington Memorial Library). Dollars as reported, FY2024. HONEST LIMITS: the median is a peer
-#" benchmark, not a standard of need; spend is operating spend (not buildings/capital); counties are compared within
-#" their own state only.
+#" One row per US county (FY2024): library operating spend per resident (all systems serving the county, regional systems shared by population), population growth 2020 – 2024, visits per resident.
+#(agent) One row per US county (FY2024): library operating spend per resident (all systems serving the county, regional systems shared by population), population growth 2020 – 2024, visits per resident, and the cost a year to bring the county up to the MEDIAN county in its own state.
+#(agent) Use it for "which growing counties underfund their libraries" and "what would it cost county X to reach the state median". Example: Johnston County NC spends $8.60 per resident (lowest in NC; the NC median county spends $23.71), so reaching the median would cost about $3.8M a year on top of the ~$2.1M allocated today (two systems serve it: Public Library of Johnston County & Smithfield, and Hocutt-Ellington Memorial Library). Dollars as reported, FY2024. HONEST LIMITS: the median is a peer benchmark, not a standard of need; spend is operating spend (not buildings/capital); counties are compared within their own state only.
 source: county_spend_gap is county_spend_base extend {
   join_one: state_median is state_county_median with state
   dimension:

@@ -15,19 +15,8 @@ given:
   # label="Your library system" suggest { source=library_value dimension=library_name }
   MY_LIBRARY :: filter<string> is f'WAKE COUNTY PUBLIC LIBRARIES'
 
-#" Value per dollar, peer-adjusted. One row per comparable US public library system (FY2024 record, 7,896 systems
-#" serving 1,000+ people; not-comparable entities left out). Outputs per $1,000 of operating spend are pooled over
-#" FY2023-FY2024 (each over the years it was reported with spend): visits, circulation (print + digital), program
-#" attendance, public computer sessions. FY2024 circulation is blank for 2,791 systems (they count on FY2023 only)
-#" and the survey changed its digital questions that year, so the circulation ratio mixes definitions. PEERS: the 25 nearest systems nationally on service population, density,
-#" poverty, children under 18, residents 65+, bachelor's degrees, home broadband and median household income (ACS 2024
-#" 5-year for the legal service area: one Census geography for 88% of systems, else the population-weighted counties
-#" the system's buildings sit in; standardized, equal weights). Each ratio = own / peer median; value_index = geometric
-#" mean of the ratios (1.0 = same as peers, 1.5 = 50% more per dollar). value_index_same_state uses the 10 nearest peers
-#" in the same state (correlation with the national index 0.88). CAVEAT: per-dollar measures favour low spenders:
-#" across peers, use per resident rises with spend per resident (view more_money_more_use), so read value_index next to
-#" spend and use per resident, never alone. Example: Wake County Public Libraries (NC) gets 1.67x its peers per dollar
-#" on $29.66 per resident against a peer median of $47.85.
+#" Value per dollar, peer-adjusted.
+#(agent) One row per comparable US public library system (FY2024 record, 7,896 systems serving 1,000+ people; not-comparable entities left out). Outputs per $1,000 of operating spend are pooled over FY2023-FY2024 (each over the years it was reported with spend): visits, circulation (print + digital), program attendance, public computer sessions. FY2024 circulation is blank for 2,791 systems (they count on FY2023 only) and the survey changed its digital questions that year, so the circulation ratio mixes definitions. PEERS: the 25 nearest systems nationally on service population, density, poverty, children under 18, residents 65+, bachelor's degrees, home broadband and median household income (ACS 2024 5-year for the legal service area: one Census geography for 88% of systems, else the population-weighted counties the system's buildings sit in; standardized, equal weights). Each ratio = own / peer median; value_index = geometric mean of the ratios (1.0 = same as peers, 1.5 = 50% more per dollar). value_index_same_state uses the 10 nearest peers in the same state (correlation with the national index 0.88). CAVEAT: per-dollar measures favour low spenders: across peers, use per resident rises with spend per resident (view more_money_more_use), so read value_index next to spend and use per resident, never alone. Example: Wake County Public Libraries (NC) gets 1.67x its peers per dollar on $29.66 per resident against a peer median of $47.85.
 source: library_value is motherduck.table('libraries.library_value') extend {
   primary_key: library_id
   dimension:
@@ -117,14 +106,9 @@ source: library_value_peers is motherduck.table('libraries.library_value_peers')
     peer_pairs is count()
 }
 
-#" What a cut (or an increase) does: elasticity of visits and borrowing to hours open, operating spend and staff, from
-#" year-over-year changes within each system compared with systems in the same state and year. '1 Same year' uses
-#" FY2018->19, FY2022->23 and FY2023->24 (changes into FY2020-FY2022 are pandemic closures and left out);
-#" '2 Five years (FY2019 to FY2024)' compares each system's FY2024 with its own FY2019. 95% intervals from a 200-draw
-#" bootstrap by library. Answer: 10% fewer hours goes with 2.6% fewer visits the same year (4.5% over five years); 10%
-#" less operating spend with 1.1% fewer visits the same year (2.6% over five). Association, not proven cause.
-#" Borrowing elasticities include FY2023->24 and FY2019->24, which span FY2024's changed digital questions and its
-#" blank borrowing figures, so they mix definitions; the visits elasticities do not.
+#" What a cut (or an increase) does: elasticity of visits and borrowing to hours open, operating spend and staff.
+#(agent) What a cut (or an increase) does: elasticity of visits and borrowing to hours open, operating spend and staff, from year-over-year changes within each system compared with systems in the same state and year.
+#(agent) '1 Same year' uses FY2018->19, FY2022->23 and FY2023->24 (changes into FY2020-FY2022 are pandemic closures and left out); '2 Five years (FY2019 to FY2024)' compares each system's FY2024 with its own FY2019. 95% intervals from a 200-draw bootstrap by library. Answer: 10% fewer hours goes with 2.6% fewer visits the same year (4.5% over five years); 10% less operating spend with 1.1% fewer visits the same year (2.6% over five). Association, not proven cause. Borrowing elasticities include FY2023->24 and FY2019->24, which span FY2024's changed digital questions and its blank borrowing figures, so they mix definitions; the visits elasticities do not.
 source: library_cut_effects is motherduck.table('libraries.library_cut_effects') extend {
   measure:
     #" Number of rows (horizon x lever).
@@ -143,28 +127,24 @@ source: library_cut_elasticities is motherduck.table('libraries.library_cut_elas
     rows is count()
 }
 
-#" Event study: systems that cut (or added) public service hours by 10%+ and 500+ hours in one year (FY2019, FY2023 or
-#" FY2024), against systems in the same state and year whose hours moved under 3%. event_time 0 = the year of the change,
-#" -1 = the year before (a pre-trend check), 1 = the year after. Values are log-point differences against those peers.
-#" Answer: a 10%+ cut (28% fewer hours than peers on average) goes with 6.4% fewer visits that year; no pre-trend (-1.0%).
+#" Event study: systems that cut (or added) public service hours by 10%+ and 500+ hours in one year (FY2019, FY2023 or FY2024).
+#(agent) Event study: systems that cut (or added) public service hours by 10%+ and 500+ hours in one year (FY2019, FY2023 or FY2024), against systems in the same state and year whose hours moved under 3%. event_time 0 = the year of the change.
+#(agent) Event study: systems that cut (or added) public service hours by 10%+ and 500+ hours in one year (FY2019, FY2023 or FY2024), against systems in the same state and year whose hours moved under 3%. event_time 0 = the year of the change, -1 = the year before (a pre-trend check), 1 = the year after. Values are log-point differences against those peers. Answer: a 10%+ cut (28% fewer hours than peers on average) goes with 6.4% fewer visits that year; no pre-trend (-1.0%).
 source: library_hour_events is motherduck.table('libraries.library_hour_events') extend {
   measure:
     rows is count()
 }
 
 #" Systems that closed (or opened) one building in a year, against same state-year systems with no change in buildings.
-#" Answer: closing one of about six buildings shows no measurable loss of system visits (-0.5%, 77 events, wide
-#" interval); opening one goes with +4.9%. Users of a closed branch mostly move to the others.
+#(agent) Answer: closing one of about six buildings shows no measurable loss of system visits (-0.5%, 77 events, wide interval); opening one goes with +4.9%. Users of a closed branch mostly move to the others.
 source: library_branch_events is motherduck.table('libraries.library_branch_events') extend {
   measure:
     rows is count()
 }
 
-#" The cut menu for every FY2024 system: visits and checkouts lost per $1M cut and per 1,000 hours cut, the same year
-#" and over five years, from the system's own visits per hour / per dollar and the national elasticities. Linear: read it
-#" for cuts from a few percent up to about a quarter. Example: Wake County Public Libraries, $1M cut = about 9,100 fewer
-#" visits and 29,000 fewer checkouts the same year, 22,000 visits and 104,000 checkouts a year after five years.
-#" Checkouts lost are blank (not 0) for the systems that left FY2024 total borrowing blank.
+#" The cut menu for every FY2024 system: visits and checkouts lost per $1M cut and per 1,000 hours cut, the same year and over five years.
+#(agent) The cut menu for every FY2024 system: visits and checkouts lost per $1M cut and per 1,000 hours cut, the same year and over five years, from the system's own visits per hour / per dollar and the national elasticities.
+#(agent) Linear: read it for cuts from a few percent up to about a quarter. Example: Wake County Public Libraries, $1M cut = about 9,100 fewer visits and 29,000 fewer checkouts the same year, 22,000 visits and 104,000 checkouts a year after five years. Checkouts lost are blank (not 0) for the systems that left FY2024 total borrowing blank.
 source: library_cut_menu is motherduck.table('libraries.library_cut_menu') extend {
   primary_key: library_id
   measure:
@@ -178,23 +158,8 @@ source: library_cut_menu is motherduck.table('libraries.library_cut_menu') exten
   }
 }
 
-#" State view: one row per county (FY2024, regional systems shared by population). Every factor is a within-state
-#" percentile rank, 0 = lowest priority, 1 = highest. Need and reach: pr_offline (share of households with no internet,
-#" ACS B28002), pr_poverty, pr_distance (share of households 5+ miles, straight line from the tract centre, from a
-#" central library or branch), pr_hour_cut (fall in hours open FY2019 -> FY2024). Money: pr_underfunded (low library
-#" spend per resident), pr_low_capacity (low per-capita income, ACS B19301: the county cannot easily fund it itself),
-#" pr_effort (high local government library money per $1,000 of residents' income: a state dollar adds to local effort
-#" rather than replacing it). priority_score = the equal-weight average of those seven; priority_rank 1 = the first
-#" county for the next dollar. priority_score_v1 / priority_rank_v1 = the original four (offline, poverty, distance,
-#" low spend). Optional factors carried for re-weighting, not in the score: pr_no_vehicle (ACS B25044), pr_low_state_aid
-#" (counties already getting the most state aid per resident rank lower). Tested and left out (little change or
-#" redundant): unemployment, adults without a diploma, median home value, average miles, hours per resident, growth,
-#" under-18 and 65+ shares. suggested_use: 70%+ of offline households within 5 miles of a branch -> lend hotspots and
-#" devices at existing branches; 40-70% -> branches plus outreach; under 40% -> a bookmobile or new service point.
-#" NC: Hyde, Halifax, Sampson, Bladen and Tyrrell rank first (v1: Hyde, Robeson, Sampson, Martin, Bertie).
-#" CAVEATS: straight-line miles understate rural travel; tract estimates are noisy; the weights are a choice, not a
-#" finding; regional systems' money and hours are shared by population, so their counties share effort and hour cuts;
-#" Connecticut counties do not match (planning regions).
+#" State view: one row per county (FY2024, regional systems shared by population).
+#(agent) Every factor is a within-state percentile rank, 0 = lowest priority, 1 = highest. Need and reach: pr_offline (share of households with no internet, ACS B28002), pr_poverty, pr_distance (share of households 5+ miles, straight line from the tract centre, from a central library or branch), pr_hour_cut (fall in hours open FY2019 -> FY2024). Money: pr_underfunded (low library spend per resident), pr_low_capacity (low per-capita income, ACS B19301: the county cannot easily fund it itself), pr_effort (high local government library money per $1,000 of residents' income: a state dollar adds to local effort rather than replacing it). priority_score = the equal-weight average of those seven; priority_rank 1 = the first county for the next dollar. priority_score_v1 / priority_rank_v1 = the original four (offline, poverty, distance, low spend). Optional factors carried for re-weighting, not in the score: pr_no_vehicle (ACS B25044), pr_low_state_aid (counties already getting the most state aid per resident rank lower). Tested and left out (little change or redundant): unemployment, adults without a diploma, median home value, average miles, hours per resident, growth, under-18 and 65+ shares. suggested_use: 70%+ of offline households within 5 miles of a branch -> lend hotspots and devices at existing branches; 40-70% -> branches plus outreach; under 40% -> a bookmobile or new service point. NC: Hyde, Halifax, Sampson, Bladen and Tyrrell rank first (v1: Hyde, Robeson, Sampson, Martin, Bertie). CAVEATS: straight-line miles understate rural travel; tract estimates are noisy; the weights are a choice, not a finding; regional systems' money and hours are shared by population, so their counties share effort and hour cuts; Connecticut counties do not match (planning regions).
 source: state_aid_targets is motherduck.table('libraries.state_aid_targets') extend {
   primary_key: county_fips
   measure:
@@ -224,12 +189,8 @@ source: state_aid_targets is motherduck.table('libraries.state_aid_targets') ext
   }
 }
 
-#" Is state aid following need? Library systems in each state split into thirds of the people served by service-area
-#" poverty; state aid, federal aid (mostly LSTA passed through the state), local funding and spend per resident in each
-#" third (FY2024 as reported). aid_vs_lowest_third = this third's state aid per resident / the lowest-poverty third's.
-#" NC: the highest-poverty third gets 2.07x the state aid per resident ($2.29 vs $1.11), but $8 less local money
-#" ($23.09 vs $31.27). CAVEAT: some states route aid through regional systems or pay it in kind; read small states
-#" (few systems) with care.
+#" Is state aid following need?
+#(agent) Library systems in each state split into thirds of the people served by service-area poverty; state aid, federal aid (mostly LSTA passed through the state), local funding and spend per resident in each third (FY2024 as reported). aid_vs_lowest_third = this third's state aid per resident / the lowest-poverty third's. NC: the highest-poverty third gets 2.07x the state aid per resident ($2.29 vs $1.11), but $8 less local money ($23.09 vs $31.27). CAVEAT: some states route aid through regional systems or pay it in kind; read small states (few systems) with care.
 source: state_aid_fairness is motherduck.table('libraries.state_aid_fairness') extend {
   primary_key: state_third_id
   measure:
@@ -258,8 +219,8 @@ source: state_library_distance is motherduck.table('libraries.state_library_dist
   }
 }
 
-#" Year-by-year check for one system: visits and checkouts per $1,000, visits and spend per resident, FY2018-FY2024,
-#" against the median of its 25 national peers that year (the FY2024 peer set). FY2020-FY2021 are pandemic years.
+#" Year-by-year check for one system: visits and checkouts per $1,000, visits and spend per resident, FY2018-FY2024.
+#(agent) Year-by-year check for one system: visits and checkouts per $1,000, visits and spend per resident, FY2018-FY2024, against the median of its 25 national peers that year (the FY2024 peer set). FY2020-FY2021 are pandemic years.
 source: library_value_trend is motherduck.table('libraries.library_value_trend') extend {
   primary_key: system_year_id
   join_one: lv is library_value with library_id
@@ -267,10 +228,9 @@ source: library_value_trend is motherduck.table('libraries.library_value_trend')
     rows is count()
 }
 
-#" Year-by-year check for the state view: spend, state aid and visits per resident in each state's 10 highest-priority
-#" counties (state_aid_targets, default seven-factor priority_rank) against its other counties, FY2018-FY2024. NC FY2024:
-#" the top 10 get $3.29 of state aid per resident against $1.65 elsewhere, but spend $17.30 per resident against $27.75
-#" and see 0.97 visits per resident against 1.97.
+#" Year-by-year check for the state view: spend, state aid and visits per resident in each state's 10 highest-priority counties (state_aid_targets, default seven-factor priority_rank) against its other counties.
+#(agent) Year-by-year check for the state view: spend, state aid and visits per resident in each state's 10 highest-priority counties (state_aid_targets, default seven-factor priority_rank) against its other counties, FY2018-FY2024.
+#(agent) NC FY2024: the top 10 get $3.29 of state aid per resident against $1.65 elsewhere, but spend $17.30 per resident against $27.75 and see 0.97 visits per resident against 1.97.
 source: state_aid_trend is motherduck.table('libraries.state_aid_trend') extend {
   primary_key: trend_id
   measure:

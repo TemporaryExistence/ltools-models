@@ -333,8 +333,8 @@ source: service_change_path is motherduck.table('transit.service_change_path') e
   }
 }
 
-#" Agency-level 12-month changes (windows ending in August, 2003-2026): elasticity of riders to service hours by mode
-#" family x period, bus type, size band, and cuts vs adds, with 95% agency-cluster bootstrap bands.
+#" Agency-level 12-month changes (windows ending in August, 2003-2026): elasticity of riders to service hours by mode family x period, bus type, size band, and cuts vs adds.
+#(agent) Agency-level 12-month changes (windows ending in August, 2003-2026): elasticity of riders to service hours by mode family x period, bus type, size band, and cuts vs adds, with 95% agency-cluster bootstrap bands.
 source: service_elasticity_panel is motherduck.table('transit.service_elasticity_panel') extend {
   #" Panel elasticities by mode and period, kind of bus system, size band, and cuts vs additions.
   view: by_group is {

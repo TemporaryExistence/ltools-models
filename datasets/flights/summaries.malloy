@@ -13,20 +13,17 @@
 // Refining a view: + { where: ... } keeps the view's ordering; + { limit: N } alone drops it (Malloy 0.2.56, friction
 // log F59), so to shorten a playbook view add order_by as well, e.g. + { order_by: slot_rank limit: 10 }.
 
-#" The airlines in the data (13; regional carriers such as SkyWest and Envoy appear under their own names, not the
-#" mainline brand they fly for), with total scheduled flights May-July 2026 (n_flights). Use for filter values.
-#" Spirit reported only 354 flights in these three months, so its totals are tiny by construction, not a sign of
-#" reliability.
+#" The airlines in the data (13; regional carriers such as SkyWest and Envoy appear under their own names, not the mainline brand they fly for), with total scheduled flights May-July 2026 (n_flights).
+#(agent) Use for filter values. Spirit reported only 354 flights in these three months, so its totals are tiny by construction, not a sign of reliability.
 source: airline_list is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_airlines
 """) extend {
   primary_key: airline
 }
 
-#" One row per US departure airport (354): origin (code), origin_city, origin_state, size_band, departures and
-#" departures_per_day (May-July 2026, 92 days), delay-chain minutes started there (chain_minutes = upper bound,
-#" chain_minutes_next_leg = conservative), and latitude/longitude from OurAirports (public domain). Fast. Use it to
-#" look up an airport's code, size band or city, or to rank airports by the delay-chain cost they start.
+#" One row per US departure airport (354): origin (code), origin_city, origin_state, size_band, departures and departures_per_day (May-July 2026, 92 days).
+#(agent) One row per US departure airport (354): origin (code), origin_city, origin_state, size_band, departures and departures_per_day (May-July 2026, 92 days), delay-chain minutes started there (chain_minutes = upper bound, chain_minutes_next_leg = conservative).
+#(agent) One row per US departure airport (354): origin (code), origin_city, origin_state, size_band, departures and departures_per_day (May-July 2026, 92 days), delay-chain minutes started there (chain_minutes = upper bound, chain_minutes_next_leg = conservative), and latitude/longitude from OurAirports (public domain). Fast. Use it to look up an airport's code, size band or city, or to rank airports by the delay-chain cost they start.
 source: airport_list is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_airports
 """) extend {
@@ -46,11 +43,8 @@ source: airport_list is motherduck.sql("""
 }
 
 #" START HERE for on-time, late-arrival, cancellation and delay-cause questions (fast: 33,542 pre-summed rows).
-#" Every scheduled US domestic flight May-July 2026 (BTS on-time data, 1.85M flights), summed by month, airline,
-#" departure airport (origin, size_band, and airport.* for city/state) and scheduled departure hour (dep_hour, local).
-#" Gives the same numbers as the slow `flights` source. "Late" = arrived 15+ minutes after schedule (the BTS and DOT
-#" definition). Delay causes are the airline-reported BTS categories, in hours. No destination here: for routes use
-#" routes_summary or route_hours_summary.
+#(agent) Every scheduled US domestic flight May-July 2026 (BTS on-time data, 1.85M flights), summed by month, airline, departure airport (origin, size_band, and airport.* for city/state) and scheduled departure hour (dep_hour, local). Gives the same numbers as the slow `flights` source. "Late" = arrived 15+ minutes after schedule (the BTS and DOT definition). Delay causes are the airline-reported BTS categories, in hours. No destination here: for routes use routes_summary or route_hours_summary.
+#(agent) Dataset guide (moved here from the model description, which list_sources shows on every question): HEADLINE ANSWERS (May–July 2026): fly early. Flights scheduled to leave 5–8am arrived late about 10% of the time vs about 38% for 6–9pm departures (at RDU: 5am 7%, 5pm 40%). Fewest late arrivals by airline: Envoy 81.0% on time, Republic 80.6% (but 4.8% cancelled), Alaska 80.1%, Delta 79.5%; Southwest lowest of the big airlines at 69.2%. Tuesday and Saturday were the best days (22% late), Sunday and Monday the worst (27%). This is the best time to FLY (scheduled departure): BTS has no booking dates, so it says nothing about when to buy a ticket. Caveats: one summer season; not adjusted for weather or season; correlation, not cause; "late" = arrived 15+ minutes after schedule, of flights that operated (cancellations are a separate rate). SOURCE: BTS Reporting Carrier On-Time Performance (1987–present), https://www.transtats.bts.gov/Fields.asp?gnoyr_VQ=FGJ, US DOT, public domain; 1,851,282 flights, 1 May–31 July 2026, 354 departure airports, 13 reporting airlines; downloaded 6 October 2026, re-verified 7 October 2026. The view delays_summary -> best_time_to_fly_by_hour gives these answers for any airport and airline. Every scheduled US domestic flight reported to the Bureau of Transportation Statistics (BTS), May–July 2026 (1.85M flights, 92 days): late arrivals (15+ minutes), cancellations and their causes, airports by size, routes, departure hours, and each aircraft followed through its day (tail number) to measure and cost delay chains. STORMS: storm_flights (start here), storm_days, storm_route_pairs compare cancellations on storm days with what the same storm justified (IEM ASOS weather + NOAA Storm Events, 30 busiest airports); views airports_cancelling_more_than_the_storm, airlines_cancelling_more_than_the_storm, regional_vs_mainline_same_route, short_regional_hops_cut_first, cancellations_by_storm_severity, storm_intensity_by_airport. HOW TO ANSWER QUESTIONS: use the fast *_summary sources (pre-summed, same numbers as the slow row-level sources). delays_summary = on-time, cancellations, delay causes; legs_summary = airport comparisons, small airport vs hub, best hour from an airport; routes_summary and route_hours_summary = routes and the best time to fly one; chain_starts_summary = where chains reaching an airport start; chain_slots_summary = the cost of delay chains and which departures to protect. Views named as questions (departures_to_protect_first, morning_departures_to_prioritise, airports_that_start_the_most_costly_chains, delay_chain_cost_by_airline, delay_chain_cost_range, small_airport_vs_hub, best_departure_hour_from_airport, best_time_to_fly_by_hour, airlines_ranked_by_on_time, best_departure_window_by_route, airports_whose_late_starts_reach_here, what_causes_delays, least_reliable_routes, best_day_of_week) answer the common buyer questions and say who acts. Delay-chain cost is always a RANGE: conservative_cost_usd to downstream_cost_usd ($101.3M to $369.9M nationally, May-July 2026). Filter a playbook view with + { where: ... }; to shorten one, use + { order_by: ... limit: N } (a bare + { limit: N } drops the view's ordering). The sources flights, aircraft_legs, delay_chains, chain_slots and airport_sizes are SLOW, for exploring the method only.
 source: delays_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_cube
 """) extend {
@@ -191,8 +185,8 @@ source: delays_summary is motherduck.sql("""
   }
 }
 
-#" Flights per calendar day, airline and departure airport (122,552 rows; fast), for day-by-day trends, day-of-week
-#" questions (weekday) and finding bad days (storms, outages). Columns: flight_date, month_label, carrier, airline, origin, size_band.
+#" Flights per calendar day, airline and departure airport (122,552 rows; fast), for day-by-day trends, day-of-week questions (weekday) and finding bad days (storms, outages).
+#(agent) Columns: flight_date, month_label, carrier, airline, origin, size_band.
 source: daily_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_daily
 """) extend {
@@ -246,10 +240,7 @@ source: month_list is daily_summary -> {
 }
 
 #" START HERE for airport comparisons, small airport vs hub, and the best hour to depart from an airport (fast).
-#" The same month x airline x departure airport x scheduled hour rows as delays_summary, with the aircraft-day
-#" measures: each flight is placed in its aircraft's day (tail number), so it knows whether it is the aircraft's first
-#" flight of the day and whether the previous flight was late. late_rate here counts flights that operated and have a
-#" tail number (within 0.1 point of delays_summary). Same numbers as the slow `aircraft_legs` source.
+#(agent) The same month x airline x departure airport x scheduled hour rows as delays_summary, with the aircraft-day measures: each flight is placed in its aircraft's day (tail number), so it knows whether it is the aircraft's first flight of the day and whether the previous flight was late. late_rate here counts flights that operated and have a tail number (within 0.1 point of delays_summary). Same numbers as the slow `aircraft_legs` source.
 source: legs_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_cube
 """) extend {
@@ -342,10 +333,9 @@ source: legs_summary is motherduck.sql("""
   }
 }
 
-#" How delay carries through an aircraft's day (fast, 52,887 rows): flights by leg of the aircraft's day (leg 1 = first
-#" flight, 7 = seventh or later) and, for later flights, whether the aircraft's first flight (day_start) and previous
-#" flight (inbound) that day were late. Answers "how much more likely is a later flight to be late when the morning
-#" flight was late?" Columns also include month_label, airline, origin, size_band.
+#" How delay carries through an aircraft's day (fast, 52,887 rows): flights by leg of the aircraft's day (leg 1 = first flight, 7 = seventh or later) and, for later flights.
+#(agent) How delay carries through an aircraft's day (fast, 52,887 rows): flights by leg of the aircraft's day (leg 1 = first flight, 7 = seventh or later) and, for later flights, whether the aircraft's first flight (day_start) and previous flight (inbound) that day were late.
+#(agent) Answers "how much more likely is a later flight to be late when the morning flight was late?" Columns also include month_label, airline, origin, size_band.
 source: legs_detail is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_legs
 """) extend {
@@ -393,9 +383,8 @@ source: legs_detail is motherduck.sql("""
   }
 }
 
-#" START HERE for route questions (fast, 28,966 rows): flights per route ("RDU → ATL"; origin, dest), airline and
-#" month. late_rate = share of operated flights arriving 15+ minutes late. For the best hour to fly a route, use
-#" route_hours_summary.
+#" START HERE for route questions (fast, 28,966 rows): flights per route ("RDU → ATL"; origin, dest).
+#(agent) START HERE for route questions (fast, 28,966 rows): flights per route ("RDU → ATL"; origin, dest), airline and month. late_rate = share of operated flights arriving 15+ minutes late. For the best hour to fly a route, use route_hours_summary.
 source: routes_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_routes
 """) extend {
@@ -443,9 +432,8 @@ source: routes_summary is motherduck.sql("""
   }
 }
 
-#" Later flights of the day by the airport the aircraft flew in from (prev_origin), at each departure airport
-#" (origin) (fast, 32,548 rows): how often the inbound aircraft was late (inbound_late_rate) and how often the flight
-#" then left late. Answers "which inbound airports bring us late aircraft?"
+#" Later flights of the day by the airport the aircraft flew in from (prev_origin), at each departure airport (origin) (fast, 32,548 rows).
+#(agent) Later flights of the day by the airport the aircraft flew in from (prev_origin), at each departure airport (origin) (fast, 32,548 rows): how often the inbound aircraft was late (inbound_late_rate) and how often the flight then left late. Answers "which inbound airports bring us late aircraft?"
 source: inbound_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_inbound
 """) extend {
@@ -469,13 +457,8 @@ source: inbound_summary is motherduck.sql("""
   }
 }
 
-#" Where delay chains that reach an airport START (fast, 39,986 rows). Each row counts late flights departing an
-#" airport (origin = the airport AFFECTED) that were a later flight of an aircraft whose first flight of the day
-#" left from ANOTHER airport (first_origin = where the chain STARTED) and arrived late. To answer "which airports
-#" start the chains that reach RDU", filter origin = 'RDU' and rank first_origin (view
-#" airports_whose_late_starts_reach_here). The airline column is the airline of the late flight at the affected
-#" airport: add it to group_by to see whose network carries the chains in. Counts only; for dollar costs by starting
-#" airport use chain_slots_summary.
+#" Where delay chains that reach an airport START (fast, 39,986 rows).
+#(agent) Each row counts late flights departing an airport (origin = the airport AFFECTED) that were a later flight of an aircraft whose first flight of the day left from ANOTHER airport (first_origin = where the chain STARTED) and arrived late. To answer "which airports start the chains that reach RDU", filter origin = 'RDU' and rank first_origin (view airports_whose_late_starts_reach_here). The airline column is the airline of the late flight at the affected airport: add it to group_by to see whose network carries the chains in. Counts only; for dollar costs by starting airport use chain_slots_summary.
 source: chain_starts_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_chain_starts
 """) extend {
@@ -508,19 +491,9 @@ source: chain_starts_summary is motherduck.sql("""
   }
 }
 
-#" START HERE for the cost of delay chains: which departures to protect, which airports and airlines they cost, and
-#" what it is worth (fast, 4,497 rows; identical numbers to the slow `chain_slots` source).
-#" A delay chain: an aircraft's first flight of the day arrives 15+ minutes late and its later flights that day log
-#" "late aircraft" delay (BTS cause code). One row per SLOT = airline x first-flight departure airport (origin) x
-#" scheduled departure hour (dep_hour, local) that started at least one chain, May-July 2026 (92 days).
-#" COST IS A RANGE, ALWAYS QUOTE BOTH ENDS: conservative_cost_usd (only the NEXT flight's late-aircraft minutes, at
-#" $69.07 a minute = A4A 2025 block-minute cost less fuel) to downstream_cost_usd (UPPER BOUND: every later flight's
-#" minutes, at $100.76 a minute = A4A 2024 block-minute cost). Nationally $101.3M to $369.9M over the three months.
-#" The two ends use different A4A years; at the 2025 block-minute cost ($98.41) the upper bound would be $361.2M.
-#" Caveats: attribution, not proof; storms delay first and later flights together, so not every minute was
-#" avoidable. Legs are ordered by LOCAL scheduled departure; ordering by UTC changes the first flight on 319 of
-#" 411,140 aircraft-days and moves the national range by under 1% ($101.2M to $369.0M). Airlines see their own propagation in more detail; this public view's value is that it covers every
-#" airline at every airport, so airports, smaller carriers benchmarking peers, and corporate travel buyers can use it.
+#" START HERE for the cost of delay chains: which departures to protect, which airports and airlines they cost.
+#(agent) START HERE for the cost of delay chains: which departures to protect, which airports and airlines they cost, and what it is worth (fast, 4,497 rows; identical numbers to the slow `chain_slots` source).
+#(agent) A delay chain: an aircraft's first flight of the day arrives 15+ minutes late and its later flights that day log "late aircraft" delay (BTS cause code). One row per SLOT = airline x first-flight departure airport (origin) x scheduled departure hour (dep_hour, local) that started at least one chain, May-July 2026 (92 days). COST IS A RANGE, ALWAYS QUOTE BOTH ENDS: conservative_cost_usd (only the NEXT flight's late-aircraft minutes, at $69.07 a minute = A4A 2025 block-minute cost less fuel) to downstream_cost_usd (UPPER BOUND: every later flight's minutes, at $100.76 a minute = A4A 2024 block-minute cost). Nationally $101.3M to $369.9M over the three months. The two ends use different A4A years; at the 2025 block-minute cost ($98.41) the upper bound would be $361.2M. Caveats: attribution, not proof; storms delay first and later flights together, so not every minute was avoidable. Legs are ordered by LOCAL scheduled departure; ordering by UTC changes the first flight on 319 of 411,140 aircraft-days and moves the national range by under 1% ($101.2M to $369.0M). Airlines see their own propagation in more detail; this public view's value is that it covers every airline at every airport, so airports, smaller carriers benchmarking peers, and corporate travel buyers can use it.
 source: chain_slots_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.chain_slots
 """) extend {
@@ -676,9 +649,8 @@ source: chain_slots_summary is motherduck.sql("""
   }
 }
 
-#" START HERE for "what time should I fly route X?" (fast, ~115k rows): flights per route, airline, month and
-#" scheduled departure hour (dep_hour, local). Columns: month_label, carrier, airline, origin, dest, route
-#" ("RDU → ATL"), size_band, dep_hour. late_rate = share of operated flights arriving 15+ minutes late.
+#" START HERE for "what time should I fly route X?" (fast, ~115k rows): flights per route, airline, month and scheduled departure hour (dep_hour, local).
+#(agent) Columns: month_label, carrier, airline, origin, dest, route ("RDU → ATL"), size_band, dep_hour. late_rate = share of operated flights arriving 15+ minutes late.
 source: route_hours_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.flights_route_hours
 """) extend {

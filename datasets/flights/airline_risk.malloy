@@ -3,22 +3,14 @@
 // loaded into MotherDuck ltools.flights.ar_*. Delay-chain cost comes from ledger.malloy (chain_slot_ledger).
 import { chain_slot_ledger } from 'ledger.malloy'
 
-#" July weather split for each flight on DOT's clock: of its July arrivals 30+ min late (or cancelled/diverted), how
-#" many fell on a weather day (any weather band at either end, the disruption ledger's rule). Built by
-#" airline_risk/build_ar_weather.sql.
+#" July weather split for each flight on DOT's clock: of its July arrivals 30+ min late (or cancelled/diverted).
+#(agent) July weather split for each flight on DOT's clock: of its July arrivals 30+ min late (or cancelled/diverted), how many fell on a weather day (any weather band at either end, the disruption ledger's rule). Built by airline_risk/build_ar_weather.sql.
 source: ar_weather is motherduck.sql("""
   SELECT * FROM ltools.flights.ar_weather
 """)
 
-#" START HERE for "which of our flights are CHRONICALLY DELAYED under DOT's rule?" One row per run of consecutive
-#" months in which one flight met DOT's monthly test, Feb-Jul 2026 (BTS reporting carriers). Rule, 14 CFR
-#" 399.81(c): a domestic flight operated 10+ times a month that arrives more than 30 minutes late (cancelled flights
-#" count as late) more than 50% of the time that month; holding it out for MORE THAN FOUR consecutive months is an
-#" unfair or deceptive practice. "One flight" = all of a carrier's flights in the market whose scheduled departure is
-#" within 30 minutes of the most frequent time (399.81(c)(3)); here the market is the airport pair, and diverted
-#" flights count as late. status: "1 Chronic 5+ months, still running" (in breach), "2 At risk: 3-4 months running"
-#" (ending July: a 5th month in August or September is a breach), "3 Watch: 1-2 months", "4 Chronic 5+ months,
-#" ended", "5 Ended before 5 months". started_in_first_month = the run starts in February, so it may be longer.
+#" START HERE for "which of our flights are CHRONICALLY DELAYED under DOT's rule?" One row per run of consecutive months in which one flight met DOT's monthly test, Feb-Jul 2026 (BTS reporting carriers).
+#(agent) Rule, 14 CFR 399.81(c): a domestic flight operated 10+ times a month that arrives more than 30 minutes late (cancelled flights count as late) more than 50% of the time that month; holding it out for MORE THAN FOUR consecutive months is an unfair or deceptive practice. "One flight" = all of a carrier's flights in the market whose scheduled departure is within 30 minutes of the most frequent time (399.81(c)(3)); here the market is the airport pair, and diverted flights count as late. status: "1 Chronic 5+ months, still running" (in breach), "2 At risk: 3-4 months running" (ending July: a 5th month in August or September is a breach), "3 Watch: 1-2 months", "4 Chronic 5+ months, ended", "5 Ended before 5 months". started_in_first_month = the run starts in February, so it may be longer.
 source: chronic_flights is motherduck.sql("""
   SELECT * FROM ltools.flights.ar_chronic_flights
 """) extend {
@@ -89,9 +81,8 @@ source: chronic_flights is motherduck.sql("""
   }
 }
 
-#" Every grouped flight-month with 10+ operations, Feb-Jul 2026 (same 399.81(c)(3) grouping as chronic_flights):
-#" month_num, ops, late30 (arrived 30+ minutes late, cancelled or diverted), late30_share, meets (passes the monthly
-#" test) and streak (consecutive chronic months up to this one). Use it for the monthly trend or one flight's history.
+#" Every grouped flight-month with 10+ operations, Feb-Jul 2026 (same 399.81(c)(3) grouping as chronic_flights): month_num, ops, late30 (arrived 30+ minutes late, cancelled or diverted), late30_share.
+#(agent) Every grouped flight-month with 10+ operations, Feb-Jul 2026 (same 399.81(c)(3) grouping as chronic_flights): month_num, ops, late30 (arrived 30+ minutes late, cancelled or diverted), late30_share, meets (passes the monthly test) and streak (consecutive chronic months up to this one). Use it for the monthly trend or one flight's history.
 source: chronic_months is motherduck.sql("""
   SELECT * FROM ltools.flights.ar_chronic_months
 """) extend {
@@ -125,10 +116,9 @@ source: chronic_months is motherduck.sql("""
   }
 }
 
-#" History of every flight at risk in July (3-4 chronic months running), Feb-Jul 2026: one row per flight x month with
-#" ops, late30_share (arrived 30+ minutes late, cancelled or diverted) and meets (passed DOT's monthly test). The run's
-#" months follow the linked flight; earlier months use the same market's flight nearest in time (within 45 minutes).
-#" The line to watch: late30_share must fall to 50% or below in August to stop the clock.
+#" History of every flight at risk in July (3-4 chronic months running), Feb-Jul 2026: one row per flight x month with ops.
+#(agent) History of every flight at risk in July (3-4 chronic months running), Feb-Jul 2026: one row per flight x month with ops, late30_share (arrived 30+ minutes late, cancelled or diverted) and meets (passed DOT's monthly test).
+#(agent) The run's months follow the linked flight; earlier months use the same market's flight nearest in time (within 45 minutes). The line to watch: late30_share must fall to 50% or below in August to stop the clock.
 source: at_risk_history is motherduck.sql("""
   SELECT * FROM ltools.flights.ar_watch
 """) extend {
@@ -147,15 +137,7 @@ source: at_risk_history is motherduck.sql("""
 }
 
 #" START HERE for "what could DOT's automatic-refund rule cost us?" One row per airline x route, May-July 2026.
-#" Rule, 14 CFR 260 (DOT final rule April 2024, in force 28 October 2024): a passenger on a cancelled flight, or one
-#" whose domestic arrival is 3+ hours after the original schedule, who does not accept the alternative is owed an
-#" automatic cash refund. affected = cancellations + operated flights arriving 180+ minutes late (diversions excluded).
-#" Exposure = affected flights x passengers per flight x one-way fare. Passengers per flight = seats (70 regional,
-#" 160 mainline; an assumption) x load factor (0.80 low; 0.92 high, the value that makes June 2026 reporting-carrier
-#" flights carry all 75.5M US domestic passengers BTS counted). Fare = DOT Consumer Airfare Report Table 1a (built from
-#" the DB1B 10%/40% ticket sample), 2026 Q1 airport pair (2025 Q2 when missing): this airline's fare when it is the
-#" largest or lowest-fare carrier on the pair, else the pair average, else the national average ($258.93). A CEILING:
-#" it assumes every affected passenger takes the refund; most accept rebooking.
+#(agent) Rule, 14 CFR 260 (DOT final rule April 2024, in force 28 October 2024): a passenger on a cancelled flight, or one whose domestic arrival is 3+ hours after the original schedule, who does not accept the alternative is owed an automatic cash refund. affected = cancellations + operated flights arriving 180+ minutes late (diversions excluded). Exposure = affected flights x passengers per flight x one-way fare. Passengers per flight = seats (70 regional, 160 mainline; an assumption) x load factor (0.80 low; 0.92 high, the value that makes June 2026 reporting-carrier flights carry all 75.5M US domestic passengers BTS counted). Fare = DOT Consumer Airfare Report Table 1a (built from the DB1B 10%/40% ticket sample), 2026 Q1 airport pair (2025 Q2 when missing): this airline's fare when it is the largest or lowest-fare carrier on the pair, else the pair average, else the national average ($258.93). A CEILING: it assumes every affected passenger takes the refund; most accept rebooking.
 source: refund_exposure is motherduck.sql("""
   SELECT * FROM ltools.flights.ar_refund
 """) extend {
@@ -213,11 +195,9 @@ source: refund_exposure is motherduck.sql("""
   }
 }
 
-#" START HERE for "where does schedule buffer or a spare aircraft save the most money?" The delay-chain slots of
-#" chain_slot_ledger (airline x first-flight airport x scheduled hour, 100 busiest airports, May-July 2026) ranked by
-#" their CONTROLLABLE chain cost: the part not explained by weather (clear days + airport-wide excess on weather
-#" days). Chain cost = late-aircraft minutes on the same aircraft's later flights that day after a late first flight:
-#" low = next flight only x $69.07, high = every later flight x $100.76. Attribution, not proof.
+#" START HERE for "where does schedule buffer or a spare aircraft save the most money?"
+#(agent) The delay-chain slots of chain_slot_ledger (airline x first-flight airport x scheduled hour, 100 busiest airports, May-July 2026) ranked by their CONTROLLABLE chain cost.
+#(agent) START HERE for "where does schedule buffer or a spare aircraft save the most money?" The delay-chain slots of chain_slot_ledger (airline x first-flight airport x scheduled hour, 100 busiest airports, May-July 2026) ranked by their CONTROLLABLE chain cost: the part not explained by weather (clear days + airport-wide excess on weather days). Chain cost = late-aircraft minutes on the same aircraft's later flights that day after a late first flight: low = next flight only x $69.07, high = every later flight x $100.76. Attribution, not proof.
 source: buffer_slots is chain_slot_ledger extend {
   #" PLAYBOOK "Which first departures should get turn buffer or a spare aircraft first?" Ranked by controllable
   #" chain cost (high prices); filter by airline and origin.

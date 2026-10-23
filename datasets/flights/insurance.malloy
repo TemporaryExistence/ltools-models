@@ -7,12 +7,8 @@
 // cancellation, $100 when the flight arrives 3+ h late, another $100 at 6+ h. Expected payout = 200 x P(cancel) +
 // 100 x P(3h) + 100 x P(6h).
 
-#" PRICING TABLE: one row per airline x departure airport x departure-hour band x month (May-July 2026, all US
-#" domestic flights, 16,659 cells). Rates are SHRUNK toward broader cells so thin cells borrow strength: airport
-#" toward the national rate (500 pseudo-flights), airport x hour band toward the airport rate x the national hour
-#" shape (1,500), the cell toward its airport x hour band rate x the airline's factor (500). *_lo / *_hi = 90%
-#" credible interval (Beta posterior, normal approximation). raw_* = the cell's own observed rate. thin = under 100
-#" flights in the cell that month. price_index = the cell's expected payout / the national average that month.
+#" PRICING TABLE: one row per airline x departure airport x departure-hour band x month (May-July 2026, all US domestic flights, 16,659 cells).
+#(agent) Rates are SHRUNK toward broader cells so thin cells borrow strength: airport toward the national rate (500 pseudo-flights), airport x hour band toward the airport rate x the national hour shape (1,500), the cell toward its airport x hour band rate x the airline's factor (500). *_lo / *_hi = 90% credible interval (Beta posterior, normal approximation). raw_* = the cell's own observed rate. thin = under 100 flights in the cell that month. price_index = the cell's expected payout / the national average that month.
 source: insurance_pricing is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_cells
 """) extend {
@@ -120,10 +116,8 @@ source: insurance_pricing is motherduck.sql("""
   }
 }
 
-#" WEATHER: flights from the 99 airports with weather observations, summed by departure airport, weather group at
-#" either end that day (wx_group: "0 None", "1 Minor (no thunder)", "2 Moderate thunder", "3 Storm (severe or
-#" extreme)" = Severe or Extreme band at the departure OR arrival airport, storm-study rules), each end's band,
-#" hour band and month. paid = the sample product's payouts.
+#" WEATHER: flights from the 99 airports with weather observations, summed by departure airport.
+#(agent) WEATHER: flights from the 99 airports with weather observations, summed by departure airport, weather group at either end that day (wx_group: "0 None", "1 Minor (no thunder)", "2 Moderate thunder", "3 Storm (severe or extreme)" = Severe or Extreme band at the departure OR arrival airport, storm-study rules), each end's band, hour band and month. paid = the sample product's payouts.
 source: insurance_weather is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_weather
 """) extend {
@@ -188,9 +182,9 @@ source: insurance_weather is motherduck.sql("""
   }
 }
 
-#" Per departure airport: storm days (Severe/Extreme at the DEPARTURE airport) vs non-storm days. expected_paid = what
-#" the same weather (band at both ends, same hour band) paid per flight at the OTHER airports, times this airport's
-#" flights. Ratio above 1 = this airport pays out more than its weather justifies.
+#" Per departure airport: storm days (Severe/Extreme at the DEPARTURE airport) vs non-storm days. expected_paid = what the same weather (band at both ends, same hour band) paid per flight at the OTHER airports.
+#(agent) Per departure airport: storm days (Severe/Extreme at the DEPARTURE airport) vs non-storm days. expected_paid = what the same weather (band at both ends, same hour band) paid per flight at the OTHER airports, times this airport's flights.
+#(agent) Ratio above 1 = this airport pays out more than its weather justifies.
 source: insurance_airport_storm is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_airport_storm
 """) extend {
@@ -220,10 +214,7 @@ source: insurance_airport_storm is motherduck.sql("""
 }
 
 #" ADVERSE SELECTION: what a buyer could know before buying, and how much more the flagged flights paid out.
-#" One row per signal x departure airport x flagged (true/false). Signals: the NWS Storm Prediction Center convective
-#" outlook (Day 2 = issued the day before; Day 1 = issued overnight, about 1am Central) with a marginal-or-higher
-#" severe-thunderstorm risk at the departure or arrival airport, and thunder actually reported (METAR) at either end in
-#" the 3 hours ending N hours before scheduled departure. lead_hours = how far ahead the buyer could know it.
+#(agent) One row per signal x departure airport x flagged (true/false). Signals: the NWS Storm Prediction Center convective outlook (Day 2 = issued the day before; Day 1 = issued overnight, about 1am Central) with a marginal-or-higher severe-thunderstorm risk at the departure or arrival airport, and thunder actually reported (METAR) at either end in the 3 hours ending N hours before scheduled departure. lead_hours = how far ahead the buyer could know it.
 source: insurance_signals is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_signals
 """) extend {
@@ -258,22 +249,20 @@ source: insurance_signals is motherduck.sql("""
   }
 }
 
-#" OUT-OF-SAMPLE TEST: priced on May-June, tested on every July 2026 flight (631,970). Brier score (mean squared
-#" error of the predicted probability; lower is better) for the naive single national rate, the pricing model, the
-#" model x that day's weather uplift (weather known after the fact), and the model re-levelled to July's overall
-#" rate. skill = 1 - Brier / naive Brier.
+#" OUT-OF-SAMPLE TEST: priced on May-June, tested on every July 2026 flight (631,970).
+#(agent) Brier score (mean squared error of the predicted probability; lower is better) for the naive single national rate, the pricing model, the model x that day's weather uplift (weather known after the fact), and the model re-levelled to July's overall rate. skill = 1 - Brier / naive Brier.
 source: insurance_validation is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_validation
 """)
 
-#" July flights in ten equal groups by the model's predicted payout (priced on May-June): predicted vs actual payout
-#" per policy, and the naive single price. predicted_payout_relevelled = the model scaled to July's overall level.
+#" July flights in ten equal groups by the model's predicted payout (priced on May-June): predicted vs actual payout per policy.
+#(agent) July flights in ten equal groups by the model's predicted payout (priced on May-June): predicted vs actual payout per policy, and the naive single price. predicted_payout_relevelled = the model scaled to July's overall level.
 source: insurance_calibration is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_calibration
 """)
 
-#" July 2026 cells (airline x airport x hour band): what they paid per policy vs the naive single price (the May-June
-#" national average, $4.83) and the model's May-June price. naive_loss_ratio above 1 = the single price lost money.
+#" July 2026 cells (airline x airport x hour band).
+#(agent) July 2026 cells (airline x airport x hour band): what they paid per policy vs the naive single price (the May-June national average, $4.83) and the model's May-June price. naive_loss_ratio above 1 = the single price lost money.
 source: insurance_july_cells is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_july_cells
 """) extend {
@@ -333,8 +322,8 @@ source: insurance_july_cells is motherduck.sql("""
   }
 }
 
-#" July test with both prices scaled to July's overall level: share of July payouts in cells the price missed by
-#" 1.5x or more, and dollars misallocated across cells (sum of |paid - price| / paid). Cells with 100+ July flights.
+#" July test with both prices scaled to July's overall level: share of July payouts in cells the price missed by 1.5x or more.
+#(agent) July test with both prices scaled to July's overall level: share of July payouts in cells the price missed by 1.5x or more, and dollars misallocated across cells (sum of |paid - price| / paid). Cells with 100+ July flights.
 source: insurance_july_summary is motherduck.sql("""
   SELECT * FROM ltools.flights.ins_july_summary
 """)

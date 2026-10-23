@@ -87,18 +87,15 @@ source: flights_base is motherduck.sql("""
     route_count is count(route)
 }
 
-#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
-#" method only; for answers use airport_list.
-#" Departures per origin airport over the whole period (May–July 2026, 92 days); drives the size band.
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance).
+#(agent) For exploring the method only; for answers use airport_list. Departures per origin airport over the whole period (May–July 2026, 92 days); drives the size band.
 source: airport_sizes is flights_base -> {
   group_by: origin
   aggregate: departures is count()
 }
 
-#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
-#" method only; for answers use delays_summary, legs_summary, routes_summary or route_hours_summary
-#" (same numbers).
-#" One row per scheduled US domestic flight. Delays are in minutes; negative = early.
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance).
+#(agent) For exploring the method only; for answers use delays_summary, legs_summary, routes_summary or route_hours_summary (same numbers). One row per scheduled US domestic flight. Delays are in minutes; negative = early.
 source: flights is flights_base extend {
   join_one: origin_size is airport_sizes on origin = origin_size.origin
 
@@ -187,14 +184,8 @@ source: flights is flights_base extend {
   }
 }
 
-#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
-#" method only; for answers use legs_summary, legs_detail, inbound_summary or chain_starts_summary
-#" (same numbers).
-#" Every flight with its place in its aircraft's day: flights are grouped by tail number and date and ordered by
-#" scheduled departure (local time), so each flight knows its leg number, the previous flight of the same aircraft,
-#" and how the aircraft's first flight of the day went. Cancelled and diverted flights are kept (for cancel rate) but
-#" sit in their own partition, so a chain only links flights that operated. Flights with no tail number (3,216,
-#" almost all cancelled) carry no chain fields.
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance).
+#(agent) For exploring the method only; for answers use legs_summary, legs_detail, inbound_summary or chain_starts_summary (same numbers). Every flight with its place in its aircraft's day: flights are grouped by tail number and date and ordered by scheduled departure (local time), so each flight knows its leg number, the previous flight of the same aircraft, and how the aircraft's first flight of the day went. Cancelled and diverted flights are kept (for cancel rate) but sit in their own partition, so a chain only links flights that operated. Flights with no tail number (3,216, almost all cancelled) carry no chain fields.
 source: aircraft_legs is flights -> {
   group_by:
     tail_number, flight_date, flight_number, carrier, airline, origin, dest, route, sched_dep_hhmm, dep_hour,
@@ -387,17 +378,8 @@ source: aircraft_legs is flights -> {
   }
 }
 
-#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
-#" method only; for answers use chain_slots_summary (same numbers, cost range included).
-#" One row per aircraft-day (tail number + date, operated flights only), carrying the first flight of the day's
-#" airline, origin, scheduled hour and arrival delay, and what the same aircraft's later flights that day logged.
-#" Used to put a cost on delay chains: when the first flight arrives 15+ minutes late, the "late aircraft" delay
-#" minutes BTS records on that aircraft's later flights that day are attributed to the first flight's airline,
-#" origin airport and scheduled departure hour. Cancelled and diverted flights and flights with no tail number are
-#" left out. This is attribution, not proof: storms delay first and later flights together, so not every minute
-#" was avoidable by fixing the first departure. Legs are numbered by LOCAL scheduled departure time; across time
-#" zones that misorders a few rotations (UTC order changes the first flight on 319 of 411,140 aircraft-days, under
-#" 1% of the cost).
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance).
+#(agent) For exploring the method only; for answers use chain_slots_summary (same numbers, cost range included). One row per aircraft-day (tail number + date, operated flights only), carrying the first flight of the day's airline, origin, scheduled hour and arrival delay, and what the same aircraft's later flights that day logged. Used to put a cost on delay chains: when the first flight arrives 15+ minutes late, the "late aircraft" delay minutes BTS records on that aircraft's later flights that day are attributed to the first flight's airline, origin airport and scheduled departure hour. Cancelled and diverted flights and flights with no tail number are left out. This is attribution, not proof: storms delay first and later flights together, so not every minute was avoidable by fixing the first departure. Legs are numbered by LOCAL scheduled departure time; across time zones that misorders a few rotations (UTC order changes the first flight on 319 of 411,140 aircraft-days, under 1% of the cost).
 source: delay_chains is aircraft_legs -> {
   where: in_chain
   group_by: tail_number, flight_date
@@ -450,12 +432,8 @@ source: delay_chains is aircraft_legs -> {
     conservative_cost_usd is next_leg_late_aircraft_minutes * 69.07
 }
 
-#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance). For exploring the
-#" method only; for answers use chain_slots_summary (same rows, with playbook views).
-#" The "protect these departures" list: one row per airline x first-flight origin x scheduled hour slot that started
-#" at least one late delay chain over May-July 2026, ranked by the cost of its chains (slot_rank 1 = most costly,
-#" ranked across all airlines and airports, so filtering keeps the national rank). Same method and limit as
-#" delay_chains: the downstream minutes are attributed to the slot, not proven avoidable.
+#" SLOW (recomputed from 1.85M flights on every query; may time out on the hosted instance).
+#(agent) For exploring the method only; for answers use chain_slots_summary (same rows, with playbook views). The "protect these departures" list: one row per airline x first-flight origin x scheduled hour slot that started at least one late delay chain over May-July 2026, ranked by the cost of its chains (slot_rank 1 = most costly, ranked across all airlines and airports, so filtering keeps the national rank). Same method and limit as delay_chains: the downstream minutes are attributed to the slot, not proven avoidable.
 source: chain_slots is delay_chains -> {
   where: late_start
   group_by: carrier, airline, origin, size_band, dep_hour

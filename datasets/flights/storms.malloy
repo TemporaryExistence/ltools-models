@@ -3,17 +3,8 @@
 // MotherDuck ltools.flights.storm_*. Answers: when storms hit, which airports and airlines cancel or delay more
 // than the storm itself justifies?
 
-#" STORM SEVERITY per airport and day (2,760 rows: 30 airports x 92 days, May-July 2026), from the airport's own
-#" weather observations (IEM ASOS/METAR archive, operating hours 6am-10pm local). severity_band: "0 None",
-#" "1 Minor" (no thunder; low cloud under 1,000 ft, visibility under 3 mi or gusts 30 kt+), "2 Moderate" (thunder
-#" 1-3 hours), "3 Severe" (heavy thunder, or thunder 4+ hours), "4 Extreme" (heavy thunder AND thunder 4+ hours).
-#" Storm day = Severe or Extreme. ts_hours = hours with a thunderstorm reported at the airport; heavy_ts_hours =
-#" hours with heavy thunder (+TS); peak_gust_kt = highest gust or peak wind; intensity_cell = thunder hours x heavy
-#" thunder hours x peak gust bin, used to match "the same storm" across airports. storm_reports = NOAA Storm Events
-#" reports (thunderstorm wind, hail, tornado, flash flood, lightning, heavy rain) within 40 km that day, May and June
-#" only (July not yet published by NOAA; null in July), with the strongest reported wind and largest hail.
-#" Sources: IEM ASOS archive (Iowa State University, redistributing National Weather Service observations, free);
-#" NOAA NCEI Storm Events Database (public domain).
+#" STORM SEVERITY per airport and day (2,760 rows: 30 airports x 92 days, May-July 2026), from the airport's own weather observations, with NOAA storm reports.
+#(agent) STORM SEVERITY per airport and day (2,760 rows: 30 airports x 92 days, May-July 2026), from the airport's own weather observations (IEM ASOS/METAR archive, operating hours 6am-10pm local). severity_band: "0 None", "1 Minor" (no thunder; low cloud under 1,000 ft, visibility under 3 mi or gusts 30 kt+), "2 Moderate" (thunder 1-3 hours), "3 Severe" (heavy thunder, or thunder 4+ hours), "4 Extreme" (heavy thunder AND thunder 4+ hours). Storm day = Severe or Extreme. ts_hours = hours with a thunderstorm reported at the airport; heavy_ts_hours = hours with heavy thunder (+TS); peak_gust_kt = highest gust or peak wind; intensity_cell = thunder hours x heavy thunder hours x peak gust bin, used to match "the same storm" across airports. storm_reports = NOAA Storm Events reports (thunderstorm wind, hail, tornado, flash flood, lightning, heavy rain) within 40 km that day, May and June only (July not yet published by NOAA; null in July), with the strongest reported wind and largest hail. Sources: IEM ASOS archive (Iowa State University, redistributing National Weather Service observations, free); NOAA NCEI Storm Events Database (public domain).
 source: storm_days is motherduck.sql("""
   SELECT * FROM ltools.flights.storm_days
 """) extend {
@@ -57,9 +48,9 @@ source: storm_days is motherduck.sql("""
   }
 }
 
-#" Hourly weather at the 30 airports (66,059 rows), local hour 0-23: hour_level 0 none, 1 minor, 2 moderate
-#" (thunder, or gusts 45 kt+, visibility under 1 mi, cloud under 500 ft, 0.5 in rain), 3 severe (heavy thunder,
-#" hail, or thunder with 35 kt+ gusts or visibility under 1 mi). For exploring which hours a storm hit.
+#" Hourly weather at the 30 airports (66,059 rows), local hour 0-23: hour_level 0 none, 1 minor, 2 moderate (thunder, or gusts 45 kt+, visibility under 1 mi, cloud under 500 ft, 0.5 in rain).
+#(agent) Hourly weather at the 30 airports (66,059 rows), local hour 0-23: hour_level 0 none, 1 minor, 2 moderate (thunder, or gusts 45 kt+, visibility under 1 mi, cloud under 500 ft, 0.5 in rain), 3 severe (heavy thunder, hail, or thunder with 35 kt+ gusts or visibility under 1 mi).
+#(agent) For exploring which hours a storm hit.
 source: storm_hours is motherduck.sql("""
   SELECT * FROM ltools.flights.storm_hours
 """) extend {
@@ -68,27 +59,14 @@ source: storm_hours is motherduck.sql("""
     thunder_hours is count() { where: ts }
 }
 
-#" Bootstrap 95% intervals (400 resamples of airport-days, storm days only) for the storm-day ratios: kind =
-#" "airport cancellations" (subject = airport code), "airline cancellations" / "airline late departures" (subject =
-#" BTS carrier code), "regional vs mainline, same route-day" (subject = the comparison). lo/hi bound the
-#" observed / expected ratio (or the regional / mainline cancel-rate ratio).
+#" Bootstrap 95% intervals (400 resamples of airport-days, storm days only) for the storm-day ratios, by kind and subject.
+#(agent) Bootstrap 95% intervals (400 resamples of airport-days, storm days only) for the storm-day ratios: kind = "airport cancellations" (subject = airport code), "airline cancellations" / "airline late departures" (subject = BTS carrier code), "regional vs mainline, same route-day" (subject = the comparison). lo/hi bound the observed / expected ratio (or the regional / mainline cancel-rate ratio).
 source: storm_ci is motherduck.sql("""
   SELECT * FROM ltools.flights.storm_ci
 """)
 
-#" START HERE for storm questions (fast: 167,966 pre-summed rows). Departures from the 30 busiest US airports, May-
-#" July 2026 (1.19M flights), summed by airport, date, airline, time of day (tod: "a 5-11am", "b 12-4pm",
-#" "c 5pm+") and distance band, joined to that airport-day's storm (wx.*). Measures compare what happened with what
-#" the storm justifies:
-#" - *_vs_airports: expected = what OTHER airports' flights did for the same airline, the same storm intensity cell
-#"   (thunder hours x heavy thunder hours x peak gust) and the same time of day. Ratio above 1 = this airport cancels
-#"   more than comparable storms elsewhere.
-#" - *_vs_other_airlines: expected = what OTHER airlines did at the same airport, same storm cell, same time of day.
-#"   Ratio above 1 = this airline cancels more than its neighbours in the same storm.
-#" Flights with no comparable flight elsewhere are left out of the ratios (the *_matched_* columns). Departure delay:
-#" late = left 15+ minutes after schedule. Caveats: one summer; weather at the departure airport only (storms en route
-#" and at the destination are not matched, though matching on destination storms did not change the airport ranking);
-#" association, not cause; small airports' storm days are few, so check storm_ci before quoting a ratio.
+#" START HERE for storm questions (fast: 167,966 pre-summed rows).
+#(agent) Departures from the 30 busiest US airports, May- July 2026 (1.19M flights), summed by airport, date, airline, time of day (tod: "a 5-11am", "b 12-4pm", "c 5pm+") and distance band, joined to that airport-day's storm (wx.*). Measures compare what happened with what the storm justifies: - *_vs_airports: expected = what OTHER airports' flights did for the same airline, the same storm intensity cell (thunder hours x heavy thunder hours x peak gust) and the same time of day. Ratio above 1 = this airport cancels more than comparable storms elsewhere. - *_vs_other_airlines: expected = what OTHER airlines did at the same airport, same storm cell, same time of day. Ratio above 1 = this airline cancels more than its neighbours in the same storm. Flights with no comparable flight elsewhere are left out of the ratios (the *_matched_* columns). Departure delay: late = left 15+ minutes after schedule. Caveats: one summer; weather at the departure airport only (storms en route and at the destination are not matched, though matching on destination storms did not change the airport ranking); association, not cause; small airports' storm days are few, so check storm_ci before quoting a ratio.
 source: storm_flights is motherduck.sql("""
   SELECT * FROM ltools.flights.storm_cube
 """) extend {
@@ -224,10 +202,9 @@ source: storm_flights is motherduck.sql("""
   }
 }
 
-#" Same route, same day: mainline vs regional cancel rates (7,577 rows). comparison = "UA vs SkyWest+Republic",
-#" "DL vs SkyWest+Republic", "AA vs Envoy+PSA" (American and its own regionals), "All mainline vs all regional"
-#" (also same time of day). One row per comparison x departure airport x date, joined to that day's storm (wx.*).
-#" SkyWest and Republic fly for several brands, so a UA or DL row may compare against flights sold by another brand.
+#" Same route, same day: mainline vs regional cancel rates (7,577 rows). comparison = "UA vs SkyWest+Republic", "DL vs SkyWest+Republic", "AA vs Envoy+PSA" (American and its own regionals).
+#(agent) Same route, same day: mainline vs regional cancel rates (7,577 rows). comparison = "UA vs SkyWest+Republic", "DL vs SkyWest+Republic", "AA vs Envoy+PSA" (American and its own regionals), "All mainline vs all regional" (also same time of day).
+#(agent) One row per comparison x departure airport x date, joined to that day's storm (wx.*). SkyWest and Republic fly for several brands, so a UA or DL row may compare against flights sold by another brand.
 source: storm_route_pairs is motherduck.sql("""
   SELECT * FROM ltools.flights.storm_route_pairs
 """) extend {

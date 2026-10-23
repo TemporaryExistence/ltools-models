@@ -4,21 +4,8 @@
 // ltools.flights.ledger_*.
 import { airport_list } from 'summaries.malloy'
 
-#" START HERE for "what did disruption cost, and how much was weather?" (fast: one row per airline x departure
-#" airport x weather band). Departures from the 100 busiest US airports (91% of US flights), May-July 2026, with the
-#" weather band at BOTH ends (worse end counts): "0 None" (clear), "1 Minor" (no thunder; low cloud, poor visibility
-#" or 30 kt+ gusts), "2 Moderate" (thunder 1-3 hours), "3 Severe" (heavy thunder or thunder 4+ hours), "4 Extreme"
-#" (both); from each airport's own weather observations, 6am-10pm local. Cost = arrival delay minutes x $69.07 (A4A
-#" 2025 block-minute cost less fuel) to $100.76 (A4A 2024 block-minute cost), plus cancellations x $5,770 (masFlight
-#" 2014 US average per cancelled flight) to $22,000 (EUROCONTROL Standard Inputs EUR 20,930, 2022 prices). *_lo =
-#" low prices, *_hi = high prices; quote them as a range. The three parts ADD UP to the total:
-#" - controllable = all cost on clear days + on weather days, the excess over the weather expectation that even the
-#"   best airline at the same airport and band also had (an airport-wide excess).
-#" - weather = on weather days, the expectation: what flights at OTHER airports cost in the same band at origin, the
-#"   same band at destination and the same time of day (capped at what actually happened).
-#" - resilience gap = on weather days, the excess over the expectation that the best airline at the same airport and
-#"   band avoided: what this airline would save by matching it.
-#" Diverted flights are not priced. Association, not cause. One summer.
+#" START HERE for "what did disruption cost, and how much was weather?" (fast: one row per airline x departure airport x weather band).
+#(agent) Departures from the 100 busiest US airports (91% of US flights), May-July 2026, with the weather band at BOTH ends (worse end counts): "0 None" (clear), "1 Minor" (no thunder; low cloud, poor visibility or 30 kt+ gusts), "2 Moderate" (thunder 1-3 hours), "3 Severe" (heavy thunder or thunder 4+ hours), "4 Extreme" (both); from each airport's own weather observations, 6am-10pm local. Cost = arrival delay minutes x $69.07 (A4A 2025 block-minute cost less fuel) to $100.76 (A4A 2024 block-minute cost), plus cancellations x $5,770 (masFlight 2014 US average per cancelled flight) to $22,000 (EUROCONTROL Standard Inputs EUR 20,930, 2022 prices). *_lo = low prices, *_hi = high prices; quote them as a range. The three parts ADD UP to the total: - controllable = all cost on clear days + on weather days, the excess over the weather expectation that even the best airline at the same airport and band also had (an airport-wide excess). - weather = on weather days, the expectation: what flights at OTHER airports cost in the same band at origin, the same band at destination and the same time of day (capped at what actually happened). - resilience gap = on weather days, the excess over the expectation that the best airline at the same airport and band avoided: what this airline would save by matching it. Diverted flights are not priced. Association, not cause. One summer.
 source: disruption_ledger is motherduck.sql("""
   SELECT * FROM ltools.flights.ledger_cells
 """) extend {
@@ -175,17 +162,8 @@ source: disruption_ledger is motherduck.sql("""
   }
 }
 
-#" START HERE for "which first departures start the costliest delay chains on CLEAR days?" One row per airline x
-#" first-flight airport x scheduled hour (100 busiest airports, May-July 2026). Chain cost = "late aircraft" delay
-#" minutes on the same aircraft's later flights that day, when its first flight arrived 15+ minutes late: low =
-#" next flight only x $69.07, high = every later flight x $100.76 (same as chain_slots_summary). Split by the
-#" weather at both ends of the FIRST flight: clear_* = clear days; controllable/weather/resilience as in
-#" disruption_ledger (they add up to total). rank_all_hi = national rank on all days; rank_clear_hi = rank on clear
-#" days only; rank_controllable_hi = rank on the controllable part; rank_clear_rate_hi = rank on clear_rate_quarter_hi,
-#" the clear-day cost per clear-day first departure x all first departures (what the slot would cost in the quarter if
-#" every day were clear; removes the bias toward airports that simply have more clear days; null under 30 clear-day
-#" first departures). A slot that ranks high on all days but low on
-#" clear days was mostly weather. thin = under 20 late starts.
+#" START HERE for "which first departures start the costliest delay chains on CLEAR days?" One row per airline x first-flight airport x scheduled hour (100 busiest airports, May-July 2026).
+#(agent) Chain cost = "late aircraft" delay minutes on the same aircraft's later flights that day, when its first flight arrived 15+ minutes late: low = next flight only x $69.07, high = every later flight x $100.76 (same as chain_slots_summary). Split by the weather at both ends of the FIRST flight: clear_* = clear days; controllable/weather/resilience as in disruption_ledger (they add up to total). rank_all_hi = national rank on all days; rank_clear_hi = rank on clear days only; rank_controllable_hi = rank on the controllable part; rank_clear_rate_hi = rank on clear_rate_quarter_hi, the clear-day cost per clear-day first departure x all first departures (what the slot would cost in the quarter if every day were clear; removes the bias toward airports that simply have more clear days; null under 30 clear-day first departures). A slot that ranks high on all days but low on clear days was mostly weather. thin = under 20 late starts.
 source: chain_slot_ledger is motherduck.sql("""
   SELECT * FROM ltools.flights.ledger_slots
 """) extend {
@@ -269,12 +247,8 @@ source: chain_slot_ledger is motherduck.sql("""
   }
 }
 
-#" START HERE for insurers / delay-cover pricing. One row per departure airport x month x weather band at the
-#" DEPARTURE airport (as a forecast would give it), 100 busiest US airports, May-July 2026. days = airport-days in
-#" the band that month; expected = what departures at OTHER airports cost in the same band and time of day (the
-#" pricing benchmark); actual = what this airport's departures cost. Prices as disruption_ledger (*_lo / *_hi).
-#" Expected loss per month = band days per month x expected loss per band day (per-month figures average the three
-#" months; filter to one month_num for a single month).
+#" START HERE for insurers / delay-cover pricing.
+#(agent) One row per departure airport x month x weather band at the DEPARTURE airport (as a forecast would give it), 100 busiest US airports, May-July 2026. days = airport-days in the band that month; expected = what departures at OTHER airports cost in the same band and time of day (the pricing benchmark); actual = what this airport's departures cost. Prices as disruption_ledger (*_lo / *_hi). Expected loss per month = band days per month x expected loss per band day (per-month figures average the three months; filter to one month_num for a single month).
 source: weather_risk is motherduck.sql("""
   SELECT * FROM ltools.flights.ledger_insurer
 """) extend {

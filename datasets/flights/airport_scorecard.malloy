@@ -3,12 +3,9 @@
 // OurAirports coordinates) and loaded into MotherDuck ltools.flights.ap_*.
 import { airport_list } from 'summaries.malloy'
 
-#" One row per US departure airport (354), May-July 2026 (BTS reporting carriers): departures and departures_per_day,
-#" late_rate (operated flights arriving 15+ minutes late), cancel_rate, nonstop_destinations (destinations served 13+
-#" times = about weekly), carriers; for the 99 ledger airports also the disruption ledger's cost (cost_lo/hi,
-#" controllable_lo/hi), weather_day_ratio (weather-day cost / what the same weather cost elsewhere; 1 = as expected,
-#" lower = more storm-resilient), storm_cancel_rate (Severe/Extreme days) and delay-chain cost started there per
-#" departure (chain_cost_per_departure_lo/hi). lat/lon from OurAirports.
+#" One row per US departure airport (354), May-July 2026 (BTS reporting carriers): departures and departures_per_day, late_rate (operated flights arriving 15+ minutes late), cancel_rate.
+#(agent) One row per US departure airport (354), May-July 2026 (BTS reporting carriers): departures and departures_per_day, late_rate (operated flights arriving 15+ minutes late), cancel_rate, nonstop_destinations (destinations served 13+ times = about weekly).
+#(agent) One row per US departure airport (354), May-July 2026 (BTS reporting carriers): departures and departures_per_day, late_rate (operated flights arriving 15+ minutes late), cancel_rate, nonstop_destinations (destinations served 13+ times = about weekly), carriers; for the 99 ledger airports also the disruption ledger's cost (cost_lo/hi, controllable_lo/hi), weather_day_ratio (weather-day cost / what the same weather cost elsewhere; 1 = as expected, lower = more storm-resilient), storm_cancel_rate (Severe/Extreme days) and delay-chain cost started there per departure (chain_cost_per_departure_lo/hi). lat/lon from OurAirports.
 source: airport_scorecard is motherduck.sql("""
   SELECT * FROM ltools.flights.ap_airports
 """) extend {
@@ -19,9 +16,9 @@ source: airport_scorecard is motherduck.sql("""
     total_departures is departures.sum()
 }
 
-#" START HERE for "how does our airport compare with the airports our passengers could drive to?" One row per
-#" airport x catchment peer: every airport with 5+ departures a day within 175 miles (great circle) of it, itself
-#" included (miles = 0). peer.* carries the peer's scorecard. Filter origin to your airport.
+#" START HERE for "how does our airport compare with the airports our passengers could drive to?"
+#(agent) One row per airport x catchment peer: every airport with 5+ departures a day within 175 miles (great circle) of it, itself included (miles = 0). peer.* carries the peer's scorecard.
+#(agent) Filter origin to your airport.
 source: airport_peers is motherduck.sql("""
   SELECT * FROM ltools.flights.ap_peers
 """) extend {
@@ -58,8 +55,8 @@ source: airport_peers is motherduck.sql("""
   }
 }
 
-#" Nonstop routes per departure airport, May-July 2026 (BTS reporting carriers): departures, per_day, carriers,
-#" cancel_rate, late_rate. Use it for "where can you fly nonstop from here, how often, and who competes on it".
+#" Nonstop routes per departure airport, May-July 2026 (BTS reporting carriers): departures, per_day, carriers, cancel_rate, late_rate.
+#(agent) Use it for "where can you fly nonstop from here, how often, and who competes on it".
 source: airport_routes is motherduck.sql("""
   SELECT * FROM ltools.flights.ap_routes
 """) extend {
@@ -82,9 +79,8 @@ source: airport_routes is motherduck.sql("""
   }
 }
 
-#" START HERE for "which destinations does our catchment fly to from OTHER airports?" One row per airport x catchment
-#" peer (as airport_peers) with the peer's nonstop routes joined (r.*). Filter origin to your airport; compare the
-#" home airport's flights a day to a destination (miles = 0) with the peers'.
+#" START HERE for "which destinations does our catchment fly to from OTHER airports?" One row per airport x catchment peer (as airport_peers) with the peer's nonstop routes joined (r.*).
+#(agent) Filter origin to your airport; compare the home airport's flights a day to a destination (miles = 0) with the peers'.
 source: peer_routes is airport_peers extend {
   join_many: r is airport_routes on peer = r.origin
   measure:
@@ -107,15 +103,9 @@ source: peer_routes is airport_peers extend {
   }
 }
 
-#" START HERE for "is our delay problem ours or the airlines'?" Departures from the 99 ledger airports, May-July 2026,
-#" priced like the disruption ledger (departure delay minutes x $69.07-$100.76 + cancellations x $5,770-$22,000)
-#" and split by WHO suffered: part "2 Airport / air traffic" = hours in which EVERY airline departing (2+ airlines, 3+
-#" departures) had half or more of its departures 15+ minutes late or cancelled, with no weather in the airport's own
-#" ASOS observations that hour or the hour before; "3 Weather" = the same all-airlines-together hours WITH weather
-#" there (low cloud, poor visibility, gusts, rain or thunder); "1 Airline" = every other departure in a testable hour
-#" (one airline's problem while others left on time; includes delay it imported from elsewhere: late_aircraft_min);
-#" "4 Not testable" = hours with one airline or under 3 departures. Departure delay is used because it is the part
-#" that happens AT the airport. Association, not cause.
+#" START HERE for "is our delay problem ours or the airlines'?"
+#(agent) Departures from the 99 ledger airports, May-July 2026, priced like the disruption ledger (departure delay minutes x $69.07-$100.76 + cancellations x $5,770-$22,000) and split by WHO suffered.
+#(agent) START HERE for "is our delay problem ours or the airlines'?" Departures from the 99 ledger airports, May-July 2026, priced like the disruption ledger (departure delay minutes x $69.07-$100.76 + cancellations x $5,770-$22,000) and split by WHO suffered: part "2 Airport / air traffic" = hours in which EVERY airline departing (2+ airlines, 3+ departures) had half or more of its departures 15+ minutes late or cancelled, with no weather in the airport's own ASOS observations that hour or the hour before; "3 Weather" = the same all-airlines-together hours WITH weather there (low cloud, poor visibility, gusts, rain or thunder); "1 Airline" = every other departure in a testable hour (one airline's problem while others left on time; includes delay it imported from elsewhere: late_aircraft_min); "4 Not testable" = hours with one airline or under 3 departures. Departure delay is used because it is the part that happens AT the airport. Association, not cause.
 source: delay_ownership is motherduck.sql("""
   SELECT * FROM ltools.flights.ap_split
 """) extend {
