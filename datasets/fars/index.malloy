@@ -2927,15 +2927,15 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
     select:
       state_name, crashes, ems_response_time_share
       ems_response_times is pick 'Not comparable: filled share moved 30+ points between years' when r_swing >= 0.3 pick 'Comparable' when ems_response_time_share >= 0.8 pick 'Use with care: 50-80% filled' when ems_response_time_share >= 0.5 else 'Not comparable: under 50% filled'
-      response_20_plus_share is pick r20_share when ems_response_time_share >= 0.8 and r_swing < 0.3 else null
+      response_20_plus_share is pick r20_share when ems_response_time_share >= 0.8 and (r_swing is null or r_swing < 0.3) else null
       notification_time_share, notified_before_crash_share
       notification_clock is pick 'Not reliable: 20%+ notified before the crash' when notified_before_crash_share >= 0.2 pick 'Not comparable: filled share moved 30+ points between years' when n_swing >= 0.3 pick 'Reliable' when notification_time_share >= 0.8 pick 'Use with care: 50-80% filled' when notification_time_share >= 0.5 else 'Not comparable: under 50% filled'
-      notified_30_plus_share is pick n30_share when notification_time_share >= 0.8 and notified_before_crash_share < 0.2 and n_swing < 0.3 else null
-      dark_single_vehicle_notified_30_plus_share is pick ds30_share when notification_time_share >= 0.8 and notified_before_crash_share < 0.2 and n_swing < 0.3 else null
+      notified_30_plus_share is pick n30_share when notification_time_share >= 0.8 and notified_before_crash_share < 0.2 and (n_swing is null or n_swing < 0.3) else null
+      dark_single_vehicle_notified_30_plus_share is pick ds30_share when notification_time_share >= 0.8 and notified_before_crash_share < 0.2 and (n_swing is null or n_swing < 0.3) else null
       dark_single_vehicle_crashes_timed is dsv_n
       hospital_time_share
       hospital_times is pick 'Not comparable: filled share moved 30+ points between years' when h_swing >= 0.3 pick 'Comparable' when hospital_time_share >= 0.8 pick 'Use with care: 50-80% filled' when hospital_time_share >= 0.5 else 'Not comparable: under 50% filled'
-      hospital_60_plus_share is pick h60_share when hospital_time_share >= 0.8 and h_swing < 0.3 else null
+      hospital_60_plus_share is pick h60_share when hospital_time_share >= 0.8 and (h_swing is null or h_swing < 0.3) else null
       crashes_with_response_time is rv_n
     order_by: state_name
   }
@@ -2966,13 +2966,14 @@ source: state_field_coverage is motherduck.table('fars.state_field_coverage') ex
     select:
       state_name, drivers, distraction_known_share
       distraction is pick 'Not comparable: filled share moved 30+ points between years' when d_swing >= 0.3 pick 'Comparable' when distraction_known_share >= 0.8 pick 'Use with care: 50-80% filled' when distraction_known_share >= 0.5 else 'Not comparable: under 50% filled'
-      phone_distraction_per_1000_drivers is pick phone_rate when distraction_known_share >= 0.8 and d_swing < 0.3 else null
+      phone_distraction_per_1000_drivers is pick phone_rate when distraction_known_share >= 0.8 and (d_swing is null or d_swing < 0.3) else null
       killed_drivers, drug_tested_share
       drug_tests is pick 'Not comparable: tested share moved 30+ points between years' when g_swing >= 0.3 pick 'Comparable' when drug_tested_share >= 0.8 pick 'Use with care: 50-80% tested' when drug_tested_share >= 0.5 else 'Not comparable: under 50% tested'
-      police_reported_drugs_share_of_tested is pick police_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
-      lab_positive_share_of_tested is pick lab_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
+      police_reported_drugs_share_of_tested is pick police_share when drug_tested_share >= 0.8 and (g_swing is null or g_swing < 0.3) else null
+      lab_positive_share_of_tested is pick lab_share when drug_tested_share >= 0.8 and (g_swing is null or g_swing < 0.3) else null
       surviving_drivers_08
-      charged_share_recorded is pick charged_share when charges_known_share >= 0.8 and (c_swing is null or c_swing < 0.3) else null
+      charged_share_recorded is pick charged_share when charges_known_share >= 0.8 and (c_swing is null or c_swing < 0.3) and surviving_drivers_08 >= 10 else null
+      charged_share_note is pick 'Too few drivers for a share: under 10 surviving .08+ drivers' when surviving_drivers_08 < 10 else null
     order_by: state_name
   }
 }
