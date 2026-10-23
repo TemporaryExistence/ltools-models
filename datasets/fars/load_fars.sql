@@ -6,6 +6,12 @@
 --   (2019 and 2020 accident.csv are Windows-1252; 2021-2022 accident.csv carry a UTF-8 byte-order mark).
 -- Step 2 (local): FHWA Highway Statistics table VM-2 (vehicle-miles by state, rural/urban and functional system),
 --   2019-2024 pages saved to fhwa/vm2_<year>.html and parsed to fhwa/vm2_2019_2024.csv (parse_vm2.py in the working notes).
+-- Step 1b (2026-10-23, sections 11-15): also unzip Distract, Violatn and Drugs for each year into utf8/<year>/
+--   (distract.csv, violatn.csv, drugs.csv; re-encoded the same way). FHWA Highway Statistics MV-1 (vehicle registrations)
+--   and DL-22 (licensed drivers, the "Total" table, fifth on the page) for 2019, 2022, 2023 and 2024, pages
+--   https://www.fhwa.dot.gov/policyinformation/statistics/<year>/mv1.cfm and .../<year>/dl22.cfm saved 2026-10-23 to
+--   fhwa/mv1_<year>.html and fhwa/dl22_<year>.html, parsed by fhwa/parse_mv1.py and fhwa/parse_dl22.py to
+--   fhwa/mv1_2019_2024.csv and fhwa/dl22_2019_2024.csv (2020 and 2021 tables not used).
 -- Step 3: run this file from units/ltools/public-data/fars/raw with ltools attached:
 --   duckdb -c "ATTACH 'md:ltools'; .read <this file>"
 -- County population: 2020-2024 from ltools.libraries.county_population (Census Vintage 2025); 2019 from the Census 2010-2020 intercensal file (section 6).
@@ -26,6 +32,14 @@ CREATE OR REPLACE TEMP TABLE miacc_raw AS SELECT *, regexp_extract(filename, 'ut
   FROM read_csv('utf8/*/miacc.csv', union_by_name=true, filename=true);
 CREATE OR REPLACE TEMP TABLE miper_raw AS SELECT *, regexp_extract(filename, 'utf8/(\d{4})/', 1)::INT AS data_year
   FROM read_csv('utf8/*/miper.csv', union_by_name=true, filename=true);
+-- Used by sections 11-15 only. Distract: 2019 names the field MDRDSTRD, 2020+ DRDISTRACT; Violatn: 2019 MVIOLATN,
+-- 2020+ VIOLATION; Drugs: DRUGRES codes are 3-digit to 2021 and 4-digit from 2022. Several rows per driver.
+CREATE OR REPLACE TEMP TABLE distract_raw AS SELECT *, regexp_extract(filename, 'utf8/(\d{4})/', 1)::INT AS data_year
+  FROM read_csv('utf8/*/distract.csv', union_by_name=true, filename=true, sample_size=-1);
+CREATE OR REPLACE TEMP TABLE violatn_raw AS SELECT *, regexp_extract(filename, 'utf8/(\d{4})/', 1)::INT AS data_year
+  FROM read_csv('utf8/*/violatn.csv', union_by_name=true, filename=true, sample_size=-1);
+CREATE OR REPLACE TEMP TABLE drugs_raw AS SELECT *, regexp_extract(filename, 'utf8/(\d{4})/', 1)::INT AS data_year
+  FROM read_csv('utf8/*/drugs.csv', union_by_name=true, filename=true, sample_size=-1);
 
 -- 1. NHTSA multiple imputation of blood alcohol (BAC), one row per crash per imputation (10 per crash).
 --    MIDRVACC = highest BAC among the crash's drivers (NHTSA's alcohol-impaired-driving definition uses this).
@@ -488,3 +502,340 @@ SELECT
 FROM ltools.fars.county_population pop
 FULL JOIN c ON c.year = pop.year AND c.county_fips = pop.county_fips
 LEFT JOIN p ON p.year = coalesce(pop.year, c.year) AND p.county_fips = coalesce(pop.county_fips, c.county_fips);
+
+-- ===== Sections 11-15 (2026-10-23): inferences from the verified inference list (fars/INFERENCES.md) =====
+-- Each section is rebuildable alone after the raw staging block at the top and sections 2-4 and 8 (it reads crashes,
+-- persons, vehicles, state_years). Run order: 11, 12, 13, 14, 15.
+
+-- 11. Field coverage: one row per state x year x rural/urban, with the counts needed to see how completely each state
+--     fills a field before comparing states on it. Weather (WEATHER 98, 99 = unknown or not reported); EMS times
+--     (crash, notification, arrival, hospital; hour or minute 88, 97, 98, 99 = missing) as signed intervals wrapped across
+--     midnight, ((b - a + 2160) % 1440) - 720, so a notification 3 minutes before the crash reads -3, not 1,437; belt use of
+--     killed passenger-vehicle occupants (persons.restraint); recorded travel speed (vehicles.travel_speed_mph); drug
+--     testing of killed drivers (person DSTATUS 2 = test given; DRUGS 1 = police-reported drug involvement; Drugs file
+--     lab result positive: 2019-2021 codes 100-996 or 998, 2022+ codes 100-9994, 9996 or 9998, i.e. any drug including
+--     medicines, and the list changed in 2022); driver distraction (one row per driver with a driver present, Distract
+--     code 16 dropped; 'not reported' = only code 96; phone = codes 5, 6, 15); violations charged for surviving drivers
+--     tested at .08+ (any Violatn code other than 0 none, 95 no driver, 97 not reported, 99 unknown).
+CREATE OR REPLACE TABLE ltools.fars.state_field_coverage AS
+WITH a AS (
+  SELECT YEAR AS year, YEAR * 1000000 + ST_CASE AS crash_key, STATENAME AS state_name,
+    CASE RUR_URB WHEN 1 THEN 'Rural' WHEN 2 THEN 'Urban' ELSE 'Unknown or not reported' END AS rural_urban,
+    FATALS AS fatalities, WEATHER AS weather_code, VE_FORMS AS vehicles_in_transport, LGT_COND AS light_code,
+    CASE WHEN HOUR BETWEEN 0 AND 23 AND MINUTE BETWEEN 0 AND 59 THEN HOUR * 60 + MINUTE END AS t_crash,
+    CASE WHEN NOT_HOUR BETWEEN 0 AND 23 AND NOT_MIN BETWEEN 0 AND 59 THEN NOT_HOUR * 60 + NOT_MIN END AS t_notified,
+    CASE WHEN ARR_HOUR BETWEEN 0 AND 23 AND ARR_MIN BETWEEN 0 AND 59 THEN ARR_HOUR * 60 + ARR_MIN END AS t_arrived,
+    CASE WHEN HOSP_HR BETWEEN 0 AND 23 AND HOSP_MN BETWEEN 0 AND 59 THEN HOSP_HR * 60 + HOSP_MN END AS t_hospital,
+    HOSP_HR = 88 AS not_transported
+  FROM acc_raw
+), e AS (
+  SELECT *, ((t_notified - t_crash + 2160) % 1440) - 720 AS crash_to_notified,
+    ((t_arrived - t_notified + 2160) % 1440) - 720 AS notified_to_arrived,
+    ((t_hospital - t_crash + 2160) % 1440) - 720 AS crash_to_hospital
+  FROM a
+), c AS (
+  SELECT year, state_name, rural_urban,
+    count(*) AS crashes, sum(fatalities) AS deaths,
+    count(*) FILTER (WHERE weather_code IN (98, 99)) AS crashes_weather_unknown,
+    coalesce(sum(fatalities) FILTER (WHERE weather_code IN (98, 99)), 0) AS deaths_weather_unknown,
+    coalesce(sum(fatalities) FILTER (WHERE weather_code IN (2, 3, 4, 11, 12)), 0) AS deaths_precipitation,
+    count(*) FILTER (WHERE notified_to_arrived BETWEEN 0 AND 720) AS crashes_response_time_valid,
+    count(*) FILTER (WHERE notified_to_arrived BETWEEN 20 AND 720) AS crashes_response_20_plus,
+    count(*) FILTER (WHERE crash_to_notified IS NOT NULL) AS crashes_notification_time_valid,
+    count(*) FILTER (WHERE crash_to_notified < 0) AS crashes_notified_before_crash,
+    count(*) FILTER (WHERE crash_to_notified BETWEEN 30 AND 720) AS crashes_notified_30_plus,
+    count(*) FILTER (WHERE crash_to_notified IS NOT NULL AND vehicles_in_transport = 1 AND light_code IN (2, 3, 6)) AS dark_single_vehicle_notification_valid,
+    count(*) FILTER (WHERE crash_to_notified BETWEEN 30 AND 720 AND vehicles_in_transport = 1 AND light_code IN (2, 3, 6)) AS dark_single_vehicle_notified_30_plus,
+    count(*) FILTER (WHERE NOT coalesce(not_transported, false)) AS crashes_not_coded_untransported,
+    count(*) FILTER (WHERE NOT coalesce(not_transported, false) AND crash_to_hospital BETWEEN 0 AND 720) AS crashes_hospital_time_valid,
+    count(*) FILTER (WHERE NOT coalesce(not_transported, false) AND crash_to_hospital BETWEEN 60 AND 720) AS crashes_hospital_60_plus
+  FROM e GROUP BY ALL
+), pv AS (
+  SELECT cr.year, cr.state_name, cr.rural_urban,
+    count(*) AS killed_pv_occupants,
+    count(*) FILTER (WHERE pe.restraint = 'Unrestrained') AS killed_pv_unrestrained,
+    count(*) FILTER (WHERE pe.restraint = 'Unknown') AS killed_pv_restraint_unknown
+  FROM ltools.fars.persons pe JOIN ltools.fars.crashes cr ON cr.crash_key = pe.crash_key
+  WHERE pe.is_killed AND pe.restraint IS NOT NULL GROUP BY ALL
+), sp AS (
+  SELECT cr.year, cr.state_name, cr.rural_urban, count(*) AS vehicles, count(ve.travel_speed_mph) AS vehicles_speed_recorded
+  FROM ltools.fars.vehicles ve JOIN ltools.fars.crashes cr ON cr.crash_key = ve.crash_key GROUP BY ALL
+), lab AS (
+  SELECT data_year AS year, ST_CASE, VEH_NO, PER_NO,
+    bool_or(CASE WHEN data_year <= 2021 THEN DRUGRES BETWEEN 100 AND 996 OR DRUGRES = 998
+                 ELSE DRUGRES BETWEEN 100 AND 9994 OR DRUGRES IN (9996, 9998) END) AS lab_positive
+  FROM drugs_raw GROUP BY ALL
+), kd AS (
+  SELECT cr.year, cr.state_name, cr.rural_urban,
+    count(*) AS killed_drivers,
+    count(*) FILTER (WHERE p.DSTATUS = 2) AS killed_drivers_drug_tested,
+    count(*) FILTER (WHERE p.DRUGS = 1) AS killed_drivers_drugs_police_reported,
+    count(*) FILTER (WHERE p.DSTATUS = 2 AND lab.lab_positive) AS killed_drivers_drug_lab_positive
+  FROM per_raw p
+  JOIN ltools.fars.crashes cr ON cr.crash_key = p.data_year * 1000000 + p.ST_CASE
+  LEFT JOIN lab ON lab.year = p.data_year AND lab.ST_CASE = p.ST_CASE AND lab.VEH_NO = p.VEH_NO AND lab.PER_NO = p.PER_NO
+  WHERE p.PER_TYP = 1 AND p.INJ_SEV = 4 GROUP BY ALL
+), dis AS (
+  SELECT data_year * 1000000 + ST_CASE AS crash_key, VEH_NO, list(coalesce(DRDISTRACT, MDRDSTRD)) AS codes
+  FROM distract_raw GROUP BY ALL
+), dd AS (
+  SELECT cr.year, cr.state_name, cr.rural_urban,
+    count(*) AS drivers_distraction_rows,
+    count(*) FILTER (WHERE dis.codes = [96]) AS drivers_distraction_not_reported,
+    count(*) FILTER (WHERE list_has_any(dis.codes, [5, 6, 15])) AS drivers_phone_distraction
+  FROM dis JOIN ltools.fars.crashes cr ON cr.crash_key = dis.crash_key
+  WHERE NOT list_contains(dis.codes, 16) GROUP BY ALL
+), vio AS (
+  SELECT data_year AS year, ST_CASE, VEH_NO, list(coalesce(VIOLATION, MVIOLATN)) AS codes FROM violatn_raw GROUP BY ALL
+), sd AS (
+  SELECT cr.year, cr.state_name, cr.rural_urban,
+    count(*) AS surviving_drivers_08,
+    count(*) FILTER (WHERE NOT list_has_all([0, 95, 97, 99], vio.codes)) AS surviving_drivers_08_charged,
+    count(*) FILTER (WHERE vio.codes = [97]) AS surviving_drivers_08_violations_not_reported
+  FROM per_raw p
+  JOIN vio ON vio.year = p.data_year AND vio.ST_CASE = p.ST_CASE AND vio.VEH_NO = p.VEH_NO
+  JOIN ltools.fars.crashes cr ON cr.crash_key = p.data_year * 1000000 + p.ST_CASE
+  WHERE p.PER_TYP = 1 AND p.INJ_SEV <> 4 AND p.ALC_RES BETWEEN 80 AND 940 GROUP BY ALL
+)
+SELECT c.state_name || '-' || c.year AS state_year_key, c.*,
+  coalesce(pv.killed_pv_occupants, 0) AS killed_pv_occupants, coalesce(pv.killed_pv_unrestrained, 0) AS killed_pv_unrestrained,
+  coalesce(pv.killed_pv_restraint_unknown, 0) AS killed_pv_restraint_unknown,
+  coalesce(sp.vehicles, 0) AS vehicles, coalesce(sp.vehicles_speed_recorded, 0) AS vehicles_speed_recorded,
+  coalesce(kd.killed_drivers, 0) AS killed_drivers, coalesce(kd.killed_drivers_drug_tested, 0) AS killed_drivers_drug_tested,
+  coalesce(kd.killed_drivers_drugs_police_reported, 0) AS killed_drivers_drugs_police_reported,
+  coalesce(kd.killed_drivers_drug_lab_positive, 0) AS killed_drivers_drug_lab_positive,
+  coalesce(dd.drivers_distraction_rows, 0) AS drivers, coalesce(dd.drivers_distraction_not_reported, 0) AS drivers_distraction_not_reported,
+  coalesce(dd.drivers_phone_distraction, 0) AS drivers_phone_distraction,
+  coalesce(sd.surviving_drivers_08, 0) AS surviving_drivers_08, coalesce(sd.surviving_drivers_08_charged, 0) AS surviving_drivers_08_charged,
+  coalesce(sd.surviving_drivers_08_violations_not_reported, 0) AS surviving_drivers_08_violations_not_reported
+FROM c
+LEFT JOIN pv USING (year, state_name, rural_urban)
+LEFT JOIN sp USING (year, state_name, rural_urban)
+LEFT JOIN kd USING (year, state_name, rural_urban)
+LEFT JOIN dd USING (year, state_name, rural_urban)
+LEFT JOIN sd USING (year, state_name, rural_urban);
+
+-- 12. Holidays against matched ordinary days (national). One row per holiday occurrence x time window x compared date.
+--     Holidays by rule, 2019-2024: New Year's Day, Independence Day (July 4), Memorial Day (last Monday of May) and the
+--     Sunday before, Labor Day (first Monday of September) and the Sunday before, Thanksgiving (fourth Thursday of
+--     November) with the Wednesday before and the Friday, Saturday and Sunday after, Christmas Eve, Christmas Day, New
+--     Year's Eve. Matched days: the same weekday 1, 2 and 3 weeks before and after, leaving out every holiday date above;
+--     for Memorial Day and Labor Day also the Sundays 1-3 weeks either side of the Sunday before. Each matched row carries
+--     weight 1/n (n = matched dates for that occurrence), so a sum of deaths x weight is the matched average per date.
+--     Windows: whole date (all hours, unknown hour included); daytime 6 am-5:59 pm; the date's night (midnight-5:59 am and
+--     6 pm-11:59 pm of the same date); overnight from 6 pm to 5:59 am next morning, keyed to the evening's date (the
+--     Thanksgiving-eve window). Hour 99 is left out of the hour windows. Overnight windows that need 2018-12-31 or
+--     2025-01-01 hours are not built (New Year's Eve 2024 has no overnight row). Alcohol deaths = fatalities x the share of
+--     NHTSA's ten imputations with a driver at .08+ (crashes.ai_share); sober-crash deaths = the rest.
+--     Chance band: the six-year pooled ratio (date deaths / matched average) for every ordinary month-day that is at
+--     least 4 days from any holiday in all six years and whose matched dates fall inside 2019-2024 (2019-01-22 to
+--     2024-12-10); band_* = its 2.5th and 97.5th percentiles, per window and for all, alcohol and sober-crash deaths.
+--     band5_* = the same for five-year pools (2019-2023), used when only five holidays are in a query (New Year's Eve
+--     overnight, which has no 2024 row).
+--     Daily counts vary 1.7 times as much as Poisson, so the band is used instead of a Poisson test.
+CREATE OR REPLACE TABLE ltools.fars.holiday_comparison AS
+WITH cr AS (
+  SELECT make_date(a.YEAR, a.MONTH, a.DAY) AS crash_date, CASE WHEN a.HOUR BETWEEN 0 AND 23 THEN a.HOUR END AS hour,
+    a.FATALS AS fatalities, c.ai_share
+  FROM acc_raw a JOIN ltools.fars.crashes c ON c.crash_key = a.YEAR * 1000000 + a.ST_CASE
+), w AS (
+  SELECT 'Whole date' AS time_window, crash_date AS window_date, * FROM cr
+  UNION ALL SELECT 'Daytime (6am-5:59pm)', crash_date, * FROM cr WHERE hour BETWEEN 6 AND 17
+  UNION ALL SELECT 'Night of the date (midnight-5:59am and 6pm-11:59pm)', crash_date, * FROM cr WHERE hour < 6 OR hour >= 18
+  UNION ALL SELECT 'Overnight from 6pm (to 5:59am next day)', CASE WHEN hour >= 18 THEN crash_date ELSE crash_date - 1 END, *
+    FROM cr WHERE hour < 6 OR hour >= 18
+), cal AS (
+  SELECT tw.time_window, CAST(g AS DATE) AS window_date
+  FROM generate_series(DATE '2019-01-01', DATE '2024-12-31', INTERVAL 1 DAY) t(g),
+    (SELECT DISTINCT time_window FROM w) tw
+  WHERE NOT (tw.time_window LIKE 'Overnight%' AND CAST(g AS DATE) = DATE '2024-12-31')
+), dw AS (
+  SELECT cal.time_window, cal.window_date, coalesce(sum(w.fatalities), 0) AS deaths,
+    coalesce(sum(w.fatalities * w.fatalities), 0) AS deaths_sq,
+    coalesce(sum(w.fatalities * w.ai_share), 0) AS alcohol_deaths, coalesce(sum(w.fatalities * (1 - w.ai_share)), 0) AS sober_deaths
+  FROM cal LEFT JOIN w ON w.time_window = cal.time_window AND w.window_date = cal.window_date GROUP BY ALL
+), base AS (
+  SELECT yr, make_date(yr, 5, 31) - CAST((dayofweek(make_date(yr, 5, 31)) + 6) % 7 AS INT) AS memorial,
+    make_date(yr, 9, 1) + CAST((8 - dayofweek(make_date(yr, 9, 1))) % 7 AS INT) AS labor,
+    make_date(yr, 11, 1) + CAST((4 - dayofweek(make_date(yr, 11, 1)) + 7) % 7 AS INT) + 21 AS thanksgiving
+  FROM (SELECT unnest(range(2019, 2025)) AS yr)
+), hol AS (
+  SELECT yr, 'New Year''s Day' AS holiday, make_date(yr, 1, 1) AS holiday_date FROM base
+  UNION ALL SELECT yr, 'Independence Day (July 4)', make_date(yr, 7, 4) FROM base
+  UNION ALL SELECT yr, 'Memorial Day', memorial FROM base
+  UNION ALL SELECT yr, 'Sunday before Memorial Day', memorial - 1 FROM base
+  UNION ALL SELECT yr, 'Labor Day', labor FROM base
+  UNION ALL SELECT yr, 'Sunday before Labor Day', labor - 1 FROM base
+  UNION ALL SELECT yr, 'Thanksgiving Wednesday', thanksgiving - 1 FROM base
+  UNION ALL SELECT yr, 'Thanksgiving Day', thanksgiving FROM base
+  UNION ALL SELECT yr, 'Friday after Thanksgiving', thanksgiving + 1 FROM base
+  UNION ALL SELECT yr, 'Saturday after Thanksgiving', thanksgiving + 2 FROM base
+  UNION ALL SELECT yr, 'Sunday after Thanksgiving', thanksgiving + 3 FROM base
+  UNION ALL SELECT yr, 'Christmas Eve', make_date(yr, 12, 24) FROM base
+  UNION ALL SELECT yr, 'Christmas Day', make_date(yr, 12, 25) FROM base
+  UNION ALL SELECT yr, 'New Year''s Eve', make_date(yr, 12, 31) FROM base
+), excl AS (SELECT DISTINCT holiday_date FROM hol
+), offs AS (SELECT unnest([-21, -14, -7, 7, 14, 21]) AS k
+), cmp AS (
+  SELECT h.holiday, h.yr, h.holiday_date, 'Holiday' AS day_role, h.holiday_date AS compared_date FROM hol h
+  UNION ALL
+  SELECT h.holiday, h.yr, h.holiday_date, 'Same weekday, 1-3 weeks either side', h.holiday_date + o.k FROM hol h, offs o
+  WHERE h.holiday_date + o.k NOT IN (SELECT holiday_date FROM excl)
+  UNION ALL
+  SELECT h.holiday, h.yr, h.holiday_date, 'Sunday, 1-3 weeks either side', h.holiday_date - 1 + o.k FROM hol h, offs o
+  WHERE h.holiday IN ('Memorial Day', 'Labor Day') AND h.holiday_date - 1 + o.k NOT IN (SELECT holiday_date FROM excl)
+), rows_ AS (
+  SELECT cmp.holiday, cmp.yr AS holiday_year, cmp.holiday_date, dw.time_window, cmp.day_role, cmp.compared_date,
+    dw.deaths, dw.deaths_sq, dw.alcohol_deaths, dw.sober_deaths
+  FROM cmp JOIN dw ON dw.window_date = cmp.compared_date
+  -- a matched date only counts when the holiday's own window exists (New Year's Eve 2024 overnight does not)
+  WHERE EXISTS (SELECT 1 FROM dw d2 WHERE d2.time_window = dw.time_window AND d2.window_date = cmp.holiday_date)
+), ordd AS (
+  SELECT dw.time_window, dw.window_date, dw.deaths, dw.alcohol_deaths, dw.sober_deaths,
+    avg(b.deaths) AS b_deaths, avg(b.alcohol_deaths) AS b_alcohol, avg(b.sober_deaths) AS b_sober
+  FROM dw, offs o, dw b
+  WHERE b.time_window = dw.time_window AND b.window_date = dw.window_date + o.k AND b.window_date NOT IN (SELECT holiday_date FROM excl)
+    AND dw.window_date BETWEEN DATE '2019-01-22' AND DATE '2024-12-10'
+    AND NOT EXISTS (SELECT 1 FROM hol h WHERE abs(datediff('day', h.holiday_date, dw.window_date)) <= 3)
+  GROUP BY ALL
+), ordmd AS (
+  SELECT time_window, month(window_date) AS m, day(window_date) AS d,
+    sum(deaths) / sum(b_deaths) AS r, sum(alcohol_deaths) / sum(b_alcohol) AS ra, sum(sober_deaths) / sum(b_sober) AS rs
+  FROM ordd GROUP BY ALL HAVING count(*) = 6
+), band AS (
+  SELECT time_window, count(*) AS band_ordinary_dates,
+    quantile_cont(r, 0.025) AS band_low, quantile_cont(r, 0.975) AS band_high,
+    quantile_cont(ra, 0.025) AS band_alcohol_low, quantile_cont(ra, 0.975) AS band_alcohol_high,
+    quantile_cont(rs, 0.025) AS band_sober_low, quantile_cont(rs, 0.975) AS band_sober_high
+  FROM ordmd GROUP BY ALL
+), ordmd5 AS (
+  SELECT time_window, month(window_date) AS m, day(window_date) AS d,
+    sum(deaths) / sum(b_deaths) AS r, sum(alcohol_deaths) / sum(b_alcohol) AS ra, sum(sober_deaths) / sum(b_sober) AS rs
+  FROM ordd WHERE year(window_date) <= 2023 GROUP BY ALL HAVING count(*) = 5
+), band5 AS (
+  SELECT time_window, quantile_cont(r, 0.025) AS band5_low, quantile_cont(r, 0.975) AS band5_high,
+    quantile_cont(ra, 0.025) AS band5_alcohol_low, quantile_cont(ra, 0.975) AS band5_alcohol_high,
+    quantile_cont(rs, 0.025) AS band5_sober_low, quantile_cont(rs, 0.975) AS band5_sober_high
+  FROM ordmd5 GROUP BY ALL
+)
+SELECT r.holiday, r.holiday_year, r.holiday_date, r.time_window, r.day_role, r.compared_date,
+  CASE WHEN r.day_role = 'Holiday' THEN 1.0
+       ELSE 1.0 / count(*) OVER (PARTITION BY r.holiday, r.holiday_year, r.time_window, r.day_role) END AS date_weight,
+  r.deaths, r.deaths_sq, r.alcohol_deaths, r.sober_deaths,
+  b.band_ordinary_dates, b.band_low, b.band_high, b.band_alcohol_low, b.band_alcohol_high, b.band_sober_low, b.band_sober_high,
+  b5.band5_low, b5.band5_high, b5.band5_alcohol_low, b5.band5_alcohol_high, b5.band5_sober_low, b5.band5_sober_high
+FROM rows_ r JOIN band b USING (time_window) JOIN band5 b5 USING (time_window);
+
+-- 13. Two-vehicle crashes, one row per year x state x this vehicle's class x the other vehicle's class: crashes with
+--     exactly two vehicles in transport (VE_FORMS = 2) and no one outside the two vehicles killed. Each crash appears
+--     twice, once from each vehicle. Deaths = occupants (PER_TYP 1, 2, 9) with INJ_SEV 4. vehicle_class splits NHTSA body
+--     type 67 (pickup over 10,000 lb gross vehicle weight, "Class 3" and up) out of the large-truck group (60-79) and
+--     out of the pickup range (30-39), where neither grouping shows it.
+CREATE OR REPLACE TABLE ltools.fars.two_vehicle_crashes AS
+WITH vk AS (
+  SELECT v.data_year AS year, v.ST_CASE, v.VEH_NO,
+    CASE WHEN v.BODY_TYP BETWEEN 1 AND 13 OR v.BODY_TYP = 17 THEN 'Passenger car'
+         WHEN v.BODY_TYP IN (14, 15, 16, 19) THEN 'SUV'
+         WHEN v.BODY_TYP BETWEEN 20 AND 29 THEN 'Van'
+         WHEN v.BODY_TYP BETWEEN 30 AND 39 THEN 'Pickup (up to 10,000 lb)'
+         WHEN v.BODY_TYP BETWEEN 40 AND 49 THEN 'Other light truck'
+         WHEN v.BODY_TYP BETWEEN 50 AND 59 THEN 'Bus'
+         WHEN v.BODY_TYP = 67 THEN 'Heavy pickup (over 10,000 lb)'
+         WHEN v.BODY_TYP BETWEEN 60 AND 79 THEN 'Large truck (not a pickup)'
+         WHEN v.BODY_TYP BETWEEN 80 AND 89 THEN 'Motorcycle or moped'
+         ELSE 'Other or unknown' END AS vehicle_class,
+    count(p.PER_NO) FILTER (WHERE p.INJ_SEV = 4) AS killed
+  FROM veh_raw v
+  LEFT JOIN per_raw p ON p.data_year = v.data_year AND p.ST_CASE = v.ST_CASE AND p.VEH_NO = v.VEH_NO AND p.PER_TYP IN (1, 2, 9)
+  GROUP BY ALL
+), two AS (
+  SELECT a.YEAR AS year, a.ST_CASE, a.STATENAME AS state_name FROM acc_raw a
+  WHERE a.VE_FORMS = 2 AND NOT EXISTS (SELECT 1 FROM per_raw p WHERE p.data_year = a.YEAR AND p.ST_CASE = a.ST_CASE
+    AND p.PER_TYP NOT IN (1, 2, 9) AND p.INJ_SEV = 4)
+)
+SELECT two.year, two.state_name, x.vehicle_class, y.vehicle_class AS other_vehicle_class,
+  count(*) AS vehicles, sum(x.killed) AS own_occupant_deaths, sum(y.killed) AS other_vehicle_deaths
+FROM two
+JOIN vk x ON x.year = two.year AND x.ST_CASE = two.ST_CASE
+JOIN vk y ON y.year = two.year AND y.ST_CASE = two.ST_CASE AND y.VEH_NO <> x.VEH_NO
+GROUP BY ALL;
+
+-- 14. Drivers' licence state and driving records, one row per state x year (crash state). A crash has an out-of-state
+--     driver when any driver present (DR_PRES 1) holds a licence from another US state (L_STATE 1-56, not the crash
+--     state; foreign 95-97 and unknown 0, 57, 98, 99 are not counted as out of state). Licence state is not residence.
+--     Records (PREV_SPD speeding convictions, PREV_OTH other moving convictions, PREV_DWI impaired-driving convictions, in
+--     the five years before the crash) are counted for drivers licensed in the crash state with both PREV_SPD and PREV_OTH
+--     under 99 (99 = unknown, 998 = no driver).
+CREATE OR REPLACE TABLE ltools.fars.driver_licence_by_state_year AS
+WITH oos AS (
+  SELECT a.YEAR AS year, a.ST_CASE, a.STATENAME AS state_name, a.FATALS AS fatalities,
+    coalesce(bool_or(v.DR_PRES = 1 AND v.L_STATE BETWEEN 1 AND 56 AND v.L_STATE <> a.STATE), false) AS any_out_of_state
+  FROM acc_raw a LEFT JOIN veh_raw v ON v.data_year = a.YEAR AND v.ST_CASE = a.ST_CASE GROUP BY ALL
+), d AS (
+  SELECT year, state_name, sum(fatalities) AS deaths, sum(fatalities * fatalities) AS deaths_sq,
+    coalesce(sum(fatalities) FILTER (WHERE any_out_of_state), 0) AS deaths_out_of_state_driver,
+    coalesce(sum(fatalities * fatalities) FILTER (WHERE NOT any_out_of_state), 0) AS deaths_sq_in_state_only
+  FROM oos GROUP BY ALL
+), drv AS (
+  SELECT v.data_year AS year, a.STATENAME AS state_name,
+    count(*) FILTER (WHERE v.DR_PRES = 1 AND v.L_STATE BETWEEN 1 AND 56) AS drivers_us_licence,
+    count(*) FILTER (WHERE v.DR_PRES = 1 AND v.L_STATE BETWEEN 1 AND 56 AND v.L_STATE <> v.STATE) AS drivers_licensed_elsewhere,
+    count(*) FILTER (WHERE v.L_STATE = v.STATE AND v.PREV_SPD < 99 AND v.PREV_OTH < 99) AS in_state_drivers_record_known,
+    count(*) FILTER (WHERE v.L_STATE = v.STATE AND v.PREV_SPD < 99 AND v.PREV_OTH < 99 AND v.PREV_SPD > 0) AS in_state_drivers_speeding_conviction,
+    count(*) FILTER (WHERE v.L_STATE = v.STATE AND v.PREV_SPD < 99 AND v.PREV_OTH < 99 AND (v.PREV_SPD > 0 OR v.PREV_OTH > 0)) AS in_state_drivers_moving_conviction,
+    coalesce(sum(v.PREV_SPD) FILTER (WHERE v.L_STATE = v.STATE AND v.PREV_SPD < 99 AND v.PREV_OTH < 99), 0) AS in_state_speeding_convictions,
+    coalesce(sum(v.PREV_OTH) FILTER (WHERE v.L_STATE = v.STATE AND v.PREV_SPD < 99 AND v.PREV_OTH < 99), 0) AS in_state_other_moving_convictions
+  FROM veh_raw v JOIN acc_raw a ON a.YEAR = v.data_year AND a.ST_CASE = v.ST_CASE GROUP BY ALL
+)
+SELECT d.state_name || '-' || d.year AS state_year_key, d.*, drv.drivers_us_licence, drv.drivers_licensed_elsewhere,
+  drv.in_state_drivers_record_known, drv.in_state_drivers_speeding_conviction, drv.in_state_drivers_moving_conviction,
+  drv.in_state_speeding_convictions, drv.in_state_other_moving_convictions,
+  sy.population, sy.vmt_millions
+FROM d LEFT JOIN drv USING (year, state_name)
+LEFT JOIN ltools.fars.state_years sy ON sy.year = d.year AND sy.state_name = d.state_name;
+
+-- 15. Other denominators by state and year: FHWA MV-1 registered vehicles and motorcycles and DL-22 licensed drivers
+--     (2019, 2022, 2023, 2024; the 2020 and 2021 tables are not loaded), beside VM-2 miles and Census residents from
+--     state_years for every year, the same figures one year (or one table) earlier, and the US totals' changes.
+--     MV-1 2022 has no Alabama row: taken as the US total less the listed states (125,810 motorcycles, 5,464,382 vehicles).
+--     DL-22 names DC 'Dist. of Col.'. Motorcyclist deaths = killed riders and passengers on motorcycles (persons.road_user).
+CREATE OR REPLACE TABLE ltools.fars.state_denominators AS
+WITH mv AS (
+  SELECT year, CASE WHEN state = 'Dist. of Columbia' THEN 'District of Columbia' ELSE state END AS state_name,
+    mc AS registered_motorcycles, allv AS registered_vehicles
+  FROM read_csv('fhwa/mv1_2019_2024.csv') WHERE state <> 'Total'
+  UNION ALL
+  SELECT 2022, 'Alabama', max(mc) FILTER (WHERE state = 'Total') - sum(mc) FILTER (WHERE state <> 'Total'),
+    max(allv) FILTER (WHERE state = 'Total') - sum(allv) FILTER (WHERE state <> 'Total')
+  FROM read_csv('fhwa/mv1_2019_2024.csv') WHERE year = 2022
+), dl AS (
+  SELECT year, CASE WHEN state IN ('Dist. of Col.', 'Dist. of Columbia') THEN 'District of Columbia' ELSE state END AS state_name,
+    drivers AS licensed_drivers
+  FROM read_csv('fhwa/dl22_2019_2024.csv') WHERE state <> 'Total'
+), moto AS (
+  SELECT cr.year, cr.state_name, count(*) AS motorcyclist_deaths
+  FROM ltools.fars.persons pe JOIN ltools.fars.crashes cr ON cr.crash_key = pe.crash_key
+  WHERE pe.is_killed AND pe.road_user = 'Motorcyclist' GROUP BY ALL
+), s AS (
+  SELECT sy.year, sy.state_name, sy.deaths, sy.deaths_sq, sy.population, sy.vmt_millions,
+    coalesce(moto.motorcyclist_deaths, 0) AS motorcyclist_deaths,
+    mv.registered_vehicles, mv.registered_motorcycles, dl.licensed_drivers
+  FROM ltools.fars.state_years sy
+  LEFT JOIN mv ON mv.year = sy.year AND mv.state_name = sy.state_name
+  LEFT JOIN dl ON dl.year = sy.year AND dl.state_name = sy.state_name
+  LEFT JOIN moto ON moto.year = sy.year AND moto.state_name = sy.state_name
+  WHERE sy.state_name <> 'United States'
+), us AS (
+  SELECT year, sum(vmt_millions) AS us_vmt, sum(population) AS us_population FROM s GROUP BY year
+)
+SELECT s.state_name || '-' || s.year AS state_year_key, s.*,
+  p.year AS prior_year, p.population AS prior_population, p.vmt_millions AS prior_vmt_millions,
+  us.us_vmt / pu.us_vmt - 1 AS us_vmt_change,
+  t.year AS prior_table_year, t.population AS prior_table_population, t.registered_vehicles AS prior_registered_vehicles,
+  t.registered_motorcycles AS prior_registered_motorcycles, t.licensed_drivers AS prior_licensed_drivers
+FROM s
+JOIN us ON us.year = s.year
+LEFT JOIN s p ON p.state_name = s.state_name AND p.year = s.year - 1
+LEFT JOIN us pu ON pu.year = s.year - 1
+LEFT JOIN s t ON t.state_name = s.state_name
+  AND t.year = CASE s.year WHEN 2022 THEN 2019 WHEN 2023 THEN 2022 WHEN 2024 THEN 2023 END;

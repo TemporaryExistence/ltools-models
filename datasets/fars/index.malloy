@@ -20,7 +20,7 @@
 #" Fatal crashes 2019-2024: deaths by state, county, year, road type, time, alcohol and speeding.
 #(agent) Grain: one fatal crash. Count deaths with `deaths` (sum of fatalities), never crashes or people. State vs rest of US: `crashes_by_state_year`.
 #(agent) Chance: Poisson intervals and tests widened for multi-death crashes (variance = sum of fatalities squared, 1.2x Poisson nationally). 'Within chance' only when a test ran; else 'Not tested' or 'Too few'.
-#(agent) Alcohol: use `alcohol_impaired_deaths` (NHTSA imputed); tested-only counts are 45% low in 2024. Speeding is a crash flag that states apply differently (`fast_vehicles_by_state_year`).
+#(agent) Alcohol: use `alcohol_impaired_deaths` (NHTSA imputed); tested-only counts are 45% low in 2024. Speeding is a crash flag that states apply differently (`fast_vehicles_by_state_year`). Weather and EMS times: check `state_field_coverage` before comparing states.
 #(agent) 2024 is not final (`file_status`). No rural vs urban trend (recoded 2022). `*_valued_at_vsl` sums over all years in the query; overlapping values must not be added.
 source: crashes is motherduck.table('fars.crashes') extend {
   primary_key: crash_key
@@ -610,6 +610,8 @@ source: vehicles is motherduck.table('fars.vehicles') extend {
   dimension:
     #" True when recorded travel speed is 10+ mph over the posted limit (null when either is unknown).
     over_limit_by_10 is travel_speed_mph >= posted_speed_limit_mph + 10
+    #" `vehicle_type` with pickups over 10,000 lb (body type 67) split out of 'Large truck', where NHTSA's grouping hides them; tolls in `two_vehicle_crashes`.
+    vehicle_class is pick 'Heavy pickup (over 10,000 lb)' when body_type_code = 67 pick 'Large truck (not a pickup)' when vehicle_type = 'Large truck' pick 'Pickup (up to 10,000 lb)' when vehicle_type = 'Pickup' else vehicle_type
 
   measure:
     #" Vehicles in fatal crashes.
@@ -797,7 +799,7 @@ source: fast_vehicles_by_state_year is vehicles -> {
 
 #" People in fatal crashes: who died, belts, pedestrians, light and location.
 #(agent) `deaths` counts people killed; `people_involved` everyone. Motorcyclist is a `road_user`. Pedalcyclists change definition in 2022.
-#(agent) `restraint` is for passenger-vehicle occupants only; `unbelted_share` uses known use. Dark = all three dark codes. Unknown codes jump in some state-years: see `restraint_unknown_share`, `pedestrian_location_unknown_share`.
+#(agent) `restraint` is for passenger-vehicle occupants only; `unbelted_share` uses known use. Dark = all three dark codes. Unknown codes jump in some state-years: see `restraint_unknown_share`, `pedestrian_location_unknown_share`; by state, `state_field_coverage`. Drivers 75+: `killed_drivers_alcohol_by_age`.
 #(agent) State or county vs the rest: `persons_by_state_year`, `pedestrians_by_county_year`. Chance: Wilson intervals; people treated as independent.
 source: persons is motherduck.table('fars.persons') extend {
   primary_key: person_key
@@ -2766,5 +2768,517 @@ source: nc_speeding_definitions is motherduck.table('fars.nc_speeding_definition
       deaths_vehicle_10_over_limit
       fars_over_ncdot is fars_speeding_related_deaths / ncdot_speed_related_deaths
     order_by: `year`
+  }
+}
+
+// ===== Inference build (2026-10-23): definitions for the verified inferences in fars/INFERENCES.md =====
+// Tables: load_fars.sql sections 11-15. Raw-file checks: model-v2/verify/check_inferences.py.
+
+#" How fully each state fills weather, EMS times, belt use, recorded speed, drug tests, distraction and charges, with a comparable label per field.
+#(agent) Grain: state x year x rural/urban (counts). Check a field in `field_coverage_by_state` before comparing states on it: dropping unknown codes, the usual SQL move, gives confident wrong shares (Virginia's crashes read 88% wet; six large states have EMS times for under 10% of crashes).
+#(agent) Labels: 'Comparable' when 80%+ of records hold a usable value, 'Use with care' at 50-80%, 'Not comparable' under 50% or when a yearly share moved 30+ points. Answer views give a figure only where its field is comparable and say why not otherwise.
+#(agent) EMS times are signed intervals wrapped across midnight: a notification 3 minutes before the crash is -3, not 1,437. The drug lab list changed in 2022: compare lab results within 2019-2021 or within 2022-2024.
+source: state_field_coverage is motherduck.table('fars.state_field_coverage') extend {
+  measure:
+    #" Fatal crashes.
+    crash_count is crashes.sum()
+    #" People killed.
+    total_deaths is deaths.sum()
+    #" Share of crashes with weather recorded (not 98 or 99).
+    # percent
+    weather_recorded_share is 1 - crashes_weather_unknown.sum() / nullif(crashes.sum(), 0)
+    #" Share of crashes with a usable EMS notification-to-arrival time (arrival 0-720 minutes after notification).
+    # percent
+    ems_response_time_share is crashes_response_time_valid.sum() / nullif(crashes.sum(), 0)
+    #" Share of crashes with crash and notification times both known.
+    # percent
+    notification_time_share is crashes_notification_time_valid.sum() / nullif(crashes.sum(), 0)
+    #" Of crashes with both times, the share notified before the recorded crash time (a clock error).
+    # percent
+    notified_before_crash_share is crashes_notified_before_crash.sum() / nullif(crashes_notification_time_valid.sum(), 0)
+    #" Of crashes not coded 'not transported', the share with a usable crash-to-hospital time.
+    # percent
+    hospital_time_share is crashes_hospital_time_valid.sum() / nullif(crashes_not_coded_untransported.sum(), 0)
+    #" Share of killed passenger-vehicle occupants whose belt use is known.
+    # percent
+    belt_use_known_share is 1 - killed_pv_restraint_unknown.sum() / nullif(killed_pv_occupants.sum(), 0)
+    #" Share of vehicles with a recorded travel speed.
+    # percent
+    speed_recorded_share is vehicles_speed_recorded.sum() / nullif(vehicles.sum(), 0)
+    #" Share of killed drivers tested for drugs.
+    # percent
+    drug_tested_share is killed_drivers_drug_tested.sum() / nullif(killed_drivers.sum(), 0)
+    #" Share of drivers whose distraction is reported (not only 'not reported').
+    # percent
+    distraction_reported_share is 1 - drivers_distraction_not_reported.sum() / nullif(drivers.sum(), 0)
+    #" Share of surviving drivers tested at .08+ whose charges are reported.
+    # percent
+    charges_reported_share is 1 - surviving_drivers_08_violations_not_reported.sum() / nullif(surviving_drivers_08.sum(), 0)
+
+  #" Every state: share of records filled for each field, with a comparable label per field (also 'Not comparable' when a yearly share moved 30+ points).
+  view: field_coverage_by_state is {
+    group_by: state_name, `year`
+    aggregate:
+      cr is crashes.sum(), wu is crashes_weather_unknown.sum(), rv is crashes_response_time_valid.sum(), nv is crashes_notification_time_valid.sum()
+      nb is crashes_notified_before_crash.sum(), tu is crashes_not_coded_untransported.sum(), hv is crashes_hospital_time_valid.sum()
+      pvo is killed_pv_occupants.sum(), pvu is killed_pv_restraint_unknown.sum(), veh is vehicles.sum(), vsr is vehicles_speed_recorded.sum()
+      kd is killed_drivers.sum(), kdt is killed_drivers_drug_tested.sum(), drv is drivers.sum(), dnr is drivers_distraction_not_reported.sum()
+      s8 is surviving_drivers_08.sum(), s8nr is surviving_drivers_08_violations_not_reported.sum()
+  } -> {
+    group_by: state_name
+    aggregate:
+      crashes is cr.sum()
+      weather_recorded_share is 1 - wu.sum() / nullif(cr.sum(), 0)
+      ems_response_time_share is rv.sum() / nullif(cr.sum(), 0)
+      notification_time_share is nv.sum() / nullif(cr.sum(), 0)
+      notified_before_crash_share is nb.sum() / nullif(nv.sum(), 0)
+      hospital_time_share is hv.sum() / nullif(tu.sum(), 0)
+      belt_use_known_share is 1 - pvu.sum() / nullif(pvo.sum(), 0)
+      speed_recorded_share is vsr.sum() / nullif(veh.sum(), 0)
+      drug_tested_share is kdt.sum() / nullif(kd.sum(), 0)
+      distraction_reported_share is 1 - dnr.sum() / nullif(drv.sum(), 0)
+      charges_reported_share is 1 - s8nr.sum() / nullif(s8.sum(), 0)
+      w_swing is max(pick 1 - wu / cr when cr >= 20 else null) - min(pick 1 - wu / cr when cr >= 20 else null)
+      r_swing is max(pick rv / cr when cr >= 20 else null) - min(pick rv / cr when cr >= 20 else null)
+      n_swing is max(pick nv / cr when cr >= 20 else null) - min(pick nv / cr when cr >= 20 else null)
+      h_swing is max(pick hv / tu when tu >= 20 else null) - min(pick hv / tu when tu >= 20 else null)
+      b_swing is max(pick 1 - pvu / pvo when pvo >= 20 else null) - min(pick 1 - pvu / pvo when pvo >= 20 else null)
+      s_swing is max(pick vsr / veh when veh >= 20 else null) - min(pick vsr / veh when veh >= 20 else null)
+      g_swing is max(pick kdt / kd when kd >= 20 else null) - min(pick kdt / kd when kd >= 20 else null)
+      d_swing is max(pick 1 - dnr / drv when drv >= 20 else null) - min(pick 1 - dnr / drv when drv >= 20 else null)
+      c_swing is max(pick 1 - s8nr / s8 when s8 >= 20 else null) - min(pick 1 - s8nr / s8 when s8 >= 20 else null)
+  } -> {
+    select:
+      state_name, crashes
+      weather_recorded_share
+      weather is pick 'Not comparable: filled share moved 30+ points between years' when w_swing >= 0.3 pick 'Comparable' when weather_recorded_share >= 0.8 pick 'Use with care: 50-80% filled' when weather_recorded_share >= 0.5 else 'Not comparable: under 50% filled'
+      ems_response_time_share
+      ems_response_times is pick 'Not comparable: filled share moved 30+ points between years' when r_swing >= 0.3 pick 'Comparable' when ems_response_time_share >= 0.8 pick 'Use with care: 50-80% filled' when ems_response_time_share >= 0.5 else 'Not comparable: under 50% filled'
+      notification_time_share, notified_before_crash_share
+      notification_clock is pick 'Not reliable: 20%+ notified before the crash' when notified_before_crash_share >= 0.2 pick 'Not comparable: filled share moved 30+ points between years' when n_swing >= 0.3 pick 'Reliable' when notification_time_share >= 0.8 pick 'Use with care: 50-80% filled' when notification_time_share >= 0.5 else 'Not comparable: under 50% filled'
+      hospital_time_share
+      hospital_times is pick 'Not comparable: filled share moved 30+ points between years' when h_swing >= 0.3 pick 'Comparable' when hospital_time_share >= 0.8 pick 'Use with care: 50-80% filled' when hospital_time_share >= 0.5 else 'Not comparable: under 50% filled'
+      belt_use_known_share
+      belt_use is pick 'Not comparable: filled share moved 30+ points between years' when b_swing >= 0.3 pick 'Comparable' when belt_use_known_share >= 0.8 pick 'Use with care: 50-80% filled' when belt_use_known_share >= 0.5 else 'Not comparable: under 50% filled'
+      speed_recorded_share
+      recorded_speed is pick 'Not comparable: filled share moved 30+ points between years' when s_swing >= 0.3 pick 'Comparable' when speed_recorded_share >= 0.8 pick 'Use with care: 50-80% filled' when speed_recorded_share >= 0.5 else 'Not comparable: under 50% filled'
+      drug_tested_share
+      drug_tests is pick 'Not comparable: tested share moved 30+ points between years' when g_swing >= 0.3 pick 'Comparable' when drug_tested_share >= 0.8 pick 'Use with care: 50-80% tested' when drug_tested_share >= 0.5 else 'Not comparable: under 50% tested'
+      distraction_reported_share
+      distraction is pick 'Not comparable: filled share moved 30+ points between years' when d_swing >= 0.3 pick 'Comparable' when distraction_reported_share >= 0.8 pick 'Use with care: 50-80% filled' when distraction_reported_share >= 0.5 else 'Not comparable: under 50% filled'
+      charges_reported_share
+      charges is pick 'Not comparable: filled share moved 30+ points between years' when c_swing >= 0.3 pick 'Comparable' when charges_reported_share >= 0.8 pick 'Use with care: 50-80% filled' when charges_reported_share >= 0.5 else 'Not comparable: under 50% filled'
+    order_by: state_name
+  }
+
+  #" Every state: share of deaths in rain, sleet or snow, over all deaths and over known weather; the known-weather share and its rank only where weather is comparable.
+  view: precipitation_deaths_by_state is {
+    group_by: state_name, `year`
+    aggregate: d is deaths.sum(), dp is deaths_precipitation.sum(), dwu is deaths_weather_unknown.sum(), cr is crashes.sum(), wu is crashes_weather_unknown.sum()
+  } -> {
+    group_by: state_name
+    aggregate:
+      deaths is d.sum()
+      precipitation_deaths is dp.sum()
+      weather_unknown_deaths is dwu.sum()
+      weather_recorded_share is 1 - wu.sum() / nullif(cr.sum(), 0)
+      w_swing is max(pick 1 - wu / cr when cr >= 20 else null) - min(pick 1 - wu / cr when cr >= 20 else null)
+      precipitation_share_of_all_deaths is dp.sum() / nullif(d.sum(), 0)
+      known_share is dp.sum() / nullif(d.sum() - dwu.sum(), 0)
+      us_precipitation_share_of_all_deaths is all(dp.sum()) / all(d.sum())
+      states_compared is all(count(state_name))
+      k_basis is pick dp.sum() / nullif(d.sum() - dwu.sum(), 0) when 1 - wu.sum() / nullif(cr.sum(), 0) >= 0.8 and max(pick 1 - wu / cr when cr >= 20 else null) - min(pick 1 - wu / cr when cr >= 20 else null) < 0.3 and d.sum() >= 30 else null
+    calculate: rank_k is rank() { order_by: k_basis desc }
+  } -> {
+    select:
+      state_name, deaths, precipitation_deaths, weather_unknown_deaths, precipitation_share_of_all_deaths, us_precipitation_share_of_all_deaths, weather_recorded_share
+      weather is pick 'Not comparable: filled share moved 30+ points between years' when w_swing >= 0.3 pick 'Comparable' when weather_recorded_share >= 0.8 pick 'Use with care: 50-80% filled' when weather_recorded_share >= 0.5 else 'Not comparable: under 50% filled'
+      precipitation_share_of_known_weather is pick known_share when k_basis is not null else null
+      rank_share_of_known_weather is pick rank_k when k_basis is not null and states_compared = 51 else null
+      states_compared
+    order_by: state_name
+  }
+
+  #" Every state: share of crashes waiting 20+ minutes for EMS after notification, notified 30+ minutes after the crash, reaching hospital 60+ minutes after; each only where that time field is usable.
+  view: ems_times_by_state is {
+    group_by: state_name, `year`
+    aggregate:
+      cr is crashes.sum(), rv is crashes_response_time_valid.sum(), r20 is crashes_response_20_plus.sum(), nv is crashes_notification_time_valid.sum(), nb is crashes_notified_before_crash.sum()
+      n30 is crashes_notified_30_plus.sum(), dsv is dark_single_vehicle_notification_valid.sum(), ds30 is dark_single_vehicle_notified_30_plus.sum()
+      tu is crashes_not_coded_untransported.sum(), hv is crashes_hospital_time_valid.sum(), h60 is crashes_hospital_60_plus.sum()
+  } -> {
+    group_by: state_name
+    aggregate:
+      crashes is cr.sum()
+      ems_response_time_share is rv.sum() / nullif(cr.sum(), 0)
+      r_swing is max(pick rv / cr when cr >= 20 else null) - min(pick rv / cr when cr >= 20 else null)
+      r20_share is r20.sum() / nullif(rv.sum(), 0)
+      notification_time_share is nv.sum() / nullif(cr.sum(), 0)
+      notified_before_crash_share is nb.sum() / nullif(nv.sum(), 0)
+      n_swing is max(pick nv / cr when cr >= 20 else null) - min(pick nv / cr when cr >= 20 else null)
+      n30_share is n30.sum() / nullif(nv.sum(), 0)
+      ds30_share is ds30.sum() / nullif(dsv.sum(), 0)
+      dsv_n is dsv.sum()
+      hospital_time_share is hv.sum() / nullif(tu.sum(), 0)
+      h_swing is max(pick hv / tu when tu >= 20 else null) - min(pick hv / tu when tu >= 20 else null)
+      h60_share is h60.sum() / nullif(hv.sum(), 0)
+      rv_n is rv.sum()
+  } -> {
+    select:
+      state_name, crashes, ems_response_time_share
+      ems_response_times is pick 'Not comparable: filled share moved 30+ points between years' when r_swing >= 0.3 pick 'Comparable' when ems_response_time_share >= 0.8 pick 'Use with care: 50-80% filled' when ems_response_time_share >= 0.5 else 'Not comparable: under 50% filled'
+      response_20_plus_share is pick r20_share when ems_response_time_share >= 0.8 and r_swing < 0.3 else null
+      notification_time_share, notified_before_crash_share
+      notification_clock is pick 'Not reliable: 20%+ notified before the crash' when notified_before_crash_share >= 0.2 pick 'Not comparable: filled share moved 30+ points between years' when n_swing >= 0.3 pick 'Reliable' when notification_time_share >= 0.8 pick 'Use with care: 50-80% filled' when notification_time_share >= 0.5 else 'Not comparable: under 50% filled'
+      notified_30_plus_share is pick n30_share when notification_time_share >= 0.8 and notified_before_crash_share < 0.2 and n_swing < 0.3 else null
+      dark_single_vehicle_notified_30_plus_share is pick ds30_share when notification_time_share >= 0.8 and notified_before_crash_share < 0.2 and n_swing < 0.3 else null
+      dark_single_vehicle_crashes_timed is dsv_n
+      hospital_time_share
+      hospital_times is pick 'Not comparable: filled share moved 30+ points between years' when h_swing >= 0.3 pick 'Comparable' when hospital_time_share >= 0.8 pick 'Use with care: 50-80% filled' when hospital_time_share >= 0.5 else 'Not comparable: under 50% filled'
+      hospital_60_plus_share is pick h60_share when hospital_time_share >= 0.8 and h_swing < 0.3 else null
+      crashes_with_response_time is rv_n
+    order_by: state_name
+  }
+
+  #" Every state: phone distraction per 1,000 drivers, drug results of tested killed drivers, and charges recorded for surviving .08+ drivers; each only where the field is filled.
+  view: driver_records_by_state is {
+    group_by: state_name, `year`
+    aggregate:
+      drv is drivers.sum(), dnr is drivers_distraction_not_reported.sum(), ph is drivers_phone_distraction.sum(), kd is killed_drivers.sum(), kdt is killed_drivers_drug_tested.sum()
+      kdp is killed_drivers_drugs_police_reported.sum(), kdl is killed_drivers_drug_lab_positive.sum(), s8 is surviving_drivers_08.sum(), s8c is surviving_drivers_08_charged.sum()
+  } -> {
+    group_by: state_name
+    aggregate:
+      drivers is drv.sum()
+      distraction_reported_share is 1 - dnr.sum() / nullif(drv.sum(), 0)
+      d_swing is max(pick 1 - dnr / drv when drv >= 20 else null) - min(pick 1 - dnr / drv when drv >= 20 else null)
+      phone_rate is 1000 * ph.sum() / nullif(drv.sum(), 0)
+      killed_drivers is kd.sum()
+      drug_tested_share is kdt.sum() / nullif(kd.sum(), 0)
+      g_swing is max(pick kdt / kd when kd >= 20 else null) - min(pick kdt / kd when kd >= 20 else null)
+      police_share is kdp.sum() / nullif(kdt.sum(), 0)
+      lab_share is kdl.sum() / nullif(kdt.sum(), 0)
+      surviving_drivers_08 is s8.sum()
+      charged_share is s8c.sum() / nullif(s8.sum(), 0)
+  } -> {
+    select:
+      state_name, drivers, distraction_reported_share
+      distraction is pick 'Not comparable: filled share moved 30+ points between years' when d_swing >= 0.3 pick 'Comparable' when distraction_reported_share >= 0.8 pick 'Use with care: 50-80% filled' when distraction_reported_share >= 0.5 else 'Not comparable: under 50% filled'
+      phone_distraction_per_1000_drivers is pick phone_rate when distraction_reported_share >= 0.8 and d_swing < 0.3 else null
+      killed_drivers, drug_tested_share
+      drug_tests is pick 'Not comparable: tested share moved 30+ points between years' when g_swing >= 0.3 pick 'Comparable' when drug_tested_share >= 0.8 pick 'Use with care: 50-80% tested' when drug_tested_share >= 0.5 else 'Not comparable: under 50% tested'
+      police_reported_drugs_share_of_tested is pick police_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
+      lab_positive_share_of_tested is pick lab_share when drug_tested_share >= 0.8 and g_swing < 0.3 else null
+      surviving_drivers_08
+      charged_share_recorded is charged_share
+    order_by: state_name
+  }
+}
+
+#" Holidays vs the same weekday 1-3 weeks either side, 2019-2024: deaths by time window, alcohol vs sober crashes, against the range of ordinary dates.
+#(agent) Grain: holiday x year x time window x compared date; matched rows carry `date_weight`, so sums are per-date averages. Use `holiday_vs_matched_days` with one `time_window`: comparing a holiday with an average day, or grouping by calendar date, misplaces the excess (Thanksgiving's is Wednesday 6pm-6am, across two dates).
+#(agent) Chance: daily deaths vary 1.7 times as much as Poisson, so 'beyond chance' means outside the 95% range of 273 ordinary dates over the same six years (five-year range when a query holds five; 'Not tested' with fewer). National counts, not per-mile risk: no daily traffic data.
+source: holiday_comparison is motherduck.table('fars.holiday_comparison') extend {
+  measure:
+    #" Holiday occurrences (years) in the query.
+    holidays is count(holiday_year) { where: day_role = 'Holiday' }
+    #" Deaths per holiday date in the window.
+    holiday_deaths_per_date is deaths.sum() { where: day_role = 'Holiday' } / nullif(holidays, 0)
+    #" Deaths per matched date (same weekday 1-3 weeks either side, other holidays left out).
+    matched_deaths_per_date is sum(deaths * date_weight) { where: day_role = 'Same weekday, 1-3 weeks either side' } / nullif(holidays, 0)
+    #" Holiday deaths per date over matched deaths per date.
+    deaths_ratio is holiday_deaths_per_date / nullif(matched_deaths_per_date, 0)
+    #" Extra deaths per holiday date over the matched dates.
+    excess_deaths_per_date is holiday_deaths_per_date - matched_deaths_per_date
+    #" Deaths in crashes with a driver at .08+ (NHTSA imputed), per holiday date.
+    holiday_alcohol_deaths_per_date is alcohol_deaths.sum() { where: day_role = 'Holiday' } / nullif(holidays, 0)
+    #" The same per matched date.
+    matched_alcohol_deaths_per_date is sum(alcohol_deaths * date_weight) { where: day_role = 'Same weekday, 1-3 weeks either side' } / nullif(holidays, 0)
+    #" Holiday over matched, alcohol-crash deaths.
+    alcohol_ratio is holiday_alcohol_deaths_per_date / nullif(matched_alcohol_deaths_per_date, 0)
+    #" Deaths in crashes with no driver at .08+ (imputed), per holiday date.
+    holiday_sober_deaths_per_date is sober_deaths.sum() { where: day_role = 'Holiday' } / nullif(holidays, 0)
+    #" The same per matched date.
+    matched_sober_deaths_per_date is sum(sober_deaths * date_weight) { where: day_role = 'Same weekday, 1-3 weeks either side' } / nullif(holidays, 0)
+    #" Holiday over matched, sober-crash deaths.
+    sober_ratio is holiday_sober_deaths_per_date / nullif(matched_sober_deaths_per_date, 0)
+    #" Memorial Day and Labor Day only: deaths per Sunday 1-3 weeks either side of the Sunday before.
+    sunday_deaths_per_date is sum(deaths * date_weight) { where: day_role = 'Sunday, 1-3 weeks either side' } / nullif(count(holiday_year) { where: day_role = 'Sunday, 1-3 weeks either side' }, 0)
+    #" Holiday deaths per date over the nearby Sundays' (Memorial Day and Labor Day).
+    ratio_to_sundays is holiday_deaths_per_date / nullif(sunday_deaths_per_date, 0)
+    #" All deaths against the ordinary-date range: beyond chance or not.
+    deaths_vs_ordinary_dates is pick 'Not tested: one holiday and one time_window at a time' when count(holiday) > 1 or count(time_window) > 1 pick 'Not tested: the chance range needs five or six years' when holidays < 5 pick 'Higher, beyond chance' when deaths_ratio > (pick band_high.max() when holidays = 6 else band5_high.max()) pick 'Lower, beyond chance' when deaths_ratio < (pick band_low.min() when holidays = 6 else band5_low.min()) else 'Within chance'
+    #" Alcohol-crash deaths against the ordinary-date range.
+    alcohol_vs_ordinary_dates is pick 'Not tested: one holiday and one time_window at a time' when count(holiday) > 1 or count(time_window) > 1 pick 'Not tested: the chance range needs five or six years' when holidays < 5 pick 'Higher, beyond chance' when alcohol_ratio > (pick band_alcohol_high.max() when holidays = 6 else band5_alcohol_high.max()) pick 'Lower, beyond chance' when alcohol_ratio < (pick band_alcohol_low.min() when holidays = 6 else band5_alcohol_low.min()) else 'Within chance'
+    #" Sober-crash deaths against the ordinary-date range.
+    sober_vs_ordinary_dates is pick 'Not tested: one holiday and one time_window at a time' when count(holiday) > 1 or count(time_window) > 1 pick 'Not tested: the chance range needs five or six years' when holidays < 5 pick 'Higher, beyond chance' when sober_ratio > (pick band_sober_high.max() when holidays = 6 else band5_sober_high.max()) pick 'Lower, beyond chance' when sober_ratio < (pick band_sober_low.min() when holidays = 6 else band5_sober_low.min()) else 'Within chance'
+
+  #" Each holiday and time window: deaths per date vs matched days, all, alcohol and sober crashes, each against the ordinary-date range; Sundays for Memorial and Labor Day.
+  view: holiday_vs_matched_days is {
+    group_by: holiday, time_window
+    aggregate:
+      holidays, holiday_deaths_per_date, matched_deaths_per_date, deaths_ratio, excess_deaths_per_date, deaths_vs_ordinary_dates
+      holiday_alcohol_deaths_per_date, matched_alcohol_deaths_per_date, alcohol_ratio, alcohol_vs_ordinary_dates
+      holiday_sober_deaths_per_date, matched_sober_deaths_per_date, sober_ratio, sober_vs_ordinary_dates
+      sunday_deaths_per_date, ratio_to_sundays
+      ordinary_range_low is band_low.min()
+      ordinary_range_high is band_high.max()
+    order_by: holiday, time_window
+  }
+
+  #" Each holiday, time window and year: holiday deaths vs the matched days' average (is the excess there every year?).
+  view: holiday_by_year is {
+    group_by: holiday, time_window, holiday_year
+    aggregate: holiday_deaths_per_date, matched_deaths_per_date, deaths_ratio, holiday_alcohol_deaths_per_date, matched_alcohol_deaths_per_date
+    order_by: holiday, time_window, holiday_year
+  }
+}
+
+#" Killed drivers by age: tested BAC vs NHTSA's imputed .08+ share, and how much of the imputed figure rests on drivers never tested.
+#(agent) Grain: year x state x driver age group (killed drivers). `imputed_08_share` is NHTSA's estimate; `tested_floor_share` counts only tested .08+ (as if every untested driver were sober). Where untested drivers are imputed above tested ones (75+), the imputed figure rests on drivers never tested and is likely high: read `imputed_vs_tested`.
+#(agent) Chance: two-proportion test of the untested drivers' imputed share against the tested drivers' positive share, imputed counts treated as observed (a little narrow); 'Too few to test' under 30 in either group.
+source: killed_drivers_alcohol_by_age is persons -> {
+  where: is_killed and person_type = 'Driver'
+  group_by: `year`, state_name is crashes.state_name, driver_age_group is age ? pick '0-15' when < 16 pick '16-20' when < 21 pick '21-24' when < 25 pick '25-34' when < 35 pick '35-44' when < 45 pick '45-54' when < 55 pick '55-64' when < 65 pick '65-74' when < 75 pick '75-84' when < 85 pick '85+' when >= 85 else 'Unknown'
+  aggregate:
+    killed_n is count()
+    tested_n is count() { where: bac_test_status = 'Tested, result known' }
+    tested_08_n is count() { where: tested_bac >= 0.08 }
+    imputed_08_n is imputed_bac08_share.sum()
+    untested_imputed_08_n is imputed_bac08_share.sum() { where: bac_test_status != 'Tested, result known' }
+    untested_drinking_n is count() { where: bac_test_status != 'Tested, result known' and police_reported_drinking }
+} extend {
+  measure:
+    #" Drivers killed.
+    killed_drivers is killed_n.sum()
+    #" Share of killed drivers with a known BAC test result.
+    # percent
+    tested_share is tested_n.sum() / nullif(killed_n.sum(), 0)
+    #" Tested .08+ over all killed drivers: a floor (counts every untested driver as sober).
+    # percent
+    tested_floor_share is tested_08_n.sum() / nullif(killed_n.sum(), 0)
+    #" NHTSA's imputed share of killed drivers at .08+ (the published basis).
+    # percent
+    imputed_08_share is imputed_08_n.sum() / nullif(killed_n.sum(), 0)
+    #" Of tested killed drivers, the share at .08+.
+    # percent
+    tested_positive_share is tested_08_n.sum() / nullif(tested_n.sum(), 0)
+    #" Of untested killed drivers, NHTSA's imputed share at .08+.
+    # percent
+    untested_imputed_share is untested_imputed_08_n.sum() / nullif(killed_n.sum() - tested_n.sum(), 0)
+    #" Of untested killed drivers, the share police reported as drinking.
+    # percent
+    untested_police_drinking_share is untested_drinking_n.sum() / nullif(killed_n.sum() - tested_n.sum(), 0)
+    #" Share of the imputed .08+ count that comes from untested drivers.
+    # percent
+    imputed_share_from_untested is untested_imputed_08_n.sum() / nullif(imputed_08_n.sum(), 0)
+    #" Test statistic: untested drivers' imputed share minus tested drivers' positive share.
+    z_untested_vs_tested is (untested_imputed_share - tested_positive_share) / sqrt(nullif((untested_imputed_08_n.sum() + tested_08_n.sum()) / nullif(killed_n.sum(), 0) * (1 - (untested_imputed_08_n.sum() + tested_08_n.sum()) / nullif(killed_n.sum(), 0)) * (1 / nullif(killed_n.sum() - tested_n.sum(), 0) + 1 / nullif(tested_n.sum(), 0)), 0))
+    #" Whether untested drivers are imputed above tested drivers beyond chance (then the imputed figure is likely high).
+    imputed_vs_tested is pick 'Too few to test' when tested_n.sum() < 30 or killed_n.sum() - tested_n.sum() < 30 pick 'Not tested' when z_untested_vs_tested is null pick 'Untested imputed above tested, beyond chance: imputed figure likely high' when z_untested_vs_tested > 1.96 pick 'Untested imputed below tested, beyond chance' when z_untested_vs_tested < - 1.96 else 'Within chance'
+
+  #" By driver age: killed drivers, share tested, tested floor vs NHTSA's imputed .08+ share, untested vs tested, and whether the imputed figure is likely high.
+  view: alcohol_tested_vs_imputed_by_age is {
+    group_by: driver_age_group
+    aggregate: killed_drivers, tested_share, tested_floor_share, imputed_08_share, tested_positive_share, untested_imputed_share, untested_police_drinking_share, imputed_share_from_untested, imputed_vs_tested
+    order_by: driver_age_group
+  }
+}
+
+#" Two-vehicle crashes by the two vehicles' classes: deaths in each vehicle, so a class's toll on the other vehicle can be compared (pickups over 10,000 lb split out).
+#(agent) Grain: year x state x vehicle_class x other_vehicle_class; each crash counts from both sides. Use `other_vehicle_deaths_per_own_death` with its interval. Heavy pickups (body type 67) sit inside NHTSA's large-truck group and outside the usual pickup range (30-39), so standard groupings hide them.
+#(agent) Per collision, not per mile. Crashes where someone outside the two vehicles died are left out. Interval: ratio of two Poisson counts (multi-death crashes make it a little narrow).
+source: two_vehicle_crashes is motherduck.table('fars.two_vehicle_crashes') extend {
+  measure:
+    #" Vehicles of this class in these crashes (one per crash).
+    crashes_n is vehicles.sum()
+    #" Occupants of this vehicle killed.
+    own_deaths is own_occupant_deaths.sum()
+    #" Occupants of the other vehicle killed.
+    other_deaths is other_vehicle_deaths.sum()
+    #" Deaths in the other vehicle per death in this one.
+    other_vehicle_deaths_per_own_death is other_deaths / nullif(own_deaths, 0)
+    #" Lower end of the 95% interval on that ratio.
+    ratio_low_95 is exp(ln(other_deaths / nullif(own_deaths, 0)) - 1.96 * sqrt(1 / nullif(other_deaths, 0) + 1 / nullif(own_deaths, 0)))
+    #" Upper end of the 95% interval on that ratio.
+    ratio_high_95 is exp(ln(other_deaths / nullif(own_deaths, 0)) + 1.96 * sqrt(1 / nullif(other_deaths, 0) + 1 / nullif(own_deaths, 0)))
+    #" Whether the other vehicle's occupants die more than this vehicle's, beyond chance.
+    other_vs_own is pick 'Too few deaths to test' when own_deaths + other_deaths < 10 pick 'Not tested: no deaths on one side' when own_deaths = 0 or other_deaths = 0 pick 'Other vehicle higher, beyond chance' when ratio_low_95 > 1 pick 'This vehicle higher, beyond chance' when ratio_high_95 < 1 else 'Within chance'
+
+  #" Each pair of vehicle classes: crashes, deaths in each vehicle, deaths in the other vehicle per own death with interval.
+  view: toll_on_other_vehicle is {
+    group_by: vehicle_class, other_vehicle_class
+    aggregate: crashes_n, own_deaths, other_deaths, other_vehicle_deaths_per_own_death, ratio_low_95, ratio_high_95, other_vs_own
+    order_by: vehicle_class, other_vehicle_class
+  }
+
+  #" By year and class: deaths in the vehicles this class collides with, with Poisson interval and the change since 2019 tested.
+  view: toll_on_other_vehicles_by_year is {
+    where: other_vehicle_class != vehicle_class
+    group_by: vehicle_class, `year`
+    aggregate:
+      crashes_n, other_deaths
+      other_deaths_low_95 is pick 0 when other_deaths = 0 else other_deaths * pow(1 - 1 / nullif(9 * other_deaths, 0) - 1.96 / nullif(3 * sqrt(other_deaths), 0), 3)
+      other_deaths_high_95 is (other_deaths + 1) * pow(1 - 1 / (9 * (other_deaths + 1)) + 1.96 / (3 * sqrt(other_deaths + 1)), 3)
+      other_deaths_2019 is all(other_vehicle_deaths.sum() { where: `year` = 2019 }, vehicle_class)
+      years_2019 is all(count() { where: `year` = 2019 }, vehicle_class)
+  } -> {
+    select:
+      vehicle_class, `year`, crashes_n, other_deaths, other_deaths_low_95, other_deaths_high_95, other_deaths_2019
+      vs_2019 is pick 'Not tested: 2019 not in the query' when years_2019 = 0 pick 'Too few deaths to test' when other_deaths + other_deaths_2019 < 10 pick 'Up, beyond chance' when (other_deaths - other_deaths_2019) / sqrt(other_deaths + other_deaths_2019) > 1.96 pick 'Down, beyond chance' when (other_deaths - other_deaths_2019) / sqrt(other_deaths + other_deaths_2019) < - 1.96 else 'Within chance'
+    order_by: vehicle_class, `year`
+  }
+}
+
+#" Deaths in crashes with a driver licensed in another state, in-state-only death rates, and in-state drivers' prior convictions, by state and year.
+#(agent) Grain: state x year. A per-resident rate counts visitors' crashes: `in_state_only_per_100k_residents` leaves out crashes with an out-of-state driver (a floor for a resident's risk; licence state is not residence). Per mile is the better yardstick where visitors drive a lot (Wyoming 48% of deaths).
+#(agent) Convictions (in-state drivers, five years before the crash): rank states on `moving_conviction_share`, not speeding alone; speeding is 26-96% of convicted drivers by state (labelling), and record supply varies, so treat any ranking as a cross-check.
+source: driver_licence_by_state_year is motherduck.table('fars.driver_licence_by_state_year') extend {
+  measure:
+    #" People killed.
+    total_deaths is deaths.sum()
+    #" Deaths in crashes with a driver licensed in another US state.
+    out_of_state_driver_deaths is deaths_out_of_state_driver.sum()
+    #" Share of deaths in crashes with a driver licensed in another US state.
+    # percent
+    out_of_state_driver_share is deaths_out_of_state_driver.sum() / nullif(deaths.sum(), 0)
+    #" Deaths in crashes where every driver with a US licence was licensed in this state.
+    in_state_only_deaths is deaths.sum() - deaths_out_of_state_driver.sum()
+    #" Residents summed over the years in the query (person-years). Census estimates: 2019 from the 2010-2020 intercensal series, 2020-2024 Vintage 2025 (Vintage 2020's 2019 figure is on the older base).
+    residents is population.sum()
+    #" Deaths per 100,000 residents.
+    deaths_per_100k_residents is deaths.sum() / nullif(population.sum() / 100000, 0)
+    #" In-state-only deaths per 100,000 residents.
+    in_state_only_per_100k_residents is in_state_only_deaths / nullif(population.sum() / 100000, 0)
+    #" Deaths per 100 million vehicle-miles (all deaths over VM-2 miles).
+    deaths_per_100m_vmt is deaths.sum() / nullif(vmt_millions.sum() / 100, 0)
+    #" Share of drivers with a US licence who hold another state's.
+    # percent
+    drivers_licensed_elsewhere_share is drivers_licensed_elsewhere.sum() / nullif(drivers_us_licence.sum(), 0)
+    #" In-state drivers with a known driving record.
+    in_state_drivers_with_record is in_state_drivers_record_known.sum()
+    #" Share of in-state drivers with a speeding conviction in the five years before.
+    # percent
+    speeding_conviction_share is in_state_drivers_speeding_conviction.sum() / nullif(in_state_drivers_record_known.sum(), 0)
+    #" Share of in-state drivers with any moving conviction (speeding or other) in the five years before.
+    # percent
+    moving_conviction_share is in_state_drivers_moving_conviction.sum() / nullif(in_state_drivers_record_known.sum(), 0)
+    #" Of in-state drivers with any moving conviction, the share with a speeding conviction (how a state labels convictions).
+    # percent
+    speeding_share_of_convicted is in_state_drivers_speeding_conviction.sum() / nullif(in_state_drivers_moving_conviction.sum(), 0)
+
+  #" Every state: share of deaths with an out-of-state driver; deaths per resident, in-state-only per resident and per mile, with ranks.
+  view: out_of_state_drivers_by_state is {
+    group_by: state_name
+    aggregate:
+      total_deaths, out_of_state_driver_share, drivers_licensed_elsewhere_share, deaths_per_100k_residents, in_state_only_per_100k_residents, deaths_per_100m_vmt
+      states_compared is all(count(state_name))
+      last_year is `year`.max()
+    calculate:
+      r_res is rank() { order_by: deaths_per_100k_residents desc }
+      r_in is rank() { order_by: in_state_only_per_100k_residents desc }
+      r_mi is rank() { order_by: deaths_per_100m_vmt desc }
+  } -> {
+    select:
+      state_name, total_deaths, out_of_state_driver_share, drivers_licensed_elsewhere_share, deaths_per_100k_residents
+      rank_per_resident is pick r_res when states_compared = 51 and total_deaths >= 30 else null
+      in_state_only_per_100k_residents
+      rank_in_state_only is pick r_in when states_compared = 51 and total_deaths >= 30 else null
+      deaths_per_100m_vmt
+      rank_per_mile is pick r_mi when states_compared = 51 and total_deaths >= 30 else null
+      states_compared, last_year
+    order_by: state_name
+  }
+
+  #" Every state: in-state drivers in fatal crashes with a speeding conviction and with any moving conviction, with ranks; speeding's share of convicted drivers.
+  view: driver_convictions_by_state is {
+    group_by: state_name
+    aggregate:
+      in_state_drivers_with_record, speeding_conviction_share, moving_conviction_share, speeding_share_of_convicted
+      states_compared is all(count(state_name))
+    calculate:
+      r_spd is rank() { order_by: speeding_conviction_share desc }
+      r_any is rank() { order_by: moving_conviction_share desc }
+  } -> {
+    select:
+      state_name, in_state_drivers_with_record, moving_conviction_share
+      rank_moving_conviction is pick r_any when states_compared = 51 and in_state_drivers_with_record >= 30 else null
+      speeding_conviction_share
+      rank_speeding_conviction is pick r_spd when states_compared = 51 and in_state_drivers_with_record >= 30 else null
+      speeding_share_of_convicted, states_compared
+    order_by: state_name
+  }
+}
+
+#" Deaths per resident, mile, registered vehicle and licensed driver by state, with each denominator's step from the year before, so a rate moved by a denominator re-estimate shows.
+#(agent) Grain: state x year. Registrations (FHWA MV-1) and licensed drivers (DL-22) exist for 2019 and 2022-2024 only. Rates per vehicle and per driver are shown but not ranked: FHWA's counts jump (New York vehicles 9.4M to 21.0M in 2024, a switch to state data; Arkansas drivers +29% in 2024). `denominator_steps` names the step.
+#(agent) Per-mile change: when a state's VM-2 miles moved 4+ points away from the US change in a year (23 of 153 state-years 2022-2024; Indiana +22% in 2022), read the per-resident change first (`miles_step`). Motorcycles: registrations are not riders (Montana 375 per 1,000 residents vs US 28); compare riders' deaths per resident.
+source: state_denominators is motherduck.table('fars.state_denominators') extend {
+  dimension:
+    #" This year's VM-2 miles over last year's, minus 1.
+    # percent
+    miles_change is vmt_millions / nullif(prior_vmt_millions, 0) - 1
+    #" 'Miles stepped' when the state's miles changed 4+ points more (or less) than US miles that year: a per-mile change then is mostly the miles.
+    miles_step is pick 'Not tested: no earlier year' when prior_vmt_millions is null pick 'Miles stepped: read the per-resident change first' when abs(vmt_millions / nullif(prior_vmt_millions, 0) - 1 - us_vmt_change) >= 0.04 else 'No step'
+    #" Registered vehicles' change from the previous loaded table (2019 for 2022), beyond the population change.
+    # percent
+    registrations_step_beyond_population is (registered_vehicles / nullif(prior_registered_vehicles, 0)) / nullif(population / nullif(prior_table_population, 0), 0) - 1
+    #" Licensed drivers' change from the previous loaded table, beyond the population change.
+    # percent
+    licensed_drivers_step_beyond_population is (licensed_drivers / nullif(prior_licensed_drivers, 0)) / nullif(population / nullif(prior_table_population, 0), 0) - 1
+
+  measure:
+    #" People killed.
+    total_deaths is deaths.sum()
+    #" Deaths per 100,000 residents.
+    deaths_per_100k_residents is deaths.sum() / nullif(population.sum() / 100000, 0)
+    #" Deaths per 100 million vehicle-miles (all deaths over VM-2 miles).
+    deaths_per_100m_vmt is deaths.sum() / nullif(vmt_millions.sum() / 100, 0)
+    #" Deaths per 10,000 registered vehicles (years with MV-1 loaded only). Not for ranking or trends.
+    deaths_per_10k_registered_vehicles is deaths.sum() { where: registered_vehicles is not null } / nullif(registered_vehicles.sum() / 10000, 0)
+    #" Deaths per 100,000 licensed drivers (years with DL-22 loaded only). Ranks like per resident; not for trends.
+    deaths_per_100k_licensed_drivers is deaths.sum() { where: licensed_drivers is not null } / nullif(licensed_drivers.sum() / 100000, 0)
+    #" Motorcycle riders and passengers killed.
+    motorcyclist_deaths_total is motorcyclist_deaths.sum()
+    #" Motorcyclists killed per 100,000 residents.
+    motorcyclist_deaths_per_100k_residents is motorcyclist_deaths.sum() / nullif(population.sum() / 100000, 0)
+    #" Motorcyclists killed per 100,000 registered motorcycles (years with MV-1 only); registrations are not riders.
+    motorcyclist_deaths_per_100k_registered is motorcyclist_deaths.sum() { where: registered_motorcycles is not null } / nullif(registered_motorcycles.sum() / 100000, 0)
+    #" Registered motorcycles per 1,000 residents (years with MV-1 only).
+    motorcycles_per_1000_residents is registered_motorcycles.sum() / nullif(population.sum() { where: registered_motorcycles is not null } / 1000, 0)
+
+  #" Every state: deaths per resident, per mile, per registered vehicle and per licensed driver, and motorcyclists per resident and per registration; ranks per resident and per mile only.
+  view: rates_by_denominator is {
+    group_by: state_name
+    aggregate:
+      total_deaths, deaths_per_100k_residents, deaths_per_100m_vmt, deaths_per_10k_registered_vehicles, deaths_per_100k_licensed_drivers
+      motorcyclist_deaths_total, motorcyclist_deaths_per_100k_residents, motorcyclist_deaths_per_100k_registered, motorcycles_per_1000_residents
+      us_motorcycles_per_1000_residents is all(registered_motorcycles.sum()) / nullif(all(population.sum() { where: registered_motorcycles is not null }) / 1000, 0)
+      states_compared is all(count(state_name))
+    calculate:
+      r_res is rank() { order_by: deaths_per_100k_residents desc }
+      r_mi is rank() { order_by: deaths_per_100m_vmt desc }
+      r_moto is rank() { order_by: motorcyclist_deaths_per_100k_residents desc }
+  } -> {
+    select:
+      state_name, total_deaths, deaths_per_100k_residents
+      rank_per_resident is pick r_res when states_compared = 51 and total_deaths >= 30 else null
+      deaths_per_100m_vmt
+      rank_per_mile is pick r_mi when states_compared = 51 and total_deaths >= 30 else null
+      deaths_per_10k_registered_vehicles, deaths_per_100k_licensed_drivers, motorcyclist_deaths_total, motorcyclist_deaths_per_100k_residents
+      rank_motorcyclists_per_resident is pick r_moto when states_compared = 51 and motorcyclist_deaths_total >= 30 else null
+      motorcyclist_deaths_per_100k_registered, motorcycles_per_1000_residents, us_motorcycles_per_1000_residents, states_compared
+    order_by: state_name
+  }
+
+  #" Every state and year: change in VM-2 miles (vs US), registrations and licensed drivers beyond population, with the step labels; filter to the flagged rows.
+  view: denominator_steps is {
+    select:
+      state_name, `year`, miles_change, us_vmt_change, miles_step, prior_table_year
+      registrations_step_beyond_population
+      registrations_step is pick 'Not tested: no earlier table' when prior_registered_vehicles is null pick 'Stepped: 5%+ beyond population (FHWA estimate or method change)' when abs(registrations_step_beyond_population) >= 0.05 else 'No step'
+      licensed_drivers_step_beyond_population
+      licensed_drivers_step is pick 'Not tested: no earlier table' when prior_licensed_drivers is null pick 'Stepped: 5%+ beyond population (FHWA estimate or method change)' when abs(licensed_drivers_step_beyond_population) >= 0.05 else 'No step'
+    order_by: state_name, `year`
   }
 }
