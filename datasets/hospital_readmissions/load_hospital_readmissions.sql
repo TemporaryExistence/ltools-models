@@ -10,6 +10,12 @@
 -- Performance periods: FY 2026 rows (measure_results, hospitals) discharges 2021-07-01 to 2024-06-30, Medicare
 -- fee-for-service; FY 2027 payment rows 2023-07-01 to 2025-06-30, fee-for-service and Medicare Advantage.
 -- A local copy builds the same way: duckdb <dir>/ltools.duckdb -c ".read <this file>" (the database name must be ltools).
+-- Adjacent public files (downloaded 2026-10-23, CMS):
+--   fy2025/supplemental/508-Version-FR-FY-2025.csv (FY 2025 IPPS final rule HRRP supplemental file, discharges July 2020
+--     to June 2023, fee-for-service; https://www.cms.gov/files/zip/fy-2025-hospital-readmissions-reduction-program-supplemental-data-file.zip)
+--   ipps-impact-fy2026/FY 2026 IPPS Final Rule Impact File.txt (https://www.cms.gov/files/zip/fy2026-ipps-fr-impact-file.zip)
+--     and the FY 2026 final rule Tables 1A and 1B (national standardized amounts; constants below)
+--   hgi/Hospital_General_Information.csv (CMS Provider Data Catalog, Hospital General Information, July 2026 release)
 CREATE SCHEMA IF NOT EXISTS ltools.hospital_readmissions;
 
 CREATE OR REPLACE TEMP TABLE hrrp_file AS
@@ -35,6 +41,11 @@ CREATE OR REPLACE TEMP TABLE supp27_raw AS
 SELECT * FROM read_csv('fy2027/supplemental/FY2027_HRRP_Supplemental_File - FR FY 2027 Tab.txt', delim = '\t', skip = 1,
                        header = true, all_varchar = true, null_padding = true, quote = '"')
 WHERE trim("Hospital CCN") ~ '^[0-9A-Z]{6}$';
+-- FY 2025 supplemental file (comma-separated, same column names; no Table 15 loaded for FY 2025).
+CREATE OR REPLACE TEMP TABLE supp25_raw AS
+SELECT * FROM read_csv('fy2025/supplemental/508-Version-FR-FY-2025.csv', delim = ',', skip = 1, header = true,
+                       all_varchar = true, null_padding = true, quote = '"')
+WHERE trim("Hospital CCN") ~ '^[0-9A-Z]{6}$';
 CREATE OR REPLACE TEMP TABLE t15 AS
 SELECT 2026 AS fiscal_year, trim(column0) AS facility_id, TRY_CAST(trim(column1) AS DOUBLE) AS table15_factor
 FROM read_csv('table15/FY2026_HRRP_Table_15.txt', delim = '\t', header = false, skip = 3, all_varchar = true, null_padding = true)
@@ -44,13 +55,15 @@ SELECT 2027, trim(column0), TRY_CAST(trim(column1) AS DOUBLE)
 FROM read_csv('fy2027/table15/Section 508 version of FY2027_HRRP_Table_15.txt', delim = '\t', header = false, skip = 3, all_varchar = true, null_padding = true)
 WHERE trim(column0) ~ '^[0-9A-Z]{6}$';
 
--- Payment inputs, both fiscal years, one row per hospital per measure per year, every hospital in CMS's payment file
--- (FY 2026: 2,945, of which 8 have no row in the hospital file; FY 2027: 2,912).
+-- Payment inputs, three fiscal years, one row per hospital per measure per year, every hospital in CMS's payment file
+-- (FY 2025: 2,980; FY 2026: 2,945, of which 8 have no row in the hospital file; FY 2027: 2,912).
 CREATE OR REPLACE TEMP TABLE pay_long AS
 WITH s AS (
   SELECT 2026 AS fiscal_year, trim("Hospital CCN") AS facility_id, * FROM supp_raw
   UNION ALL BY NAME
   SELECT 2027 AS fiscal_year, trim("Hospital CCN") AS facility_id, * FROM supp27_raw
+  UNION ALL BY NAME
+  SELECT 2025 AS fiscal_year, trim("Hospital CCN") AS facility_id, * FROM supp25_raw
 ), u AS (
   SELECT fiscal_year, facility_id, 'AMI' AS measure, "Number of eligible discharges for AMI" AS d, "ERR for AMI" AS err, "Peer group median ERR for AMI" AS med, "Penalty indicator for AMI" AS pi, "DRG payment ratio for AMI" AS drg FROM s
   UNION ALL SELECT fiscal_year, facility_id, 'COPD', "Number of eligible discharges for COPD", "ERR for COPD", "Peer group median ERR for COPD", "Penalty indicator for COPD", "DRG payment ratio for COPD" FROM s
@@ -75,11 +88,33 @@ FROM hrrp_file GROUP BY 1;
 CREATE OR REPLACE TEMP TABLE prefix_state AS
 SELECT left(facility_id, 2) AS prefix, any_value(state) AS state FROM names GROUP BY 1;
 
+-- Estimated FY 2026 base operating DRG payments per hospital (CMS publishes none): transfer-adjusted Medicare cases
+-- (CASETA43, FY 2024 claims) x transfer-adjusted case mix (TACMIV43) x the FY 2026 national standardized amount for a
+-- hospital that reports quality data and is a meaningful EHR user (final rule Table 1A, wage index above 1: $4,456.72
+-- labor x wage index + $2,295.89 nonlabor; Table 1B otherwise: $4,186.62 x wage index + $2,565.99), nonlabor x the
+-- cost-of-living adjustment (Alaska, Hawaii). Leaves out the reduced update for hospitals that do not report, the
+-- hospital-specific rate of some sole community hospitals, and FY 2024 -> FY 2026 volume change: an estimate.
+CREATE OR REPLACE TEMP TABLE base_est AS
+WITH i AS (
+  SELECT trim("Provider Number") AS facility_id,
+    TRY_CAST(trim("FY 2026 Wage Index") AS DOUBLE) AS wi,
+    coalesce(TRY_CAST(trim("Cost of Living Adjustment") AS DOUBLE), 1) AS cola,
+    TRY_CAST(replace(trim(CASETA43), ',', '') AS DOUBLE) AS cases,
+    TRY_CAST(trim(TACMIV43) AS DOUBLE) AS cmi
+  FROM read_csv('ipps-impact-fy2026/FY 2026 IPPS Final Rule Impact File.txt', delim = '\t', skip = 1, header = true,
+                all_varchar = true, null_padding = true)
+  WHERE trim("Provider Number") ~ '^[0-9A-Z]{6}$'
+)
+SELECT facility_id, cases * cmi * (CASE WHEN wi > 1 THEN 4456.72 * wi + 2295.89 * cola ELSE 4186.62 * wi + 2565.99 * cola END) AS base_payments_est
+FROM i WHERE cases IS NOT NULL AND cmi IS NOT NULL AND wi IS NOT NULL;
+
 CREATE OR REPLACE TABLE ltools.hospital_readmissions.payment_hospitals AS
 WITH s AS (
   SELECT 2026 AS fiscal_year, * FROM supp_raw
   UNION ALL BY NAME
   SELECT 2027 AS fiscal_year, * FROM supp27_raw
+  UNION ALL BY NAME
+  SELECT 2025 AS fiscal_year, * FROM supp25_raw
 ), h AS (
   SELECT fiscal_year, trim("Hospital CCN") AS facility_id,
     TRY_CAST(trim("Payment adjustment factor") AS DOUBLE) AS payment_adjustment_factor,
@@ -91,21 +126,73 @@ WITH s AS (
 ), sc AS (
   SELECT fiscal_year, facility_id, count(*) FILTER (WHERE eligible_discharges >= 25 AND excess_readmission_ratio IS NOT NULL) AS scored_measures
   FROM pay_long GROUP BY 1, 2
+), up AS (
+  -- summed parts of the cut before the 3% cap, percentage points
+  SELECT fiscal_year, facility_id, sum(100 * drg_payment_ratio * (excess_readmission_ratio - peer_group_median_err)) FILTER (WHERE penalty_indicator) AS parts_no_nm
+  FROM pay_long GROUP BY 1, 2
+), j AS (
+  SELECT h.fiscal_year || '-' || h.facility_id AS hospital_year_key, h.*, n.facility_name,
+    coalesce(n.state, ps.state) AS state, n.facility_id IS NOT NULL AS in_hospital_file,
+    sc.scored_measures, t.table15_factor,
+    coalesce(h.neutrality_modifier * up.parts_no_nm, 0) AS cut_points_uncapped,
+    CASE WHEN h.fiscal_year = 2026 THEN b.base_payments_est END AS base_payments_est_fy2026
+  FROM h
+  LEFT JOIN names n USING (facility_id)
+  LEFT JOIN prefix_state ps ON ps.prefix = left(h.facility_id, 2)
+  LEFT JOIN sc USING (fiscal_year, facility_id)
+  LEFT JOIN t15 t USING (fiscal_year, facility_id)
+  LEFT JOIN up USING (fiscal_year, facility_id)
+  LEFT JOIN base_est b USING (facility_id)
 )
-SELECT h.fiscal_year || '-' || h.facility_id AS hospital_year_key, h.*, n.facility_name,
-  coalesce(n.state, ps.state) AS state, n.facility_id IS NOT NULL AS in_hospital_file,
-  sc.scored_measures, t.table15_factor
-FROM h
-LEFT JOIN names n USING (facility_id)
-LEFT JOIN prefix_state ps ON ps.prefix = left(h.facility_id, 2)
-LEFT JOIN sc USING (fiscal_year, facility_id)
-LEFT JOIN t15 t USING (fiscal_year, facility_id);
+-- penalty_dollar_tenth: FY 2026 penalized hospitals with a base estimate, tenths by estimated penalty dollars (1 = largest).
+SELECT j.*, CASE WHEN fiscal_year = 2026 AND payment_reduction_pct > 0 AND base_payments_est_fy2026 IS NOT NULL
+  THEN ntile(10) OVER (PARTITION BY (fiscal_year = 2026 AND payment_reduction_pct > 0 AND base_payments_est_fy2026 IS NOT NULL)
+                       ORDER BY payment_reduction_pct / 100 * base_payments_est_fy2026 DESC, facility_id) END AS penalty_dollar_tenth
+FROM j;
 
--- The hospital's neutrality modifier is repeated on each measure row so the cut formula reads one table.
+-- The hospital's neutrality modifier is repeated on each measure row so the cut formula reads one table. FY 2026 rows
+-- also carry the measure's estimated share of the hospital's penalty dollars: cut x base x part / summed parts (so a
+-- capped hospital's 3% is split in proportion to its parts).
 CREATE OR REPLACE TABLE ltools.hospital_readmissions.payment_measures AS
-SELECT p.fiscal_year || '-' || p.facility_id AS hospital_year_key, p.*, h.neutrality_modifier
+SELECT p.fiscal_year || '-' || p.facility_id AS hospital_year_key, p.*, h.neutrality_modifier,
+  CASE WHEN p.penalty_indicator AND h.cut_points_uncapped > 0 AND h.base_payments_est_fy2026 IS NOT NULL
+    THEN h.payment_reduction_pct / 100 * h.base_payments_est_fy2026
+         * (100 * h.neutrality_modifier * p.drg_payment_ratio * (p.excess_readmission_ratio - p.peer_group_median_err)) / h.cut_points_uncapped
+  END AS penalty_dollars_part_est
 FROM pay_long p
 JOIN ltools.hospital_readmissions.payment_hospitals h USING (fiscal_year, facility_id);
+
+-- Pairs of payment files for the same hospital: FY 2025/2026 share two discharge years (July 2021 to June 2023),
+-- FY 2026/2027 share one (July 2023 to June 2024), FY 2025/2027 share none. top_tenth_a/_b: the hospital is in the top
+-- tenth of cuts among hospitals in both files (ntile, ties broken by CCN).
+CREATE OR REPLACE TABLE ltools.hospital_readmissions.payment_file_pairs AS
+WITH p AS (
+  SELECT * FROM (VALUES (2025, 2026, 2), (2026, 2027, 1), (2025, 2027, 0)) t(fiscal_year_a, fiscal_year_b, shared_discharge_years)
+), b AS (
+  SELECT p.*, a.facility_id, coalesce(a.state, c.state) AS state, a.payment_reduction_pct AS cut_a, c.payment_reduction_pct AS cut_b
+  FROM p
+  JOIN ltools.hospital_readmissions.payment_hospitals a ON a.fiscal_year = p.fiscal_year_a
+  JOIN ltools.hospital_readmissions.payment_hospitals c ON c.fiscal_year = p.fiscal_year_b AND c.facility_id = a.facility_id
+)
+SELECT 'FY' || fiscal_year_a || ' to FY' || fiscal_year_b AS file_pair, *,
+  ntile(10) OVER (PARTITION BY fiscal_year_a, fiscal_year_b ORDER BY cut_a DESC, facility_id) = 1 AS top_tenth_a,
+  ntile(10) OVER (PARTITION BY fiscal_year_a, fiscal_year_b ORDER BY cut_b DESC, facility_id) = 1 AS top_tenth_b
+FROM b;
+
+-- Hospital General Information (Care Compare, July 2026): type, ownership, city, county and overall star rating.
+CREATE OR REPLACE TABLE ltools.hospital_readmissions.hospital_info AS
+SELECT trim("Facility ID") AS facility_id, trim("Facility Name") AS info_name, trim("City/Town") AS city,
+  trim("County/Parish") AS county, trim("State") AS info_state, trim("Hospital Type") AS hospital_type,
+  trim("Hospital Ownership") AS ownership,
+  CASE WHEN trim("Hospital Ownership") = 'Proprietary' THEN 'For-profit'
+       WHEN trim("Hospital Ownership") = 'Voluntary non-profit - Private' THEN 'Nonprofit, private'
+       WHEN trim("Hospital Ownership") LIKE 'Voluntary%' THEN 'Nonprofit, church or other'
+       WHEN trim("Hospital Ownership") LIKE 'Government%' THEN 'Government (state, local, district)'
+       WHEN trim("Hospital Ownership") = 'Physician' THEN 'Physician-owned'
+       ELSE 'Other (federal, tribal)' END AS ownership_group,
+  trim("Emergency Services") = 'Yes' AS emergency_services,
+  TRY_CAST(trim("Hospital overall rating") AS INTEGER) AS star_rating
+FROM read_csv('hgi/Hospital_General_Information.csv', all_varchar = true, header = true);
 
 -- FY 2026 -> FY 2027 chance baseline per FY 2026 measure (method and checks: outputs/ltp-part2/readmissions/fy2027/).
 -- The two periods share July 2023 to June 2024 fee-for-service discharges. If the hospital's true rate sat at its peer

@@ -1,8 +1,16 @@
-##" Medicare's Hospital Readmissions Reduction Program (CMS): 30-day readmissions for six conditions at about 3,000 US hospitals, discharges July 2021 to June 2024, with FY 2026 and FY 2027 payment cuts. For which hospitals and conditions have excess readmissions beyond chance, what they cost, and what drives each cut. Data: CMS public files (loaded 2026-10-22).
+##" Medicare's Hospital Readmissions Reduction Program (CMS): 30-day readmissions for six conditions at about 3,000 US hospitals, discharges July 2021 to June 2024, with FY 2025 to FY 2027 payment cuts. For which hospitals, states and conditions have excess readmissions beyond chance, what they cost, what drives each cut and what lasts. Data: CMS public files (loaded 2026-10-23).
 ## dataset { title="Hospital Readmissions (Medicare HRRP FY 2026)" }
 
 // Loaded by load_hospital_readmissions.sql into MotherDuck ltools.hospital_readmissions:
-//   measure_results (18,330 rows = 3,055 hospitals x 6 measures), hospitals (3,055 rows; 2,937 with a payment result).
+//   measure_results (18,330 rows = 3,055 hospitals x 6 measures), hospitals (3,055 rows; 2,937 with a payment result),
+//   payment_hospitals / payment_measures (FY 2025, 2026, 2027 payment files), payment_file_pairs, hospital_info (Care
+//   Compare Hospital General Information), spread_prior, null_selection. Sources of each file: header of the load SQL.
+
+#" One row per hospital in CMS's Hospital General Information file (Care Compare, July 2026): type, ownership, city, county, star rating.
+#(agent) Ownership and type describe the hospital today, not during the readmission periods; compare groups with `measure_results -> by_ownership` (actual against expected with hidden counts bounded), never with published rows only, which drops small hospitals.
+source: hospital_info is motherduck.table('hospital_readmissions.hospital_info') extend {
+  primary_key: facility_id
+}
 // Cost constant: $18,100 per readmission (AHRQ HCUP Statistical Brief #307, Medicare, 2020 dollars): the cost of the
 // hospital care a readmission uses, not what a hospital saves by avoiding one (Medicare pays a readmission as its own
 // stay: Medicare Claims Processing Manual, Pub. 100-04, ch. 3, sec. 40.2.5). Used in excess_cost_per_year and beyond_chance_cost_per_year_low/_high; sources in units/ltools/outputs/ltp-part2/readmissions/research.md.
@@ -10,9 +18,10 @@
 #" One row per hospital per FY 2026 payment result: CMS payment cut, dual-eligible share and peer group.
 #(agent) FY 2026 cuts were applied to discharges from October 2025 to September 2026 and are finished. FY 2027 cuts are in effect since 2026-10-01 on a different basis (two years, July 2023 to June 2025, Medicare Advantage patients added); FY 2027 payment results are in `payment_hospitals` and `payment_measures` (no FY 2027 readmission counts are published yet).
 #(agent) Maryland hospitals (43) and closed hospitals are not in the payment program: `in_payment_file` is false and the payment fields are null. Count penalized hospitals with `penalized_hospitals`, never as hospitals with an excess readmission ratio above 1.
-#(agent) `payment_reduction_pct` is a percent of the hospital's Medicare fee-for-service base operating DRG payments for every stay in FY 2026, not only readmission stays. CMS publishes no dollar penalty per hospital or in total for FY 2026; never state penalty dollars from this model. This source holds hospitals with a row in the hospital file (2,302 penalized); for CMS's published counts and denominators use `payment_hospitals -> program_counts`.
+#(agent) `payment_reduction_pct` is a percent of the hospital's Medicare fee-for-service base operating DRG payments for every stay in FY 2026, not only readmission stays. CMS publishes no dollar penalty per hospital or in total for FY 2026; for dollars use the estimate in `payment_hospitals` (`penalty_dollars_est`, rebuilt from the FY 2026 IPPS Impact File) and say it is an estimate. This source holds hospitals with a row in the hospital file (2,302 penalized); for CMS's published counts and denominators use `payment_hospitals -> program_counts`.
 source: hospitals is motherduck.table('hospital_readmissions.hospitals') extend {
   primary_key: facility_id
+  join_one: info is hospital_info on facility_id = info.facility_id
 
   dimension:
     #" Peer group in words: quintile of the share of stays by patients with both Medicare and full Medicaid.
@@ -60,9 +69,9 @@ source: hospitals is motherduck.table('hospital_readmissions.hospitals') extend 
   }
 }
 
-#" One row per hospital per measure per fiscal year (2026, 2027) from CMS's payment file: the inputs of the cut formula and each measure's share of the cut.
+#" One row per hospital per measure per fiscal year (2025, 2026, 2027) from CMS's payment files: the inputs of the cut formula and each measure's share of the cut.
 #(agent) CMS's cut = min(3%, neutrality modifier x sum over measures with the penalty flag of DRG payment ratio x (ERR - peer median ERR)) (42 CFR 412.154; CMS HRRP methodology slides). `cut_points` is one measure's part, in percentage points of the hospital's Medicare base operating DRG payments. Attribute a cut with `cut_points`, never by readmission count or ERR gap: a measure's weight is its DRG payment ratio.
-#(agent) FY 2026 counts discharges July 2021 to June 2024 (fee-for-service); FY 2027 counts July 2023 to June 2025 and adds Medicare Advantage stays, with a refitted risk model and new medians: the years are not like for like.
+#(agent) FY 2025 counts discharges July 2020 to June 2023, FY 2026 July 2021 to June 2024 (both fee-for-service, three years); FY 2027 counts July 2023 to June 2025 and adds Medicare Advantage stays, with a refitted risk model and new medians: the years are not like for like, and consecutive files share discharges (FY 2025 and FY 2026 two years, FY 2026 and FY 2027 one, FY 2025 and FY 2027 none), so year-to-year agreement is inflated; use `payment_file_pairs`.
 source: payment_measures is motherduck.table('hospital_readmissions.payment_measures') extend {
   dimension:
     #" Measure in words.
@@ -78,6 +87,9 @@ source: payment_measures is motherduck.table('hospital_readmissions.payment_meas
     scored is eligible_discharges >= 25 and excess_readmission_ratio is not null
     #" This measure's part of the cut, percentage points of base operating DRG payments (before the 3% cap): neutrality modifier x DRG payment ratio x (ERR - peer median) on measures with the penalty flag, else 0.
     cut_points_row is pick 100 * neutrality_modifier * drg_payment_ratio * (excess_readmission_ratio - peer_group_median_err) when penalty_indicator else 0
+    #" Scored measure's gap to its peer median weighted by eligible discharges (discharges x (ERR - peer median)); blank when not scored.
+    #(agent) Summed over a state it is the numerator of `payment_hospitals -> state_vs_peer_median`; its chance test must treat the hospital as the unit, because a hospital's measures move together.
+    gap_weighted_row is pick eligible_discharges * (excess_readmission_ratio - peer_group_median_err) when scored else null
   measure:
     #" Sum of measures' parts of the cut, percentage points, before the 3% cap. Per hospital and year: the cut is least(3, this).
     cut_points is cut_points_row.sum()
@@ -85,17 +97,49 @@ source: payment_measures is motherduck.table('hospital_readmissions.payment_meas
     penalized_measures is count() { where: penalty_indicator }
     #" Measures CMS scored.
     scored_measures_count is count() { where: scored }
+    #" Discharge-weighted gap to the peer median, summed over scored measures.
+    gap_weighted is gap_weighted_row.sum()
+    #" Eligible discharges on scored measures.
+    scored_discharges is eligible_discharges.sum() { where: scored }
+    #" Estimated FY 2026 penalty dollars from these measures (the hospital's cut x estimated base payments, split by each measure's part; a capped hospital's 3% split in proportion), US dollars a year.
+    #(agent) An estimate: CMS publishes no base payment per hospital, so the base is rebuilt from the FY 2026 IPPS Impact File (cases x case mix x national rate at the wage index); the national total is about $336M, with other reasonable bases $315M to $345M.
+    # currency
+    penalty_dollars_est is penalty_dollars_part_est.sum()
+
+  #" Hospital-measures CMS newly scored in FY 2027 (under 25 eligible discharges or absent in FY 2026, 25 or more in FY 2027), how many sit above the FY 2027 peer median, and how many stopped counting.
+  #(agent) FY 2027 eligible discharges are about 1.5 times FY 2026's because Medicare Advantage stays were added, so a hospital's measure list can change without any change in care: check which measures count before budgeting.
+  view: measures_newly_scored_fy2027 is {
+    group_by: facility_id, measure
+    aggregate:
+      scored_2026 is count() { where: fiscal_year = 2026 and scored }
+      scored_2027 is count() { where: fiscal_year = 2027 and scored }
+      in_file_2027 is count() { where: fiscal_year = 2027 }
+      above_median_2027 is count() { where: fiscal_year = 2027 and scored and excess_readmission_ratio > peer_group_median_err }
+  } -> {
+    aggregate:
+      newly_scored is count() { where: scored_2027 > 0 and scored_2026 = 0 }
+      newly_scored_above_median is count() { where: scored_2027 > 0 and scored_2026 = 0 and above_median_2027 > 0 }
+      stopped_counting is count() { where: scored_2026 > 0 and scored_2027 = 0 and in_file_2027 > 0 }
+  }
 }
 
-#" One row per hospital per fiscal year in CMS's payment file (2026: 2,945; 2027: 2,912): its cut, peer group and the cut rebuilt from the formula.
+#" One row per hospital per fiscal year in CMS's payment files (2025: 2,980; 2026: 2,945; 2027: 2,912): its cut, peer group, the cut rebuilt from the formula, and for FY 2026 estimated penalty dollars.
 #(agent) Use this source for counts of program, eligible and penalized hospitals: they equal CMS's published figures (`program_counts`). It includes the hospitals with no row in the hospital file (FY 2026: 8, 2 penalized; their state comes from the CCN prefix and their name is blank), so its FY 2026 penalized count is 2,304 where `measure_results` and `penalty_basis` give 2,302. The share penalized depends on the denominator: `penalized_share_of_eligible` (hospitals with a measure of 25+ discharges, CMS's final-rule basis, 82.4% in FY 2026) or `penalized_share_of_program` (78.2%, the share news reports quote).
 #(agent) A hospital at the 3% cap gains nothing from one measure's improvement until its summed parts fall below 3 (`cut_drivers`: `cut_without_measure`). CMS publishes no dollar cut per hospital; the cut is a percent of the hospital's base operating DRG payments for every Medicare fee-for-service stay that year.
 #(agent) Penalized in both years is what the any-one-measure rule gives often by chance: compare repeats at measure level with `measure_results -> repeat_fy2027`, which carries the chance baseline. Known limit: this model has no hospital-level chance baseline for `penalized_both_years`.
+#(agent) Dollars: CMS publishes no base operating DRG payment per hospital. `base_payments_est_fy2026` rebuilds it from the FY 2026 IPPS final rule Impact File (transfer-adjusted cases x case mix x the Table 1A/1B national rate at the hospital's wage index; FY 2024 volumes; no add-ons, no reduced update, no hospital-specific rates), so every dollar field is an estimate: about $336M for FY 2026 (0.39% of about $87B), other reasonable bases $315M to $345M. Rank hospitals for dollars by `penalty_dollars_est`, not by cut percent: the percent list is topped by small surgical hospitals.
 source: payment_hospitals is motherduck.table('hospital_readmissions.payment_hospitals') extend {
   primary_key: hospital_year_key
   join_many: measures is payment_measures on hospital_year_key = measures.hospital_year_key
+  join_one: info is hospital_info on facility_id = info.facility_id
 
   dimension:
+    #" Estimated FY 2026 penalty dollars for the hospital: cut / 100 x estimated base operating DRG payments (FY 2026 rows only).
+    #(agent) An estimate built from the Impact File, not a CMS figure; give it as about, with the national range $315M to $345M.
+    penalty_dollars_est_row is payment_reduction_pct / 100 * base_payments_est_fy2026
+    #" Estimated FY 2026 dollars the 3% cap forgives: (summed parts - 3) / 100 x estimated base, hospitals whose summed parts exceed 3.
+    #(agent) At the cap the file shows 3.00% and hides the uncapped sum (`cut_points_uncapped`); the first avoided readmissions there buy nothing until the sum falls below 3.
+    forgiven_by_cap_est_row is pick (cut_points_uncapped - 3) / 100 * base_payments_est_fy2026 when cut_points_uncapped > 3 else 0
     #" True when CMS could cut the hospital: at least one measure with 25 or more eligible discharges.
     eligible is scored_measures > 0
     #" Peer group in words: quintile of the share of stays by patients with both Medicare and full Medicaid.
@@ -128,6 +172,24 @@ source: payment_hospitals is motherduck.table('hospital_readmissions.payment_hos
     avg_payment_reduction_pct is payment_reduction_pct.avg()
     #" Cut rebuilt from the formula, least(3, summed parts of the penalized measures), percent; read it per hospital and fiscal year.
     cut_rebuilt_pct is least(3, measures.cut_points)
+    #" Estimated FY 2026 penalty dollars a year (cut x estimated base; filter fiscal_year = 2026).
+    #(agent) An estimate (Impact File base, about $336M nationally, range $315M to $345M), never a CMS figure, and not the hospital's loss on readmissions alone: the cut applies to every Medicare fee-for-service stay.
+    # currency
+    penalty_dollars_est is penalty_dollars_est_row.sum()
+    #" Estimated FY 2026 base operating DRG payments (Impact File rebuild).
+    # currency
+    base_payments_est is base_payments_est_fy2026.sum()
+    #" Cut weighted by estimated base payments, percent (FY 2026).
+    #(agent) The unweighted average cut (about 0.34%) counts a 20-bed hospital like a 1,000-bed one; the payment-weighted cut (about 0.39%) is the share of base payments withheld.
+    # percent
+    payment_weighted_cut is penalty_dollars_est / nullif(base_payments_est, 0)
+    #" Estimated FY 2026 dollars forgiven by the 3% cap.
+    # currency
+    forgiven_by_cap_est is forgiven_by_cap_est_row.sum()
+    #" Hospitals whose summed parts exceed the 3% cap.
+    hospitals_above_cap is count() { where: cut_points_uncapped > 3 }
+    #" Discharge-weighted gap to the peer median over scored measures (sum of discharges x (ERR - peer median) / sum of discharges).
+    gap_to_peer_median is measures.gap_weighted / nullif(measures.scored_discharges, 0)
 
   #" CMS's counts by fiscal year: program, eligible and penalized hospitals, shares on both denominators, hospitals at the cap and the average cut.
   view: program_counts is {
@@ -195,6 +257,155 @@ source: payment_hospitals is motherduck.table('hospital_readmissions.payment_hos
       penalized_both is count() { where: cut_2026 > 0 and cut_2027 > 0 }
     order_by: state
   }
+
+  #" FY 2026 penalized hospitals in tenths by estimated penalty dollars (1 = largest): hospitals, dollars and each tenth's share of the national total.
+  #(agent) Half the dollars sit on the top tenth; a list ranked by cut percent names small surgical hospitals that carry little money, so argue burden from this view, not from the percent list; read it unfiltered, since a filter on the tenth turns every share into 100%.
+  view: penalty_dollar_concentration is {
+    where: fiscal_year = 2026 and penalty_dollar_tenth is not null
+    group_by: penalty_dollar_tenth
+    aggregate:
+      penalized_hospitals
+      penalty_dollars_est
+      # percent
+      share_of_dollars is penalty_dollars_est / all(penalty_dollars_est)
+    order_by: penalty_dollar_tenth
+  }
+
+  #" FY 2026 hospitals with the largest estimated penalty dollars: cut, estimated base and dollars.
+  #(agent) Dollars are an estimate from the Impact File; the order differs from the cut-percent order because base payments differ about a hundredfold between hospitals.
+  view: top_penalty_dollars is {
+    where: fiscal_year = 2026 and payment_reduction_pct > 0 and base_payments_est_fy2026 is not null
+    group_by: facility_id, facility_name, state, payment_reduction_pct
+    aggregate: base_payments_est, penalty_dollars_est
+    order_by: penalty_dollars_est desc
+    limit: 25
+  }
+
+  #" Hospitals at the 3% cap by fiscal year: the uncapped sum of parts and, for FY 2026, the estimated dollars the cap forgives.
+  #(agent) The file shows 3.00% at the cap; the uncapped sum (up to about 12%) says how many avoided readmissions buy nothing before the cut moves, so value early improvement at a capped hospital at zero.
+  view: capped_hospitals is {
+    where: payment_reduction_pct >= 3
+    group_by: fiscal_year, facility_id, facility_name, state, cut_points_uncapped
+    aggregate: forgiven_by_cap_est
+    order_by: fiscal_year, cut_points_uncapped desc
+  }
+
+  #" Hospitals by FY 2025 cut band, with the band's mean cut in FY 2025, FY 2026 and FY 2027 (hospitals present in each file).
+  #(agent) The top band's cut roughly halves two files later whatever the hospitals did (regression to the mean; FY 2025 and FY 2027 share no discharges) and the no-cut band rises, so credit a program with a fall in cuts only against similar hospitals that did not run it.
+  view: cut_path_from_fy2025 is {
+    group_by: facility_id
+    aggregate:
+      cut_2025 is max(payment_reduction_pct) { where: fiscal_year = 2025 }
+      cut_2026 is max(payment_reduction_pct) { where: fiscal_year = 2026 }
+      cut_2027 is max(payment_reduction_pct) { where: fiscal_year = 2027 }
+  } -> {
+    where: cut_2025 is not null
+    group_by: fy2025_band is
+      pick '1: no cut' when cut_2025 = 0
+      pick '2: under 0.5%' when cut_2025 < 0.5
+      pick '3: 0.5-0.99%' when cut_2025 < 1
+      pick '4: 1-1.49%' when cut_2025 < 1.5
+      else '5: 1.5% or more'
+    aggregate:
+      hospitals is count()
+      mean_cut_fy2025 is cut_2025.avg()
+      mean_cut_fy2026 is cut_2026.avg()
+      mean_cut_fy2027 is cut_2027.avg()
+      under_half_pct_fy2027 is count() { where: cut_2027 < 0.5 }
+    order_by: fy2025_band
+  }
+
+  #" Hospitals with no scored measure in FY 2026 (or not in that file) and at least one in FY 2027: how many, how many were cut, their mean cut.
+  #(agent) Medicare Advantage stays in FY 2027 lift small hospitals over the 25-discharge line, so a first-ever cut can come from the new counting rule, not from worse care.
+  view: hospitals_newly_scored_fy2027 is {
+    group_by: facility_id
+    aggregate:
+      scored_2026 is max(scored_measures) { where: fiscal_year = 2026 }
+      scored_2027 is max(scored_measures) { where: fiscal_year = 2027 }
+      cut_2027 is max(payment_reduction_pct) { where: fiscal_year = 2027 }
+  } -> {
+    where: scored_2027 > 0 and (scored_2026 = 0 or scored_2026 is null)
+    aggregate:
+      hospitals is count()
+      cut_in_fy2027 is count() { where: cut_2027 > 0 }
+      mean_cut_if_cut is cut_2027.avg() { where: cut_2027 > 0 }
+  }
+
+  #" Each state's discharge-weighted gap to the peer median per fiscal year, with a standard error that treats the hospital as the unit, and z = gap / SE.
+  #(agent) A test on hospital-measure rows treats a hospital's measures as independent and overstates certainty (it would add New Jersey and Massachusetts as lasting high states); this test clusters by hospital. A lasting state gap can be patient mix or coding as well as care.
+  view: state_vs_peer_median is {
+    group_by: fiscal_year, state, facility_id
+    aggregate: g is measures.gap_weighted, w is measures.scored_discharges
+  } -> {
+    where: w > 0
+    group_by: state, fiscal_year
+    aggregate:
+      hospitals is count()
+      gap_to_peer_median is g.sum() / w.sum()
+      hospital_clustered_se is sqrt((sum(g * g) - 2 * (g.sum() / w.sum()) * sum(g * w) + (g.sum() / w.sum()) * (g.sum() / w.sum()) * sum(w * w)) * count() / nullif(count() - 1, 0)) / w.sum()
+    order_by: state, fiscal_year
+  }
+
+  #" States against the peer median in FY 2025 and FY 2027, files that share no discharges: each year's gap and z (hospital-clustered), and whether the state sits beyond two SEs on the same side in both.
+  #(agent) A state above in one file can be chance or the shared years; fund a statewide program where the state is above in both non-overlapping files, and not where it is below in both.
+  view: state_persistence is {
+    group_by: fiscal_year, state, facility_id
+    aggregate: g is measures.gap_weighted, w is measures.scored_discharges
+  } -> {
+    where: w > 0 and (fiscal_year = 2025 or fiscal_year = 2027)
+    group_by: state, fiscal_year
+    aggregate:
+      hospitals is count()
+      gap is g.sum() / w.sum()
+      se is sqrt((sum(g * g) - 2 * (g.sum() / w.sum()) * sum(g * w) + (g.sum() / w.sum()) * (g.sum() / w.sum()) * sum(w * w)) * count() / nullif(count() - 1, 0)) / w.sum()
+  } -> {
+    group_by: state
+    aggregate:
+      gap_fy2025 is max(gap) { where: fiscal_year = 2025 }
+      z_fy2025 is max(gap / se) { where: fiscal_year = 2025 }
+      gap_fy2027 is max(gap) { where: fiscal_year = 2027 }
+      z_fy2027 is max(gap / se) { where: fiscal_year = 2027 }
+      persistence is
+        pick 'Above in both, beyond two SEs' when max(gap / se) { where: fiscal_year = 2025 } > 2 and max(gap / se) { where: fiscal_year = 2027 } > 2
+        pick 'Below in both, beyond two SEs' when max(gap / se) { where: fiscal_year = 2025 } < -2 and max(gap / se) { where: fiscal_year = 2027 } < -2
+        else 'Not beyond two SEs on one side in both'
+    order_by: z_fy2027 desc
+  }
+}
+
+#" One row per hospital per pair of payment files (FY 2025 and FY 2026, FY 2026 and FY 2027, FY 2025 and FY 2027) for hospitals in both: the two cuts, the discharge years the pair shares, and top-tenth flags.
+#(agent) Consecutive files share discharge years (`shared_discharge_years`: FY 2025/2026 two, FY 2026/2027 one, FY 2025/2027 none), so their cuts agree partly because they count the same stays; judge whether penalties last from the pair that shares none.
+source: payment_file_pairs is motherduck.table('hospital_readmissions.payment_file_pairs') extend {
+  measure:
+    #" Hospitals in both files of the pair.
+    hospitals is count()
+    #" Pearson correlation of the hospital's cut between the two files.
+    #(agent) An adjacent-file correlation (0.77 for FY 2025/2026) reads as stable penalties but mostly reflects shared discharges; the pair sharing none correlates about 0.4.
+    cut_correlation is (count() * sum(cut_a * cut_b) - cut_a.sum() * cut_b.sum()) / sqrt((count() * sum(cut_a * cut_a) - cut_a.sum() * cut_a.sum()) * (count() * sum(cut_b * cut_b) - cut_b.sum() * cut_b.sum()))
+    #" Least-squares slope of the later cut on the earlier one (the later cut is about intercept + slope x the earlier cut).
+    #(agent) Budget a hospital's next cut with this regression toward the average, not at this year's cut.
+    next_cut_slope is (count() * sum(cut_a * cut_b) - cut_a.sum() * cut_b.sum()) / nullif(count() * sum(cut_a * cut_a) - cut_a.sum() * cut_a.sum(), 0)
+    #" Intercept of that line, percent.
+    next_cut_intercept is (cut_b.sum() - (count() * sum(cut_a * cut_b) - cut_a.sum() * cut_b.sum()) / nullif(count() * sum(cut_a * cut_a) - cut_a.sum() * cut_a.sum(), 0) * cut_a.sum()) / count()
+    #" Hospitals in the top tenth of cuts in the earlier file.
+    top_tenth_hospitals is count() { where: top_tenth_a }
+    #" Their mean cut in the earlier file, percent.
+    top_tenth_mean_cut_a is cut_a.avg() { where: top_tenth_a }
+    #" Their mean cut in the later file, percent.
+    #(agent) A top-tenth hospital keeps under half its distance from the average two files on; budget toward the average.
+    top_tenth_mean_cut_b is cut_b.avg() { where: top_tenth_a }
+    #" Of them, hospitals in the top tenth again in the later file.
+    top_tenth_stayed is count() { where: top_tenth_a and top_tenth_b }
+    #" Hospitals expected to stay in the top tenth if the two files were unrelated (top-tenth count x share in the later top tenth).
+    top_tenth_stay_by_chance is count() { where: top_tenth_a } * count() { where: top_tenth_b } / count()
+
+  #" Persistence of the cut for each pair of files: shared discharge years, correlation, regression line, and the top tenth followed into the later file against chance.
+  #(agent) Read the FY 2025 to FY 2027 row (no shared discharges) for how much of a cut lasts; the adjacent rows are inflated by the shared years.
+  view: cut_persistence is {
+    group_by: file_pair, shared_discharge_years
+    aggregate: hospitals, cut_correlation, next_cut_intercept, next_cut_slope, top_tenth_hospitals, top_tenth_mean_cut_a, top_tenth_mean_cut_b, top_tenth_stayed, top_tenth_stay_by_chance
+    order_by: shared_discharge_years desc
+  }
 }
 
 #" Prior for the per-hospital posterior: each measure's spread of true hospital ratios and the offset of their mean from expected (FY 2026 fit).
@@ -220,6 +431,8 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
   join_one: fy2027 is payment_measures on facility_id = fy2027.facility_id and measure = fy2027.measure and fy2027.fiscal_year = 2027
   join_one: prior is spread_prior on measure = prior.measure
   join_one: pay2027 is payment_hospitals on facility_id = pay2027.facility_id and pay2027.fiscal_year = 2027
+  join_one: fy2025 is payment_measures on facility_id = fy2025.facility_id and measure = fy2025.measure and fy2025.fiscal_year = 2025
+  join_one: pay2026h is payment_hospitals on facility_id = pay2026h.facility_id and pay2026h.fiscal_year = 2026
 
   dimension:
     #" Measure in words.
@@ -389,6 +602,20 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" The same in dollars per $100 million of the hospital's base operating DRG payments, per payment year on FY 2026's basis (one point of the cut is $1 million of $100 million); add each payment year whose period covers the discharge, about two payment years. A penalty change, not the hospital's net gain: Medicare also stops paying for the avoided stay.
     # currency
     penalty_dollars_per_avoided_per_100m is cut_points_per_avoided * 1000000
+    #" Estimated penalty dollars one avoided actual readmission removes per payment year at this hospital, FY 2026 basis: cut points per avoided readmission / 100 x the hospital's estimated base payments (Impact File rebuild). Same limits as `cut_points_per_avoided`.
+    #(agent) An estimate for one payment year: a discharge counts in about two payment years, nothing moves at the 3% cap, and Medicare also stops paying for the avoided stay, so this is not the hospital's net gain.
+    # currency
+    penalty_dollars_per_avoided_est is cut_points_per_avoided / 100 * pay2026h.base_payments_est_fy2026
+    #" Penalty relief per avoided readmission per payment year over the base payment of one stay in this condition, FY 2026 basis: 100 x neutrality modifier x reliability slope / (3 x expected rate %), penalized measures; blank for bypass surgery (CABG), where too many counts are hidden to place the slope. Independent of the dollar base.
+    #(agent) Below 1 the penalty relief from one avoided readmission is worth less than one stay's payment a year (COPD about 0.2 to 0.4, small measures about a quarter of large ones), so do not fund readmission work on penalty relief alone there; a discharge counts in about two payment years and the care cost avoided is a separate term.
+    relief_to_stay_payment_ratio is pick 100 * pay.neutrality_modifier * reliability_slope / (3 * expected_rate_pct) when penalty_indicator and measure != 'CABG' else null
+    #" Gap of CMS's ratio to the peer median in FY 2026 (ERR - peer median).
+    gap_to_median_fy2026 is excess_readmission_ratio - peer_group_median_err
+    #" Gap of CMS's ratio to the peer median in FY 2027 (July 2023 to June 2025, Medicare Advantage added), where scored.
+    #(agent) Hospitals picked as worst on FY 2026 keep only part of their gap in the next file even beyond chance (selection); compare FY 2027 with FY 2026 in `beyond_chance_next_file` before promising what a targeted program will remove.
+    gap_to_median_fy2027 is pick fy2027.excess_readmission_ratio - fy2027.peer_group_median_err when fy2027.scored else null
+    #" Gap of CMS's ratio to the peer median in FY 2025 (July 2020 to June 2023), where scored.
+    gap_to_median_fy2025 is pick fy2025.excess_readmission_ratio - fy2025.peer_group_median_err when fy2025.scored else null
     #" FY 2026 measure size band against a peer-median hospital, in binomial chance SDs, from the actual count; 'Count hidden' where the bounds give different bands.
     gap_band_fy2026 is
       pick null when median_var_row is null or not has_err
@@ -603,6 +830,18 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
     #" Same, upper bound (hidden counts at 10).
     # percent
     repeat_chance_share_max is repeat_chance_max.avg() { where: penalty_indicator and fy2027.scored }
+    #" Estimated FY 2026 penalty dollars a year from the measures in the group (each measure's share of its hospital's estimated dollars; hospitals in the hospital file).
+    #(agent) An estimate from the Impact File base (national about $336M, range $315M to $345M); count penalized rows and you get the opposite picture, since bypass and hip/knee rows are few but carry about a quarter of the dollars.
+    # currency
+    penalty_dollars_est is pay.penalty_dollars_part_est.sum()
+    #" Estimated FY 2026 penalty dollars a year per readmission above the peer median on CMS's estimate (three-year count), penalized rows with a dollar estimate.
+    #(agent) The formula prices a surgical readmission five to seven times a medical one (bypass about $108,000, heart failure about $16,000 a year per readmission above the median), because its weight is the DRG payment ratio; the denominator is CMS's shrunken three-year estimate, not readmissions that happened.
+    # currency
+    penalty_dollars_per_readmission_above_median is pay.penalty_dollars_part_est.sum() / nullif(readmissions_above_median_row.sum() { where: penalty_indicator and pay.penalty_dollars_part_est is not null }, 0)
+    #" Penalized rows with a relief ratio (all conditions but bypass surgery).
+    relief_rows is count() { where: relief_to_stay_payment_ratio is not null }
+    #" Mean relief per avoided readmission over one stay's payment, per payment year (penalized rows).
+    mean_relief_to_stay_payment is relief_to_stay_payment_ratio.avg()
 
   #" National totals by condition: discharges, expected and excess readmissions, cost, suppression.
   view: by_condition is {
@@ -742,6 +981,65 @@ source: measure_results is motherduck.table('hospital_readmissions.measure_resul
       gap_band_fy2026
     aggregate: penalized_rows, scored_fy2027, penalized_again_fy2027, penalized_again_share, repeat_chance_share_min, repeat_chance_share_max
     order_by: count_published desc, gap_band_fy2026
+  }
+
+  #" Actual readmissions against expected by hospital ownership (Hospital General Information), with hidden counts bounded at 0 and 10 and eligible discharges from CMS's payment file; filter by condition.
+  #(agent) Dropping hidden-count rows keeps only larger hospitals and makes the for-profit gap look wider and general; with the bounds the gap holds for heart failure and pneumonia only, so treat ownership as a weak prior, never a verdict on one hospital.
+  view: by_ownership is {
+    where: has_err and eligible_discharges is not null
+    group_by: ownership_group is hospital.info.ownership_group
+    aggregate: hospital_count, rows_with_err, rows_suppressed, expected_readmissions, actual_to_expected_min, actual_to_expected_max, weighted_err
+    order_by: ownership_group
+  }
+
+  #" Actual readmissions against expected by dual-eligible peer group (quintile of the share of stays by patients on both Medicare and Medicaid), hidden counts bounded; filter by condition.
+  #(agent) Higher rates in the high-dual groups are partly patient mix the risk model leaves out, which this file cannot separate from care, so do not read a safety-net hospital's higher rate as proof of worse care.
+  view: vs_expected_by_peer_group is {
+    where: has_err and eligible_discharges is not null and hospital.in_payment_file
+    group_by: hospital.peer_group_label
+    aggregate: hospital_count, rows_suppressed, expected_readmissions, actual_to_expected_min, actual_to_expected_max, weighted_err
+    order_by: peer_group_label
+  }
+
+  #" Hospital-measures above expected beyond chance in FY 2026, followed into the files before and after: mean gap of CMS's ratio to the peer median in FY 2025, FY 2026 and FY 2027 (rows scored in FY 2027), and the share of the FY 2026 gap left in FY 2027. Filter by state and condition.
+  #(agent) Rows picked as worst on FY 2026 carry upward luck, so their gap shrinks in the next file (to about 60% for Florida heart failure); size a targeted program on the FY 2027 gap, not the FY 2026 one, and note FY 2027 shares one discharge year with FY 2026.
+  view: beyond_chance_next_file is {
+    where: vs_expected_chance = 'Above expected, beyond chance' and fy2027.scored
+    group_by: condition
+    aggregate:
+      rows is count()
+      mean_gap_fy2025 is gap_to_median_fy2025.avg()
+      mean_gap_fy2026 is gap_to_median_fy2026.avg()
+      mean_gap_fy2027 is gap_to_median_fy2027.avg()
+      # percent
+      share_of_gap_kept is gap_to_median_fy2027.avg() / nullif(gap_to_median_fy2026.avg(), 0)
+    order_by: condition
+  }
+
+  #" Estimated FY 2026 penalty dollars by condition against CMS's estimated readmissions above the peer median: each condition's share of dollars and of readmissions, and dollars per readmission above the median.
+  #(agent) Counting penalized rows or readmissions makes bypass and hip/knee look small; in dollars they carry about a quarter of the penalty on about 7% of the readmissions above the median, so comment on price per readmission, not on counts.
+  view: penalty_dollars_by_condition is {
+    where: penalty_indicator
+    group_by: condition
+    aggregate:
+      penalized_rows
+      penalty_dollars_est
+      # percent
+      share_of_dollars is penalty_dollars_est / all(penalty_dollars_est)
+      readmissions_above_median
+      # percent
+      share_of_readmissions_above_median is readmissions_above_median / all(readmissions_above_median)
+      penalty_dollars_per_readmission_above_median
+    order_by: penalty_dollars_est desc
+  }
+
+  #" Penalty relief per avoided readmission over one stay's payment, per payment year, by condition and volume band (FY 2026 penalized measures; bypass surgery blank).
+  #(agent) The relief is weakest at small measures (CMS's shrinkage) and for COPD; a ratio under 1 means penalty relief alone does not repay one stay's payment in a year, and the figure rests on the reliability slope, which hidden counts make uncertain for hip/knee.
+  view: relief_per_avoided_by_condition is {
+    where: penalty_indicator and measure != 'CABG'
+    group_by: condition, reliability_band
+    aggregate: relief_rows, mean_relief_to_stay_payment
+    order_by: condition, reliability_band
   }
 }
 
