@@ -5,6 +5,6 @@ import "../index.malloy"
 // index.malloy (the same component is saved as an instance draft). Panels: true excess and its cost by condition
 // (F3), penalized hospitals' gaps against chance (F6), and a hospital lookup (default the Raleigh area).
 
-#" Medicare readmissions FY2026: the estimated true excess and its hospital cost by condition, which penalties chance and selection explain, and any hospital's gap against its chance band.
+#" Medicare readmissions FY2026: the estimated true excess and its cost of care by condition, which penalties chance and selection explain, and any hospital's gap against its chance band.
 # artifact { title="Medicare readmissions: the real excess, what it costs, and which penalties chance explains" } dashboard { columns=6 }
 query: readmissions_chance is measure_results -> true_excess_by_condition

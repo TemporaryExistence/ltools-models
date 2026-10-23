@@ -200,9 +200,10 @@ const RALEIGH_AREA = "340114,340069,340173,340030,340155,340061,340090";
 const r1 = (v) => (v == null || isNaN(Number(v)) ? "–" : (Math.round(Number(v) * 10) / 10).toFixed(1));
 const title = (s) => String(s || "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\bUnc\b/g, "UNC").replace(/\bEcu\b/g, "ECU").replace(/\bInc\b/g, "Inc.").replace(/\bWakemed\b/g, "WakeMed").replace(/\bCaromont\b/g, "CaroMont").replace(/\bFirsthealth\b/g, "FirstHealth");
 
-// Posterior probability the hospital is truly above its peer median (range when counts are hidden).
+// Posterior probability the hospital is truly above its peer median on its penalized heart attack, heart failure,
+// pneumonia and COPD measures (range when counts are hidden); hip/knee and bypass are not estimated.
 function probTxt(g) {
-  if (g.prob_above_median_min == null) return "–";
+  if (g.prob_above_median_min == null) return "Not estimated (hip/knee or bypass only)";
   const x = [N(g.prob_above_median_min), N(g.prob_above_median_max)].sort((p, q) => p - q);
   return x[1] - x[0] < 0.005 ? x[0].toFixed(2) : `${x[0].toFixed(2)} to ${x[1].toFixed(2)}`;
 }
@@ -265,7 +266,7 @@ export default function Dashboard() {
     aggregate:
       penalized_hospitals, hospitals_all_published, beyond_one_sd_binomial_fewest, beyond_one_sd_binomial_most,
       beyond_two_sd_binomial_fewest, beyond_two_sd_binomial_most, beyond_three_sd_binomial_fewest, beyond_three_sd_binomial_most,
-      share_truly_above_median_min, share_truly_above_median_max, real_share_of_gap_at_floor, real_share_of_gap_at_ceiling
+      share_truly_above_median_min, share_truly_above_median_max, real_share_of_gap_at_floor, real_share_of_gap_at_ceiling, hospitals_estimated
     nest: by_chance_band_binomial
   }` });
   const nullQ = useQuery({ malloy: `run: null_selection -> { aggregate: null_share_beyond_one, null_share_beyond_two, null_share_beyond_three }` });
@@ -302,7 +303,7 @@ export default function Dashboard() {
   const bandRows = bands.map((b) => ({ band: String(b.chance_band).replace(/^\d: /, "").replace("SD", "chance bands").replace("1 chance bands", "1 chance band"), n: N(b.penalized_hospitals), cut: N(b.avg_payment_reduction_pct) }));
 
   const condBars = React.useMemo(() => conds.flatMap((r) => [
-    { c: r.condition, grp: "Estimated true excess", v: N(r.true_excess_per_year) },
+    ...(r.true_excess_per_year == null ? [] : [{ c: r.condition, grp: "Estimated true excess", v: N(r.true_excess_per_year) }]),
     { c: r.condition, grp: "CMS's estimate", v: N(r.excess_readmissions_per_year) },
     { c: r.condition, grp: "Floor", v: Math.min(N(r.beyond_chance_binomial_per_year_min), N(r.beyond_chance_binomial_per_year_max)) },
   ]), [conds]);
@@ -349,30 +350,32 @@ export default function Dashboard() {
         Medicare's readmissions program cut FY2026 payments to hospitals whose patients came back within 30 days more
         often than at a typical peer hospital, on discharges from July 2021 to June 2024
         ({tot ? int(tot.hospital_count) : "–"} hospitals, {tot ? int(tot.discharges) : "–"} eligible stays). Readmissions are
-        valued at {cost ? money(cost) : "–"} each, the average hospital cost of a Medicare readmission in 2020. Only the true excess carries a
+        valued at {cost ? money(cost) : "–"} each, the average cost of the hospital care a Medicare readmission used in 2020. That is a
+        cost of care, not what a hospital saves: Medicare pays a readmission as its own stay. Only the true excess carries a
         dollar value; the penalty analysis shows where that excess is and is not visible.
       </p>
       <Status qs={[totQ]} />
 
       <div className="od-kpis">
         <div className="od-kpi"><div className="v">{tot ? int(tot.true_excess_per_year) : "–"}</div><div className="r">readmissions a year, estimated</div>
-          <div className="l">True excess at hospitals running above their patients' expected rate</div></div>
-        <div className="od-kpi"><div className="v">{tot ? shortMoney(tot.true_excess_cost_per_year) : "–"}</div><div className="r">a year, hospital cost, 2020 dollars</div>
-          <div className="l">What that excess costs</div></div>
+          <div className="l">True excess at hospitals running above their patients' expected rate (heart attack, heart failure, pneumonia, COPD)</div></div>
+        <div className="od-kpi"><div className="v">{tot ? shortMoney(tot.true_excess_cost_per_year) : "–"}</div><div className="r">a year, cost of care, 2020 dollars</div>
+          <div className="l">The hospital care that excess uses</div></div>
         <div className="od-kpi"><div className="v">{pen ? `${share(pen.beyond_two_sd_binomial_fewest, pen.penalized_hospitals)}-${share(pen.beyond_two_sd_binomial_most, pen.penalized_hospitals)}` : "–"}</div>
           <div className="r">chance and selection alone: {nul ? pct(nul.null_share_beyond_two) : "–"}</div>
           <div className="l">Penalized hospitals whose gap is beyond two chance bands</div></div>
         <div className="od-kpi"><div className="v">{pen ? lohi(pen.real_share_of_gap_at_floor, pen.real_share_of_gap_at_ceiling) : "–"}</div><div className="r">estimated, the rest is chance and selection</div>
-          <div className="l">Share of penalized hospitals' measured gaps that is a real difference</div></div>
+          <div className="l">Share of penalized hospitals' measured gaps that is a real difference (four conditions)</div></div>
       </div>
 
       <section className="od-card">
         <p className="tag">1 · True excess by condition</p>
-        <h2>About {tot ? int(tot.true_excess_per_year) : "–"} readmissions a year above expected, most of them pneumonia and heart failure</h2>
+        <h2>About {tot ? int(tot.true_excess_per_year) : "–"} readmissions a year above expected on four conditions, most of them pneumonia and heart failure</h2>
         <p>
           Hospital rates spread around their patients' expected rates by more than chance alone would give. If that spread
           holds at every volume and is roughly normal, hospitals whose true rate is above expected have about {tot ? int(tot.true_excess_per_year) : "–"} excess
-          readmissions a year, {tot && hfpn ? pct(hfpn / N(tot.true_excess_per_year)) : "–"} of them pneumonia and heart failure.
+          readmissions a year on heart attack, heart failure, pneumonia and COPD, {tot && hfpn ? pct(hfpn / N(tot.true_excess_per_year)) : "–"} of them pneumonia and heart failure.
+          Hip/knee replacement and bypass surgery are not estimated: their ratio changes with hospital size, so one centre does not hold.
           That is above CMS's own shrunken estimate ({tot ? int(tot.excess_readmissions_per_year) : "–"}) and above a hard floor:
           actual readmissions above expected exceed what chance alone gives by at least
           {tot ? ` ${int(Math.min(N(tot.beyond_chance_binomial_per_year_min), N(tot.beyond_chance_binomial_per_year_max)))} to ${int(Math.max(N(tot.beyond_chance_binomial_per_year_min), N(tot.beyond_chance_binomial_per_year_max)))}` : " –"} a year.
@@ -382,9 +385,11 @@ export default function Dashboard() {
           <div><Chart spec={specs.cond} data={condBars} /></div>
           <div className="od-tablewrap">
             <table>
-              <thead><tr><th>Condition</th><th>True excess a year</th><th>Range for the condition</th><th>Hospital cost a year</th></tr></thead>
+              <thead><tr><th>Condition</th><th>True excess a year</th><th>Range for the condition</th><th>Cost of care a year</th></tr></thead>
               <tbody>{conds.map((r) => (
-                <tr key={r.condition}><td>{r.condition}</td><td>{int(r.true_excess_per_year)}</td>
+                r.true_excess_per_year == null
+                  ? <tr key={r.condition}><td>{r.condition}</td><td className="wrap" colSpan={3}>Not estimated: ratio changes with hospital size</td></tr>
+                  : <tr key={r.condition}><td>{r.condition}</td><td>{int(r.true_excess_per_year)}</td>
                   <td>{int(r.true_excess_per_year_low)}-{int(r.true_excess_per_year_high)}</td><td>{shortMoney(r.true_excess_cost_per_year)}</td></tr>
               ))}</tbody>
             </table>
@@ -393,14 +398,14 @@ export default function Dashboard() {
         <p className="act">
           For a quality improvement organization or health system planning readmission work: put transitional-care support
           into pneumonia and heart failure first, and track heart failure mortality alongside.
-          Valued: {tot ? money(tot.true_excess_cost_per_year) : "–"} a year of hospital cost.
+          Valued: {tot ? money(tot.true_excess_cost_per_year) : "–"} a year of hospital care.
         </p>
         <Chips items={[
           "Estimate assumes the national spread holds at every volume",
           "Which of pneumonia and heart failure is larger is not settled",
           "The spread includes patient mix the risk model misses",
-          "Hip/knee and bypass: weak, most counts hidden",
-          "Hospital cost, not Medicare payment",
+          "Hip/knee and bypass: not estimated, ratio changes with hospital size",
+          "Cost of care, not Medicare payment or hospital saving",
         ]} />
       </section>
 
@@ -414,7 +419,8 @@ export default function Dashboard() {
           hospitals, {pen ? `${int(pen.beyond_two_sd_binomial_fewest)} to ${int(pen.beyond_two_sd_binomial_most)}` : "–"} are
           beyond two (the range comes from counts CMS hides when they are 10 or fewer). Too small to tell is not the same as
           caused by chance: an estimate from the spread in panel 1 puts {pen ? lohi(pen.share_truly_above_median_min, pen.share_truly_above_median_max) : "–"} of
-          penalized hospitals above their peer median in underlying rate, with {pen ? lohi(pen.real_share_of_gap_at_floor, pen.real_share_of_gap_at_ceiling) : "–"} of the
+          the {pen ? int(pen.hospitals_estimated) : "–"} hospitals penalized on heart attack, heart failure, pneumonia or COPD above their peer median on those
+          measures in underlying rate, with {pen ? lohi(pen.real_share_of_gap_at_floor, pen.real_share_of_gap_at_ceiling) : "–"} of the
           measured gap real. Bigger gaps did draw bigger cuts.
         </p>
         <Status qs={[penQ, nullQ]} />
@@ -430,7 +436,7 @@ export default function Dashboard() {
         </div>
         <p className="act">
           For a hospital deciding whether to chase its penalty: if the gap is inside two chance bands, fund readmission
-          work on its own value ({cost ? money(cost) : "–"} each), not to remove the cut. For a hospital association
+          work on the care it avoids ({cost ? money(cost) : "–"} of hospital care each), not to remove the cut. For a hospital association
           commenting on CMS's next payment rule: ask CMS to penalize only gaps beyond an interval.
           No separate dollar value: these counts move with the chosen cut-off. The money is the excess in panel 1.
         </p>
@@ -459,7 +465,7 @@ export default function Dashboard() {
         {chartRows.length > 0 && <Chart spec={specs.lookup} data={chartRows} />}
         <div className="od-tablewrap">
           <table>
-            <thead><tr><th>Hospital</th><th>FY2026 cut</th><th className="hide-sm">Penalized on</th><th className="hide-sm">CMS's estimate above median</th><th>Actual above median</th><th>Chance band (1 SD)</th><th>Against chance</th><th>Probability the underlying rate is above the median</th></tr></thead>
+            <thead><tr><th>Hospital</th><th>FY2026 cut</th><th className="hide-sm">Penalized on</th><th className="hide-sm">CMS's estimate above median</th><th>Actual above median</th><th>Chance band (1 SD)</th><th>Against chance</th><th>Probability the underlying rate is above the median (heart attack, heart failure, pneumonia, COPD)</th></tr></thead>
             <tbody>{picked.map(({ id, h, g }) => {
               if (!g) return (<tr key={id}><td>{title(h.facility_name)} ({h.state})</td><td>{h.payment_reduction_pct == null ? "–" : N(h.payment_reduction_pct).toFixed(2) + "%"}</td><td className="wrap" colSpan={6}>No FY2026 readmissions cut</td></tr>);
               const vd = verdict(g);
@@ -482,14 +488,14 @@ export default function Dashboard() {
         <dl>
           <dt>Hospital results</dt><dd>CMS Hospital Readmissions Reduction Program, FY2026 hospital file: each hospital's readmission ratio, predicted and expected rates and counts for heart attack, heart failure, pneumonia, COPD, bypass surgery and hip/knee replacement. <a href="https://www.cms.gov/medicare/payment/prospective-payment-systems/acute-inpatient-pps/hospital-readmissions-reduction-program-hrrp" target="_blank" rel="noopener noreferrer">cms.gov</a></dd>
           <dt>Payment cuts</dt><dd>CMS FY2026 IPPS final rule, readmissions supplemental file: eligible discharges, peer group, peer median and each hospital's cut. <a href="https://www.cms.gov/medicare/payment/prospective-payment-systems/acute-inpatient-pps/archived-supplemental-data-files/fy-2026-ipps-final-rule-hospital-readmissions-reduction-program-supplemental-data-file" target="_blank" rel="noopener noreferrer">cms.gov</a></dd>
-          <dt>Cost per readmission</dt><dd>{cost ? money(cost) : "–"}: average hospital cost of a Medicare readmission, 2020 (AHRQ HCUP Statistical Brief #307). A hospital cost, not a Medicare payment, and the same for every condition. <a href="https://hcup-us.ahrq.gov/reports/statbriefs/sb307-readmissions-2020.jsp" target="_blank" rel="noopener noreferrer">hcup-us.ahrq.gov</a></dd>
+          <dt>Cost per readmission</dt><dd>{cost ? money(cost) : "–"}: average cost of the hospital care a Medicare readmission used, 2020 (AHRQ HCUP Statistical Brief #307). A cost of care, the same for every condition; not a Medicare payment and not what a hospital saves, since Medicare pays a readmission as its own stay (Medicare Claims Processing Manual, chapter 3, section 40.2.5). <a href="https://hcup-us.ahrq.gov/reports/statbriefs/sb307-readmissions-2020.jsp" target="_blank" rel="noopener noreferrer">hcup-us.ahrq.gov</a></dd>
         </dl>
         <h3>Definitions</h3>
         <dl>
           <dt>Expected</dt><dd>Readmissions the hospital's own patients would have at an average hospital (CMS's risk adjustment).</dd>
           <dt>CMS's estimate</dt><dd>Discharges times the gap between CMS's predicted and expected rates. CMS pulls small hospitals toward average, so this understates actual counts.</dd>
           <dt>Chance band</dt><dd>One standard deviation of the readmissions a peer-median hospital would have on the same stays, from sampling alone.</dd>
-          <dt>True excess</dt><dd>Readmissions above expected at hospitals whose underlying rate is above expected, estimated from how widely hospital rates spread beyond chance.</dd>
+          <dt>True excess</dt><dd>Readmissions above expected at hospitals whose underlying rate is above expected, estimated from how widely hospital rates spread beyond chance. Heart attack, heart failure, pneumonia and COPD only.</dd>
           <dt>Floor</dt><dd>Actual readmissions above expected minus what chance alone gives. A lower bound, not an estimate.</dd>
         </dl>
         <h3>Limits</h3>
