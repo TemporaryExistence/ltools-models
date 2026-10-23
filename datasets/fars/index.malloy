@@ -3102,9 +3102,9 @@ source: two_vehicle_crashes is motherduck.table('fars.two_vehicle_crashes') exte
     #" Deaths in the other vehicle per death in this one.
     other_vehicle_deaths_per_own_death is other_deaths / nullif(own_deaths, 0)
     #" Lower end of the 95% interval on that ratio.
-    ratio_low_95 is exp(ln(other_deaths / nullif(own_deaths, 0)) - 1.96 * sqrt(1 / nullif(other_deaths, 0) + 1 / nullif(own_deaths, 0)))
+    ratio_low_95 is exp(ln(nullif(other_deaths, 0) / nullif(own_deaths, 0)) - 1.96 * sqrt(1 / nullif(other_deaths, 0) + 1 / nullif(own_deaths, 0)))
     #" Upper end of the 95% interval on that ratio.
-    ratio_high_95 is exp(ln(other_deaths / nullif(own_deaths, 0)) + 1.96 * sqrt(1 / nullif(other_deaths, 0) + 1 / nullif(own_deaths, 0)))
+    ratio_high_95 is exp(ln(nullif(other_deaths, 0) / nullif(own_deaths, 0)) + 1.96 * sqrt(1 / nullif(other_deaths, 0) + 1 / nullif(own_deaths, 0)))
     #" Whether the other vehicle's occupants die more than this vehicle's, beyond chance.
     other_vs_own is pick 'Too few deaths to test' when own_deaths + other_deaths < 10 pick 'Not tested: no deaths on one side' when own_deaths = 0 or other_deaths = 0 pick 'Other vehicle higher, beyond chance' when ratio_low_95 > 1 pick 'This vehicle higher, beyond chance' when ratio_high_95 < 1 else 'Within chance'
 
