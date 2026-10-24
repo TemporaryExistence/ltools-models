@@ -36,7 +36,7 @@ source: fast_vehicles is motherduck.table('fars.vehicles') extend {
     speed_known_n is count() { where: travel_speed_mph is not null and posted_speed_limit_mph is not null }
     fast_n is count() { where: over_limit_by_10 }
     // The vehicle's own FARS speeding flag (speeding-related as coded on the crash report). Flaw: an unknown flag
-    // counts as not speeding (Nebraska 2021-2024 32-38% unknown, Ohio 2022-2023 18-19%).
+    // counts as not speeding (Nebraska 2021-2024 30.8-38.0% unknown, Ohio 2022-2023 17.5-18.8%).
     flagged_n is count() { where: over_limit_by_10 and speeding_related }
     // Rest of the US in the same year, carried on each row so a state filter cannot break the comparison.
     rest_fast_n is all(count() { where: over_limit_by_10 }, `year`) - count() { where: over_limit_by_10 }
