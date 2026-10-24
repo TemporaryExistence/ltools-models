@@ -14,22 +14,38 @@
 // (one shared year) to 0.400 (none), so shared discharges explain part of the apparent stability; how much of the rest
 // is the rule change cannot be split with three files.
 // Hypotheses written before the queries: units/ltools/outputs/ltp-rubric/HYPOTHESES.md (work repo, commit 63719d76).
+//
+// This file stands alone: it reads two tables loaded by load_hospital_readmissions.sql from CMS's HRRP payment files
+// (FY 2025, FY 2026, FY 2027) and defines only what the headline uses. readmissions.malloy holds the full model for
+// deeper questions; the tests in the work repo (outputs/ltp-part2/headline-standalone) check that every figure here
+// equals the same figure computed from readmissions.malloy.
 
-import { payment_file_pairs, payment_hospital_row } from 'readmissions.malloy'
+// One row per hospital and fiscal year: the name, and how many measures CMS could score (25+ eligible discharges).
+// Flaw: a hospital with no scored measure cannot be cut, so a 0% cut there means "not eligible", not "did well".
+source: hospital_year is motherduck.table('hospital_readmissions.payment_hospitals') extend {
+  primary_key: hospital_year_key
+}
+
+// One row per hospital per pair of files it appears in (FY 2025/2026, FY 2026/2027, FY 2025/2027). The load SQL pairs
+// the files on CCN and sets top_tenth_a/_b: the hospital is in the top tenth of cuts among hospitals in both files
+// (ties broken by CCN). cut_a and cut_b are CMS's payment reduction percentages, capped at 3%.
+// Flaw: consecutive files share discharge years (FY 2025/2026 two, FY 2026/2027 one, FY 2025/2027 none), so their
+// cuts agree partly because they count the same stays (shared_discharge_years on each row).
+source: file_pairs is motherduck.table('hospital_readmissions.payment_file_pairs')
 
 // One row per hospital: how many file pairs it is in (3 = in all three payment files). Used as a join guard so a
 // comparison across pairs can be made on the same hospitals.
-source: files_per_hospital is payment_file_pairs -> {
+source: files_per_hospital is file_pairs -> {
   group_by: facility_id
   aggregate: pairs is count()
 }
 
 #" Do readmission penalties last? Views by file pair, cut band and state.
 #(agent) Grain: hospital x file pair (FY 2025/2026, FY 2026/2027, FY 2025/2027). Always group or filter by `file_pair`: a measure over all pairs mixes three comparisons. Judge persistence on FY 2025 to FY 2027, which shares no discharges.
-source: penalty_persistence is payment_file_pairs extend {
-  // Join guards: payment_hospital_row is one row per hospital and fiscal year, so each join matches at most one row.
-  join_one: earlier is payment_hospital_row on facility_id = earlier.facility_id and fiscal_year_a = earlier.fiscal_year
-  join_one: later is payment_hospital_row on facility_id = later.facility_id and fiscal_year_b = later.fiscal_year
+source: penalty_persistence is file_pairs extend {
+  // Join guards: hospital_year is one row per hospital and fiscal year, so the join matches at most one row;
+  // files_per_hospital is one row per hospital.
+  join_one: later is hospital_year on facility_id = later.facility_id and fiscal_year_b = later.fiscal_year
   join_one: files is files_per_hospital on facility_id = files.facility_id
 
   dimension:
@@ -50,6 +66,28 @@ source: penalty_persistence is payment_file_pairs extend {
       else '5: 1.5% or more'
 
   measure:
+    #" Hospitals in both files of the pair.
+    hospitals is count()
+    // Pearson correlation written out from sums, so it can be read and checked without a library function. An
+    // adjacent pair reads high mostly because of the shared discharges (flaw above).
+    #" Pearson correlation of the hospital's cut between the two files.
+    cut_correlation is (count() * sum(cut_a * cut_b) - cut_a.sum() * cut_b.sum()) / sqrt((count() * sum(cut_a * cut_a) - cut_a.sum() * cut_a.sum()) * (count() * sum(cut_b * cut_b) - cut_b.sum() * cut_b.sum()))
+    // Least-squares line of the later cut on the earlier one: the budgeting rule in the finding (0.217 + 0.427 x).
+    #" Least-squares slope of the later cut on the earlier one (the later cut is about intercept + slope x the earlier cut).
+    next_cut_slope is (count() * sum(cut_a * cut_b) - cut_a.sum() * cut_b.sum()) / nullif(count() * sum(cut_a * cut_a) - cut_a.sum() * cut_a.sum(), 0)
+    #" Intercept of that line, percent.
+    next_cut_intercept is (cut_b.sum() - (count() * sum(cut_a * cut_b) - cut_a.sum() * cut_b.sum()) / nullif(count() * sum(cut_a * cut_a) - cut_a.sum() * cut_a.sum(), 0) * cut_a.sum()) / count()
+    #" Hospitals in the top tenth of cuts in the earlier file.
+    top_tenth_hospitals is count() { where: top_tenth_a }
+    #" Their mean cut in the earlier file, percent.
+    top_tenth_mean_cut_a is cut_a.avg() { where: top_tenth_a }
+    #" Their mean cut in the later file, percent.
+    top_tenth_mean_cut_b is cut_b.avg() { where: top_tenth_a }
+    #" Of them, hospitals in the top tenth again in the later file.
+    top_tenth_stayed is count() { where: top_tenth_a and top_tenth_b }
+    // Chance baseline: if the two files were unrelated, the top tenth would keep about a tenth of its members.
+    #" Hospitals expected to stay in the top tenth if the two files were unrelated (top-tenth count x share in the later top tenth).
+    top_tenth_stay_by_chance is count() { where: top_tenth_a } * count() { where: top_tenth_b } / count()
     // Denominator for both means: every hospital in both files of the pair, penalized or not, so the means are the
     // "average" a top-tenth hospital regresses toward.
     #" Mean cut in the earlier file, percent, all hospitals in both files.

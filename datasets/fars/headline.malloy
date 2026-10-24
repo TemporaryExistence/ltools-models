@@ -11,16 +11,85 @@
 // coded before ranking it. Who acts: state highway safety
 // offices, NHTSA's FARS staff, anyone ranking states on speeding deaths.
 // Hypotheses written before the queries: units/ltools/outputs/ltp-rubric/HYPOTHESES.md (work repo, commit 63719d76).
+//
+// This file stands alone: it reads the two FARS tables it needs (fars.vehicles, fars.crashes in MotherDuck, loaded by
+// load_fars.sql from NHTSA's 2019-2024 FARS files) and defines only what the headline uses. fars.malloy holds the full
+// model for deeper questions; the tests in the work repo (outputs/ltp-part2/headline-standalone) check that every
+// figure here equals the same figure computed from fars.malloy.
 
-import { fast_vehicles_by_state_year, crashes_by_state_year } from 'fars.malloy'
+// One row per state and year from the vehicle file. Speed is a vehicle field, so the coding question is asked of
+// vehicles; the state comes from the crash the vehicle was in.
+source: fast_vehicles is motherduck.table('fars.vehicles') extend {
+  join_one: crash is motherduck.table('fars.crashes') extend { primary_key: crash_key } on crash_key = crash.crash_key
+  dimension:
+    // "Fast" = recorded travel speed 10+ mph over the posted limit. Null when either is blank, so a blank speed is
+    // never counted as fast or as not fast. 10 mph keeps clear of rounding in officers' speed estimates.
+    over_limit_by_10 is travel_speed_mph >= posted_speed_limit_mph + 10
+} -> {
+  group_by:
+    `year`
+    state_name is crash.state_name
+  aggregate:
+    vehicles_n is count()
+    // Flaw: travel speed is blank for about 60% of vehicles nationally (Texas records speed and limit for 7.0%, Florida
+    // 88.5%), so every share below is of the vehicles whose speed was written down, not of all vehicles.
+    speed_known_n is count() { where: travel_speed_mph is not null and posted_speed_limit_mph is not null }
+    fast_n is count() { where: over_limit_by_10 }
+    // The vehicle's own FARS speeding flag (speeding-related as coded on the crash report). Flaw: an unknown flag
+    // counts as not speeding (Nebraska 2021-2024 32-38% unknown, Ohio 2022-2023 18-19%).
+    flagged_n is count() { where: over_limit_by_10 and speeding_related }
+    // Rest of the US in the same year, carried on each row so a state filter cannot break the comparison.
+    rest_fast_n is all(count() { where: over_limit_by_10 }, `year`) - count() { where: over_limit_by_10 }
+    rest_flagged_n is all(count() { where: over_limit_by_10 and speeding_related }, `year`) - count() { where: over_limit_by_10 and speeding_related }
+}
+
+// One row per state and year from the crash file: deaths, and deaths in crashes the report flags speeding-related.
+source: deaths_by_state_year is motherduck.table('fars.crashes') -> {
+  group_by: `year`, state_name
+  aggregate:
+    // Deaths = sum of fatalities per crash (people killed within 30 days), never a count of crashes.
+    deaths_n is fatalities.sum()
+    speeding_n is fatalities.sum() { where: speeding_related }
+    // Deaths in crashes with any vehicle recorded 10+ mph over the limit: the count that does not depend on the flag.
+    fast_deaths_n is fatalities.sum() { where: vehicle_10_over_limit }
+}
 
 #" Speeding coding by state and year: of vehicles recorded 10+ mph over the limit, the share coded speeding, beside the speeding share of deaths.
 #(agent) Grain: state x year. Pool years with a where on `year`; every measure sums over the rows kept. Compare states only with 100+ fast vehicles in the years kept and speed and limit recorded for half or more of vehicles.
-source: speeding_coding is fast_vehicles_by_state_year extend {
-  // Join guard: both sources are one row per state and year, so join_one on both keys cannot fan out.
-  join_one: deaths_side is crashes_by_state_year on state_name = deaths_side.state_name and `year` = deaths_side.`year`
+source: speeding_coding is fast_vehicles extend {
+  // Join guard: both sides are one row per state and year, so join_one on both keys cannot fan out.
+  join_one: deaths_side is deaths_by_state_year on state_name = deaths_side.state_name and `year` = deaths_side.`year`
 
   measure:
+    #" Vehicles recorded 10+ mph over the limit.
+    vehicles_10_over is fast_n.sum()
+    #" Of those, vehicles FARS flags as speeding-related.
+    vehicles_10_over_flagged is flagged_n.sum()
+    // The coding rate: how often a vehicle the report itself shows as fast is coded speeding. Differences between
+    // states here are differences in coding, since every vehicle in the denominator was recorded fast.
+    #" Share of 10+-over vehicles flagged speeding-related.
+    # percent
+    flagged_share_of_10_over is vehicles_10_over_flagged / nullif(vehicles_10_over, 0)
+    // Wilson 95% interval: stays inside 0-100% and holds for small counts, unlike the plain normal interval.
+    #" Lower end of the Wilson 95% interval on the flagged share.
+    # percent
+    flagged_share_low_95 is (flagged_share_of_10_over + 1.9208 / nullif(vehicles_10_over, 0) - 1.96 * sqrt(flagged_share_of_10_over * (1 - flagged_share_of_10_over) / nullif(vehicles_10_over, 0) + 0.9604 / nullif(vehicles_10_over * vehicles_10_over, 0))) / (1 + 3.8416 / nullif(vehicles_10_over, 0))
+    #" Upper end of the Wilson 95% interval on the flagged share.
+    # percent
+    flagged_share_high_95 is (flagged_share_of_10_over + 1.9208 / nullif(vehicles_10_over, 0) + 1.96 * sqrt(flagged_share_of_10_over * (1 - flagged_share_of_10_over) / nullif(vehicles_10_over, 0) + 0.9604 / nullif(vehicles_10_over * vehicles_10_over, 0))) / (1 + 3.8416 / nullif(vehicles_10_over, 0))
+    #" The flagged share in the rest of the US, like for like.
+    # percent
+    rest_of_us_flagged_share is rest_flagged_n.sum() / nullif(rest_fast_n.sum(), 0)
+    // Two-proportion z test against the rest of the US (vehicles treated as independent; several fast vehicles in one
+    // crash share a report, so the test is a little generous).
+    z_flagged is (flagged_share_of_10_over - rest_of_us_flagged_share) / sqrt(nullif(((vehicles_10_over_flagged + rest_flagged_n.sum()) / nullif(vehicles_10_over + rest_fast_n.sum(), 0)) * (1 - ((vehicles_10_over_flagged + rest_flagged_n.sum()) / nullif(vehicles_10_over + rest_fast_n.sum(), 0))) * (1 / nullif(vehicles_10_over, 0) + 1 / nullif(rest_fast_n.sum(), 0)), 0))
+    #" Flagged share against the rest of the US: beyond chance or not.
+    flagged_share_vs_rest_of_us is pick 'Too few to test' when vehicles_10_over < 10 pick 'Not tested' when z_flagged is null pick 'Higher, beyond chance' when z_flagged > 1.96 pick 'Lower, beyond chance' when z_flagged < - 1.96 else 'Within chance'
+    // Coverage: the share of vehicles with both speed and limit recorded. Low coverage means the fast vehicles are a
+    // small sample whose selection depends on when officers write speed down.
+    #" Share of vehicles with both travel speed and posted limit recorded.
+    # percent
+    speed_and_limit_known_share is speed_known_n.sum() / nullif(vehicles_n.sum(), 0)
     // Denominator: vehicles with BOTH a recorded travel speed and a posted limit. Many states leave speed blank
     // (Texas records it for 7.0% of vehicles, Florida 88.5%), so a state's fast vehicles are a sample of its crashes
     // whose size and selection depend on how often officers record speed.
@@ -31,13 +100,13 @@ source: speeding_coding is fast_vehicles_by_state_year extend {
     // the flag rate (flagged_share_of_10_over) as well as with how fast people drive.
     #" Share of deaths in crashes FARS flags speeding-related.
     # percent
-    speeding_share_of_deaths is deaths_side.speeding_related_deaths / nullif(deaths_side.deaths, 0)
+    speeding_share_of_deaths is deaths_side.speeding_n.sum() / nullif(deaths_side.deaths_n.sum(), 0)
     #" Deaths.
-    deaths is deaths_side.deaths
+    deaths is deaths_side.deaths_n.sum()
     #" Deaths in crashes flagged speeding-related.
-    speeding_deaths is deaths_side.speeding_related_deaths
+    speeding_deaths is deaths_side.speeding_n.sum()
     #" Deaths in crashes with a vehicle recorded 10+ mph over the limit (the count that does not depend on the flag).
-    deaths_with_fast_vehicle is deaths_side.deaths_vehicle_10_over_limit
+    deaths_with_fast_vehicle is deaths_side.fast_deaths_n.sum()
 
   // Minimum count: views compare a state only with 100+ fast vehicles in the years kept. Under that, its flagged
   // share has a 95% interval wider than about +/- 10 points; it stays in the drill-down table.
