@@ -7,7 +7,7 @@
       "is": "duckdb",
       "databasePath": "md:ltools",
       "motherDuckToken": {
-        "env": "MOTHERDUCK_TOKEN"
+        "env": "LTOOLS_MOTHERDUCK_TOKEN"
       }
     }
   },
