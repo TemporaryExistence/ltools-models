@@ -53,9 +53,25 @@ source: ai_items is ai_items_base extend {
 }
 
 #" Eighteen claude.ai chats on a test server sized like staging (16 datasets, 153 sources, 25 dashboards), one row per chat.
-#(agent) 2026-10-28/29, Sonnet 5.5 (Medium), only the test connector on, the same nine requests in every chat (three questions, build a dashboard, four edits, one more question), made-up data. `version`: 'today' = Malloyyo 0.2.79 (6 chats; 3 of them ran on a server with small edits whose option claude.ai had not loaded, so Claude never saw it); 'small edits' = save_draft_dashboard takes find/replace edits (3); 'short list' = list_sources gives source names and dashboard titles only (6; 3 also had the unseen edits option); 'both' = small edits + short list (3). `written` = characters of visible text and tool calls Claude wrote (thinking is hidden by claude.ai). `reread_tokens` = estimated tokens of chat content re-read across the chat (characters x later model calls / 4); claude.ai's own instructions and tool list are not counted. `displays` = the saved dashboard opened in a browser with every requested change visible.
+#(agent) 2026-10-28/29, Sonnet 5.5 (Medium), only the test connector on, the same nine requests in every chat (three questions, build a dashboard, four edits, one more question), made-up data. `version`: 'today' = Malloyyo 0.2.79 (6 chats; 3 of them ran on a server with small edits whose option claude.ai had not loaded, so Claude never saw it); 'small edits' = save_draft_dashboard takes find/replace edits (3); 'short list' = list_sources gives source names and dashboard titles only (6; 3 also had the unseen edits option); 'both' = small edits + short list (3); 'trimmed list' (2026-10-29) = source descriptions kept, dashboards listed by title only (3). `written` = characters of visible text and tool calls Claude wrote (thinking is hidden by claude.ai). `reread_tokens` = estimated tokens of chat content re-read across the chat (characters x later model calls / 4); claude.ai's own instructions and tool list are not counted. `displays` = the saved dashboard opened in a browser with every requested change visible.
 source: trial_chats is trial_chats_base extend {
+  dimension:
+    #" Writing cost per chat in input-token units: written characters / 4 x 5 (output costs about five times an input token at API prices).
+    write_cost is written / 4 * 5
+    #" Rereading cost per chat in input-token units: estimated reread tokens x 0.1 (cache reads cost about a tenth of an input token).
+    reread_cost is reread_tokens * 0.1
+    #" Writing plus rereading cost per chat, in input-token units.
+    chat_cost is write_cost + reread_cost
   measure:
+    #" Average writing cost per chat.
+    write_cost_per_chat is write_cost.avg()
+    #" Average rereading cost per chat.
+    reread_cost_per_chat is reread_cost.avg()
+    #" Average total cost per chat.
+    cost_per_chat is chat_cost.avg()
+    #" Lowest and highest chat cost in the group.
+    cost_min is chat_cost.min()
+    cost_max is chat_cost.max()
     #" Chats in the group.
     chats is count()
     #" Average characters Claude wrote per chat.

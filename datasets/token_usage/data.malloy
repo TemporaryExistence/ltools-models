@@ -525,5 +525,8 @@ source: trial_chats_base is motherduck.sql("""SELECT * FROM (VALUES
     ('small edits', 'edits-v3', 17193, 2489, 400606, 44235, 25, 1, 3, 1),
     ('both', 'both-v1', 16373, 2600, 250299, 10405, 27, 1, 3, 1),
     ('both', 'both-v2', 19950, 2685, 228306, 10405, 25, 1, 3, 1),
-    ('both', 'both-v3', 17053, 2927, 203645, 10405, 26, 1, 3, 1)
+    ('both', 'both-v3', 17053, 2927, 203645, 10405, 26, 1, 3, 1),
+    ('trimmed list', 'trim-1', 29159, 15217, 427174, 37791, 27, 1, 0, 1),
+    ('trimmed list', 'trim-2', 35888, 19048, 385857, 37791, 24, 1, 0, 1),
+    ('trimmed list', 'trim-3', 34586, 19286, 355366, 37791, 23, 1, 0, 1)
   ) AS t(version, chat, written, edit_written, reread_tokens, list_chars, model_calls, describe_calls, small_saves, displays)""")
