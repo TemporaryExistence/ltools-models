@@ -1,4 +1,4 @@
-.claude/intent-ledger-*.log
+**/.claude/intent-ledger-*.log
 malloy-config-local.json
 # Local-only mirror of every dataset's data/ files (symlinks), so `malloyyo lint` (repo-root paths)
 # and the server (dataset-root paths) both resolve 'data/<file>'. See friction log F13.
