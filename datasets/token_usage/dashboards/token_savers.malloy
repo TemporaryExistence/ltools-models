@@ -1,0 +1,11 @@
+import "../tokens.malloy"
+
+// Drawn by token_savers.jsx. The question: "If I knew X about token use, I would do Y to save tokens in
+// Malloyyo dashboard chats." Round 2: eighteen claude.ai chats, four versions.
+
+#" Which Malloyyo changes save tokens in a dashboard chat: small edits and a shorter dataset list, tested in claude.ai together and apart.
+# artifact { title="Token savers: Malloyyo dashboard chats" } dashboard { columns=6 }
+query: token_savers_page is trial_chats -> {
+  group_by: version
+  aggregate: chats, written_per_chat, edit_written_per_chat, reread_per_chat, list_size, describes_per_chat, displayed
+}

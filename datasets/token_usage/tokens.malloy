@@ -1,0 +1,73 @@
+import "data.malloy"
+
+#" The real claude.ai chat on staging: one row per message block, its size and how many later model calls re-read it.
+#(agent) Chat: Sonnet 5.5 on claude.ai, staging connector only, Malloyyo 0.2.79, 2026-10-28: explore three questions, build a dashboard, four small edits, one question. Thinking is hidden by claude.ai and shows as 0 characters. claude.ai's own system prompt and tool list are not here (the same in every chat). `reread_tokens` = characters x later model calls / 4: an estimate, not a billed figure.
+source: chat_items is chat_items_base extend {
+  dimension:
+    #" Estimated tokens in the block (characters / 4).
+    tokens is chars / 4
+  measure:
+    #" Characters in the blocks.
+    total_chars is chars.sum()
+    #" Estimated tokens re-read because the block stays in the chat (characters x later model calls / 4).
+    reread_tokens is sum(chars * later_calls) / 4
+    #" Share of all estimated re-read tokens in the chat.
+    reread_share is reread_tokens / all(reread_tokens)
+}
+
+#" Laptop runs (Claude Code, Sonnet): one row per request, nine requests per chat, two chats per version.
+#(agent) `arm`: 'today' = Malloyyo 0.2.79; 'edits' = save_draft_dashboard takes find/replace edits; 'edits+lean' adds compact query results and guidance to run queries directly and not retype rows; 'guidance' = that guidance alone. `cost_usd` is Claude Code's API-price estimate and swings with cache writes; output tokens are the steadier comparison. Local synthetic orders data (3,000 rows).
+source: run_steps is run_steps_base extend {
+  measure:
+    #" Chats in the group.
+    chats is count(run)
+    #" Output tokens per chat (what Claude wrote).
+    output_per_chat is output.sum() / count(run)
+    #" Estimated dollars per chat at API prices (Claude Code's figure).
+    cost_per_chat is cost_usd.sum() / count(run)
+    #" Tokens read per chat, all kinds (fresh, cached, cache writes).
+    read_per_chat is sum(`input` + cache_read + cache_write) / count(run)
+}
+
+#" Laptop runs: one row per tool call (what Claude sent) or tool result (what came back), in characters.
+source: run_items is run_items_base extend {
+  measure:
+    #" Tool calls or results.
+    calls is count()
+    #" Average characters per call or result.
+    avg_chars is chars.avg()
+    #" Characters per chat.
+    chars_per_chat is chars.sum() / count(run)
+}
+
+#" Two claude.ai chats on a local Malloyyo test server, one per version: one row per message block, its size and how many later model calls re-read it.
+#(agent) 2026-10-28, Sonnet 5.5 (Medium), only the test connector on, the same nine requests as the laptop runs, made-up sales data. `arm`: 'today' = Malloyyo 0.2.79; 'changed' = small draft edits + lean query replies + guidance. One chat per version. The 'today' chat had the edits option still listed by claude.ai from an earlier connection; the server rejected two small saves before Claude resent the whole dashboard. Superseded by trial_chats. `written` = text or tool call Claude wrote (thinking is hidden by claude.ai). `edit_reply` = Claude's replies to the four edit requests. Re-read tokens are estimated as in chat_items.
+source: ai_items is ai_items_base extend {
+  measure:
+    #" Characters Claude wrote (visible text and tool calls).
+    written_chars is chars.sum() { where: written = 1 }
+    #" Characters Claude wrote in reply to the four edit requests.
+    edit_written_chars is chars.sum() { where: written = 1 and edit_reply = 1 }
+    #" Estimated tokens re-read because each block stays in the chat (characters x later model calls / 4).
+    reread_tokens is sum(chars * later_calls) / 4
+}
+
+#" Eighteen claude.ai chats on a test server sized like staging (16 datasets, 153 sources, 25 dashboards), one row per chat.
+#(agent) 2026-10-28/29, Sonnet 5.5 (Medium), only the test connector on, the same nine requests in every chat (three questions, build a dashboard, four edits, one more question), made-up data. `version`: 'today' = Malloyyo 0.2.79 (6 chats; 3 of them ran on a server with small edits whose option claude.ai had not loaded, so Claude never saw it); 'small edits' = save_draft_dashboard takes find/replace edits (3); 'short list' = list_sources gives source names and dashboard titles only (6; 3 also had the unseen edits option); 'both' = small edits + short list (3). `written` = characters of visible text and tool calls Claude wrote (thinking is hidden by claude.ai). `reread_tokens` = estimated tokens of chat content re-read across the chat (characters x later model calls / 4); claude.ai's own instructions and tool list are not counted. `displays` = the saved dashboard opened in a browser with every requested change visible.
+source: trial_chats is trial_chats_base extend {
+  measure:
+    #" Chats in the group.
+    chats is count()
+    #" Average characters Claude wrote per chat.
+    written_per_chat is written.avg()
+    #" Average characters Claude wrote in reply to the four edit requests.
+    edit_written_per_chat is edit_written.avg()
+    #" Average estimated tokens re-read per chat.
+    reread_per_chat is reread_tokens.avg()
+    #" Average characters of the dataset list.
+    list_size is list_chars.avg()
+    #" Average describe_source calls per chat.
+    describes_per_chat is describe_calls.avg()
+    #" Dashboards that displayed correctly.
+    displayed is displays.sum()
+}
