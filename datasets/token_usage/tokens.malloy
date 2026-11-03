@@ -52,7 +52,7 @@ source: ai_items is ai_items_base extend {
     reread_tokens is sum(chars * later_calls) / 4
 }
 
-#" Eighteen claude.ai chats on a test server sized like staging (16 datasets, 153 sources, 25 dashboards), one row per chat.
+#" Twenty-one claude.ai chats on a test server sized like staging (16 datasets, 153 sources, 25 dashboards), one row per chat.
 #(agent) 2026-10-28/29, Sonnet 5.5 (Medium), only the test connector on, the same nine requests in every chat (three questions, build a dashboard, four edits, one more question), made-up data. `version`: 'today' = Malloyyo 0.2.79 (6 chats; 3 of them ran on a server with small edits whose option claude.ai had not loaded, so Claude never saw it); 'small edits' = save_draft_dashboard takes find/replace edits (3); 'short list' = list_sources gives source names and dashboard titles only (6; 3 also had the unseen edits option); 'both' = small edits + short list (3); 'trimmed list' (2026-10-29) = source descriptions kept, dashboards listed by title only (3). `written` = characters of visible text and tool calls Claude wrote (thinking is hidden by claude.ai). `reread_tokens` = estimated tokens of chat content re-read across the chat (characters x later model calls / 4); claude.ai's own instructions and tool list are not counted. `displays` = the saved dashboard opened in a browser with every requested change visible.
 source: trial_chats is trial_chats_base extend {
   dimension:
@@ -86,4 +86,14 @@ source: trial_chats is trial_chats_base extend {
     describes_per_chat is describe_calls.avg()
     #" Dashboards that displayed correctly.
     displayed is displays.sum()
+}
+
+#" The trial_chats chats split into the parts of their cost: one row per chat and part, in input-token units.
+#(agent) `kind`: 'writing' = what Claude wrote (characters / 4 x 5); 'rereading' = one kind of chat content re-read on every later model call (estimated tokens x 0.1). The parts of one chat add up to its chat_cost in trial_chats. `part` names the content: dataset list (list_sources), data descriptions (describe_source), help pages (yo_help), query results, dashboard code sent (save calls), save replies, Claude's replies, your messages, other tool calls and results.
+source: trial_parts is trial_parts_base extend {
+  measure:
+    #" Chats in the group.
+    chats is count(chat)
+    #" Average cost of this part per chat, in input-token units.
+    cost_per_chat is cost.sum() / count(chat)
 }

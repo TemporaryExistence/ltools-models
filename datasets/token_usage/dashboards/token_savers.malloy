@@ -8,3 +8,17 @@ query: token_savers_page is trial_chats -> {
   group_by: version
   aggregate: chats, write_cost_per_chat, reread_cost_per_chat, cost_per_chat, cost_min, cost_max, list_size, displayed
 }
+
+#" Where each version's cost comes from: average cost per chat of each part, in input-token units.
+query: token_savers_parts is trial_parts -> {
+  group_by: version, kind, part
+  aggregate: chats, cost_per_chat
+  order_by: version, cost_per_chat desc
+}
+
+#" Every test chat, one row each: its cost and the counts behind it.
+query: token_savers_chats is trial_chats -> {
+  group_by: version, chat, model_calls, small_saves
+  aggregate: cost_per_chat, write_cost_per_chat, reread_cost_per_chat, written_per_chat, list_size, describes_per_chat
+  order_by: version, chat
+}
