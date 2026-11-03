@@ -1,0 +1,6 @@
+##" A wholesale supplier's orders, derived from the TPC-H benchmark (scale factor 1, generated locally by DuckDB's tpch extension): customers and suppliers in 25 nations and 5 regions, parts, which supplier offers which part, orders and their line items. Not comparable to published TPC-H results.
+## dataset { title="TPC-H (derived, scale factor 1)" }
+
+// Loaded into MotherDuck ltools.tpch from a locally generated file; the data itself is never committed (TPC EULA).
+import { region, nation, supplier, customer, part, partsupp, orders, lineitem } from 'tpch.malloy'
+export { region, nation, supplier, customer, part, partsupp, orders, lineitem }
