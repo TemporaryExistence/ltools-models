@@ -1,0 +1,44 @@
+##! experimental { givens }
+import "../index.malloy"
+
+// Drawn by readmissions_explorer.jsx: a state tile map shaded by CMS's estimate of net readmissions above expected
+// per 1,000 eligible discharges (`net_excess_per_1000`); click a state for its hospitals ranked by CMS's estimate of
+// net readmissions above expected per year (a count, as the model asks, not a ratio); click a hospital for its
+// conditions, CMS's predicted rate against the expected rate for the same patients at an average hospital.
+// Measures and definitions are the model's own (measure_results in readmissions.malloy). FY 2026 basis: discharges
+// July 2021 to June 2024, Medicare fee-for-service. Maryland is outside the payment program and has no eligible
+// discharges in the file, so its figures are blank.
+// FACILITY is set only by the component (hospital click) and is referenced only by rx_conditions, so the page shows
+// no control for it (F93). Two page requests: the map query first (small), then every hospital (about 3,000 rows,
+// under the 5,000 row cap), so the map draws before the larger list arrives; the dev server runs requests one at a time (F85, F94).
+
+given:
+  # label="Hospital (CMS facility ID)"
+  FACILITY :: filter<string> is f''
+
+#" Medicare readmissions by state and hospital (CMS HRRP, FY 2026 files): CMS's estimate of net readmissions above expected per 1,000 eligible discharges for the nation and every state.
+# artifact { title="Readmissions explorer" } dashboard { columns=6 }
+query: readmissions_explorer is measure_results -> {
+  aggregate: hospital_count, discharges, net_excess_per_1000, weighted_err, net_excess_readmissions_per_year
+  nest: by_state is {
+    group_by: state
+    aggregate: hospital_count, discharges, net_excess_per_1000, weighted_err, net_excess_readmissions_per_year
+    order_by: state
+  }
+}
+
+#" Every scored hospital (an excess readmission ratio and eligible discharges): CMS's estimate of net readmissions above expected per year and per 1,000 eligible discharges, and its penalized conditions (FY 2026). Run as a second request so the map draws first.
+query: rx_hospitals is measure_results -> {
+  where: has_err and eligible_discharges is not null
+  group_by: state, facility_id, facility_name
+  aggregate: discharges, net_excess_per_1000, net_excess_readmissions_per_year, penalized_rows
+  order_by: net_excess_readmissions_per_year desc
+}
+
+#" One hospital's conditions (FACILITY): eligible discharges, CMS's predicted and expected readmission rates, the excess readmission ratio against the peer-group median, and whether the measure is penalized (FY 2026).
+query: rx_conditions is measure_results -> {
+  where: facility_id ~ $FACILITY
+  group_by: facility_id, facility_name, state, condition, readmissions_status, excess_readmission_ratio, peer_group_median_err, penalty_indicator
+  aggregate: discharges, predicted_rate, expected_rate, net_excess_per_1000, net_excess_readmissions_per_year
+  order_by: condition
+}
