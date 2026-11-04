@@ -42,14 +42,54 @@ source: parts is motherduck.table('lego.parts') extend {
     part_count is count()
 }
 
+#" Per-set minifigure totals (version-1 inventories) used by `sets`; query `sets` instead.
+source: set_minifig_totals is motherduck.table('lego.inventory_minifigs') extend {
+  join_one: inv is motherduck.table('lego.inventories') on inventory_id = inv.id
+} -> {
+  where: inv.version = 1
+  group_by: set_num is inv.set_num
+  aggregate:
+    figures is quantity.sum()
+    designs is count(fig_num)
+}
+
+#" Per-set colour and piece totals (version-1 inventories, spares excluded) used by `sets`; query `sets` instead.
+source: set_color_totals is motherduck.table('lego.inventory_parts') extend {
+  join_one: inv is motherduck.table('lego.inventories') on inventory_id = inv.id
+} -> {
+  where: inv.version = 1 and is_spare = false
+  group_by: set_num is inv.set_num
+  aggregate:
+    colors is count(color_id)
+    pieces is quantity.sum()
+}
+
 #" One row per set: name, release year, theme and part count, for set sizes and theme trends since 1949.
 #(agent) `sets` includes books, gear, keychains and other products with 0-1 parts; filter `num_parts > 0` (or higher) when asking about building sets.
 #(agent) `theme.name` is the immediate theme; `theme.top_theme` rolls sub-themes up (e.g. "Star Wars Episode 4/5/6" to "Star Wars"). Themes nest at most two levels in this rollup.
 #(agent) Release years run to 2027 because Rebrickable lists announced sets. There are no prices anywhere in this data.
+#(agent) `minifigs_in_set` and `colors_in_set` come from each set's first inventory version. A bundle's minifigures sit in its sub-sets (`set_in_set`), not in the bundle. Minifigures began in 1978.
 source: sets is motherduck.table('lego.sets') extend {
   primary_key: set_num
   join_one: theme is themes on theme_id = theme.id
+  join_one: fig_totals is set_minifig_totals on set_num = fig_totals.set_num
+  join_one: color_totals is set_color_totals on set_num = color_totals.set_num
+  dimension:
+    #" Minifigures in the set (0 when none).
+    minifigs_in_set is coalesce(fig_totals.figures, 0)
+    #" Distinct colours the set uses (spares excluded); null when the set has no parts inventory.
+    colors_in_set is color_totals.colors
+    #" Release decade (1990 = 1990-1999).
+    decade is floor(`year` / 10) * 10
   measure:
+    #" Minifigures across sets.
+    minifig_count is source.sum(minifigs_in_set)
+    #" Average minifigures per set.
+    avg_minifigs_per_set is source.avg(minifigs_in_set)
+    #" Sets with at least one minifigure.
+    sets_with_minifigs is count() { where: minifigs_in_set > 0 }
+    #" Average distinct colours per set (sets with a parts inventory).
+    avg_colors_per_set is source.avg(colors_in_set)
     #" Number of sets.
     set_count is count()
     #" Total parts across sets (Rebrickable's num_parts, spares excluded).
@@ -62,6 +102,52 @@ source: sets is motherduck.table('lego.sets') extend {
     group_by: `year`
     aggregate: set_count, avg_parts_per_set
     order_by: `year`
+  }
+
+  #" Building sets (more than 0 parts) and their average size by decade.
+  view: by_decade is {
+    where: num_parts > 0
+    group_by: decade
+    aggregate: set_count, avg_parts_per_set, avg_minifigs_per_set, avg_colors_per_set
+    order_by: decade
+  }
+
+  #" The 25 sets with the most minifigures.
+  view: most_minifigs is {
+    group_by: set_num, name, `year`, theme.top_theme, num_parts
+    aggregate: minifig_count
+    order_by: minifig_count desc
+    limit: 25
+  }
+
+  #" The 25 sets using the most distinct colours.
+  view: most_colorful is {
+    where: colors_in_set is not null
+    group_by: set_num, name, `year`, theme.top_theme, num_parts, colors_in_set
+    order_by: colors_in_set desc
+    limit: 25
+  }
+
+  #" Minifigures per building set by year since 1978.
+  view: minifigs_by_year is {
+    where: num_parts > 0 and `year` >= 1978
+    group_by: `year`
+    aggregate: set_count, minifig_count, avg_minifigs_per_set
+    order_by: `year`
+  }
+
+  #" The 10 themes with the most minifigures, each with minifigures per set by year.
+  view: theme_minifigs_by_year is {
+    where: num_parts > 0 and `year` >= 1978
+    group_by: theme.top_theme
+    aggregate: minifig_count, avg_minifigs_per_set
+    nest: by_year is {
+      group_by: `year`
+      aggregate: avg_minifigs_per_set
+      order_by: `year`
+    }
+    order_by: minifig_count desc
+    limit: 10
   }
 
   #" Top-level themes by number of sets.
@@ -131,6 +217,17 @@ source: set_minifigs is motherduck.table('lego.inventory_minifigs') extend {
     figures is quantity.sum()
     #" Distinct minifigure designs.
     distinct_minifigs is count(fig_num)
+    #" Distinct sets these minifigures appear in.
+    sets_with_minifig is count(inventory.set_num)
+
+  #" The 25 minifigures found in the most sets (version-1 inventories).
+  view: most_common_minifigs is {
+    where: inventory.version = 1
+    group_by: minifig.fig_num, minifig.name
+    aggregate: sets_with_minifig, figures
+    order_by: sets_with_minifig desc
+    limit: 25
+  }
 }
 
 #" Smaller sets packed inside bigger sets (bundles and collections).
