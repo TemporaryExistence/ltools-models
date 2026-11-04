@@ -1,4 +1,4 @@
-##" Every athlete entry at the Summer and Winter Olympics, Athens 1896 to Rio 2016: sport, event, country (NOC and modern region), sex, age, height, weight and medal, for medal tables and participation trends. Athlete names are not loaded; use aggregates. Data: Olympic history 1896-2016 compiled by OlyMADMen / sports-reference, CC0 via TidyTuesday (2021-07-27), loaded 2026-10-08.
+##" Every athlete entry at the Summer and Winter Olympics, Athens 1896 to Rio 2016: sport, event, country (NOC and modern region), sex, age, height, weight and medal, for medal tables and participation trends. Athlete names are loaded (athlete_name), with per-athlete gold, silver and bronze counts and top-athlete views. Data: Olympic history 1896-2016 compiled by OlyMADMen / sports-reference, CC0 via TidyTuesday (2021-07-27), loaded 2026-10-08.
 ## dataset { title="Olympic History (1896 - 2016)" }
 
 // Loaded by load_olympics.sql into MotherDuck ltools.olympics (271,116 entries, 231 NOC codes).
@@ -11,20 +11,29 @@ source: regions is motherduck.table('olympics.regions') extend {
     noc_count is count()
 }
 
+#" One row per athlete id with the athlete's name as given in the source (accented letters stripped).
+source: athletes is motherduck.table('olympics.athletes') extend {
+  primary_key: athlete_id
+}
+
 #" One row per athlete per event per Games, 1896-2016: medal tables, participation by country, sport, sex and era.
 #(agent) Grain: one athlete in one event at one Games. A relay or team sport gives one row per team member.
 #(agent) For medal tables use `medals`, `golds`, `silvers`, `bronzes`: they count a team medal ONCE (deduplicated by Games, event, team and medal). `athlete_medals` counts every medalled athlete row and over-counts team events. Known limit of the dedup: two athletes from the same team winning the same medal in one individual event (e.g. two shared bronzes in boxing or judo) count once.
 #(agent) The data stops at Rio 2016 (Summer) and Sochi 2014 (Winter); there is nothing on Tokyo 2020 or later. 1906 Athens is included although the IOC no longer counts it. Art Competitions (1912-1948) appear as a sport; exclude `sport = 'Art Competitions'` for athletic medals only.
 #(agent) `noc` is the committee code at the time (URS, GDR, FRG all exist); group by `region.region` for a modern-country view. `team` can be a club or boat name (e.g. "United States-1") in early Games.
+#(agent) Per athlete use `athlete_golds`, `athlete_silvers`, `athlete_bronzes`, `athlete_medal_total`: they count every medal row, so a relay gold counts for each swimmer on the team. That is right for one athlete but over-counts a country; keep `golds`/`silvers`/`bronzes` (team medals once) for country totals. Group by `athlete_id` as well as `athlete_name`: names are not unique. Names come from the source with accented letters stripped (e.g. 'Ole Einar Bjrndalen').
 #(agent) Height and weight are missing for much of the early era; check `with_height` before comparing averages across eras. Do not rank or single out individual athletes' bodies.
 source: athlete_events is motherduck.table('olympics.athlete_events') extend {
   join_one: region is regions on noc = region.noc
+  join_one: athlete is athletes on athlete_id = athlete.athlete_id
 
   dimension:
     #" Decade of the Games, e.g. 1960.
     decade is floor(`year` / 10) * 10
     #" Medal key for team dedup: Games + event + team + medal (null when no medal).
     medal_key is concat(games, '|', event, '|', team, '|', medal)
+    #" Athlete's name as given in the source (accented letters stripped; not unique, pair with athlete_id).
+    athlete_name is athlete.name
 
   measure:
     #" Athlete entries (rows): one per athlete per event per Games.
@@ -47,6 +56,14 @@ source: athlete_events is motherduck.table('olympics.athlete_events') extend {
     bronzes is count(medal_key) { where: medal = 'Bronze' }
     #" Medalled athlete rows: every member of a medal team counts (over-counts team medals).
     athlete_medals is count() { where: medal is not null }
+    #" Gold medals per athlete: every medal row counts, so each relay or team member gets the medal. Use golds for country totals.
+    athlete_golds is count() { where: medal = 'Gold' }
+    #" Silver medals per athlete: every medal row counts. Use silvers for country totals.
+    athlete_silvers is count() { where: medal = 'Silver' }
+    #" Bronze medals per athlete: every medal row counts. Use bronzes for country totals.
+    athlete_bronzes is count() { where: medal = 'Bronze' }
+    #" All medals per athlete: every medal row counts. Use medals for country totals.
+    athlete_medal_total is count() { where: medal is not null }
     #" Share of distinct athletes who are women.
     # percent
     female_share is count(athlete_id) { where: sex = 'F' } / nullif(count(athlete_id), 0)
@@ -65,6 +82,28 @@ source: athlete_events is motherduck.table('olympics.athlete_events') extend {
     aggregate: golds, silvers, bronzes, medals
     order_by: golds desc
     limit: 30
+  }
+
+  #" Top medal winners by gold, then silver, then bronze. Add a filter such as noc = 'USA' or region.region = 'Russia' for one country.
+  view: top_athletes is {
+    where: medal is not null
+    group_by: athlete_id, athlete_name
+    aggregate: athlete_golds, athlete_silvers, athlete_bronzes, athlete_medal_total
+    order_by: athlete_golds desc, athlete_silvers desc, athlete_bronzes desc
+    limit: 25
+  }
+
+  #" Each Games' top 10 medal winners by gold, then silver, then bronze. Filter on games (e.g. '2008 Summer') for one Games.
+  view: games_top_athletes is {
+    group_by: games, `year`, season
+    order_by: `year` desc, season
+    nest: top_athletes is {
+      where: medal is not null
+      group_by: athlete_id, athlete_name, noc
+      aggregate: athlete_golds, athlete_silvers, athlete_bronzes, athlete_medal_total
+      order_by: athlete_golds desc, athlete_silvers desc, athlete_bronzes desc
+      limit: 10
+    }
   }
 
   #" Athletes, events and share of women at each Games.

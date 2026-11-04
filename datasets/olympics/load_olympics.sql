@@ -1,5 +1,5 @@
 -- Load the TidyTuesday 2021-07-27 Olympic history files into MotherDuck (ltools.olympics).
--- Run from units/ltools/public-data/olympics/raw. Athlete names are NOT loaded (aggregate use only).
+-- Run from units/ltools/public-data/olympics/raw. Athlete names load into a separate athletes table (one row per id).
 CREATE SCHEMA IF NOT EXISTS ltools.olympics;
 CREATE OR REPLACE TABLE ltools.olympics.athlete_events AS
 SELECT
@@ -23,5 +23,10 @@ SELECT "NOC" AS noc, region, nullif(notes, '') AS notes
 FROM read_csv('regions.csv', header=true, all_varchar=true);
 -- regions.csv lists Singapore as SIN, but the athlete file uses SGP (349 rows); add the mapping.
 INSERT INTO ltools.olympics.regions VALUES ('SGP', 'Singapore', 'Code used in the athlete file; regions.csv lists Singapore as SIN');
+-- One name per athlete id (checked: 135,571 ids, none with two names). The source strips accented letters (e.g. 'Bjrndalen').
+CREATE OR REPLACE TABLE ltools.olympics.athletes AS
+SELECT DISTINCT id::INTEGER AS athlete_id, name
+FROM read_csv('olympics.csv', header=true, all_varchar=true);
 SELECT 'athlete_events' t, count(*) FROM ltools.olympics.athlete_events
-UNION ALL SELECT 'regions', count(*) FROM ltools.olympics.regions;
+UNION ALL SELECT 'regions', count(*) FROM ltools.olympics.regions
+UNION ALL SELECT 'athletes', count(*) FROM ltools.olympics.athletes;
