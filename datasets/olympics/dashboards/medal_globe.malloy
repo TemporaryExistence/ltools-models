@@ -1,0 +1,62 @@
+##! experimental { givens }
+import "../index.malloy"
+
+// Drawn by medal_globe.jsx: a rotating orthographic globe with one glowing dot per modern country (region.region),
+// sized by the medals it won at the chosen Games. Medals are the model's `medals` / `golds` / `silvers` / `bronzes`
+// measures, which count a team medal once (deduplicated by Games, event, team and medal); `athlete_medals` is never
+// used. Countries are the model's modern regions (URS and RUS both show as Russia; GDR and FRG as Germany). Like the
+// model's own medal_table, Art Competitions (1912-1948) and 1906 Athens are included.
+// Two page requests: mg_games (every Games with each country's medals, about 1,650 nested rows) draws the globe and
+// the timeline; mg_sports (every country's medals by season and sport, about 1,300 rows) makes the country panel
+// instant. REGION is set only by the component (country click) and is used only by mg_country.
+
+given:
+  # label="Country (modern region)"
+  REGION :: filter<string> is f''
+
+#" Olympic medals by Games and country, 1896-2016 Summer and 1924-2014 Winter: medals, golds, silvers and bronzes per modern country at every Games, team medals counted once.
+# artifact { title="Medal globe" } dashboard { columns=6 }
+query: medal_globe is athlete_events -> {
+  group_by: season, `year`
+  aggregate: medals, events, nocs, athletes
+  nest: cities is {
+    group_by: city
+    aggregate: entries
+    order_by: entries desc
+  }
+  nest: by_region is {
+    where: medal is not null
+    group_by: region.region
+    aggregate: medals, golds, silvers, bronzes
+    order_by: medals desc
+  }
+  order_by: season, `year`
+}
+
+#" Every country's medals by season and sport, all Games, team medals counted once.
+query: mg_sports is athlete_events -> {
+  where: medal is not null
+  group_by: region.region, season, sport
+  aggregate: medals, golds, silvers, bronzes
+  order_by: medals desc
+}
+
+#" One country's (REGION) medals by Games and its most-medalled events, by season, team medals counted once; plus the athletes it sent to each Games.
+query: mg_country is athlete_events -> {
+  where: region.region ~ $REGION
+  group_by: region.region, season
+  aggregate: medals, golds, athletes, games_count
+  nest: over_time is {
+    group_by: `year`
+    aggregate: medals, golds, silvers, bronzes, athletes
+    order_by: `year`
+  }
+  nest: top_events is {
+    where: medal is not null
+    group_by: sport, event
+    aggregate: medals, golds, silvers, bronzes
+    order_by: medals desc, golds desc
+    limit: 6
+  }
+  order_by: season
+}

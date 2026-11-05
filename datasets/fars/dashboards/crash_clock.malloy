@@ -1,0 +1,58 @@
+##! experimental { givens }
+import "../index.malloy"
+
+// Drawn by crash_clock.jsx: a clock-face heatmap of US road deaths by hour and weekday (2019-2024, NHTSA FARS).
+// Clicking a cell maps every fatal crash in that hour of that weekday and compares its alcohol, speeding and pedestrian
+// shares (the model's own measures) with all hours. Two queries load everything up front, so a click needs no query:
+// each cell carries its crash positions as one string ("lat,lon;lat,lon;...", rounded to 0.01 degree, about 1 km),
+// which keeps 222,000 positions in 168 rows.
+
+#" US road deaths by weekday (FARS day_of_week_code, 1 = Sunday) and local hour, 2019-2024: deaths, fatal crashes,
+#" alcohol-impaired-driving share (NHTSA imputed) and speeding-related share per cell, national totals and shares, and
+#" each cell's crash positions. Crashes with an unknown hour are in the totals but on no cell. 2024 is NHTSA's Annual
+#" Report File, not final.
+# artifact { title="Road deaths by hour and place" } dashboard { columns=6 }
+# colspan=6
+query: cc_clock is crashes -> {
+  aggregate:
+    deaths
+    fatal_crashes
+    alcohol_impaired_share
+    speeding_related_share
+    hour_unknown_share
+    first_year is `year`.min()
+    last_year is `year`.max()
+  nest: cells is {
+    where: `hour` is not null
+    group_by: day_of_week_code, day_of_week, `hour`
+    aggregate:
+      deaths
+      fatal_crashes
+      alcohol_impaired_share
+      speeding_related_share
+      mapped_crashes is count() { where: latitude is not null and longitude is not null }
+      points is string_agg(concat(round(latitude, 2)::string, ',', round(longitude, 2)::string), ';') {
+        where: latitude is not null and longitude is not null
+      }
+    order_by: day_of_week_code, `hour`
+  }
+}
+
+#" Pedestrians killed (persons source) as a share of everyone killed, overall and for each weekday x hour of the crash.
+query: cc_peds is persons -> {
+  aggregate:
+    pedestrian_deaths
+    deaths
+    pedestrian_share_of_deaths
+  nest: cells is {
+    where: crashes.`hour` is not null
+    group_by:
+      day_of_week_code is crashes.day_of_week_code
+      `hour` is crashes.`hour`
+    aggregate:
+      pedestrian_deaths
+      deaths
+      pedestrian_share_of_deaths
+    order_by: day_of_week_code, `hour`
+  }
+}

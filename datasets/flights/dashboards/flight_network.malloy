@@ -1,0 +1,54 @@
+##! experimental { givens }
+import "../index.malloy"
+
+// Drawn by flight_network.jsx: a US map built from the airports' own coordinates (airport_list, OurAirports), with
+// every route as an arc. Clicking an airport shows its reliability and its busiest destinations. Two queries over the
+// fast summary sources, each one row with nests (tiles run one at a time and each run recompiles, so fewer is faster).
+
+#" National totals and every departure airport with its position and reliability, May-July 2026 (BTS reporting
+#" carriers): flights, flights a day (92 days), on-time rate (arrived under 15 minutes late, of operated flights),
+#" average arrival delay (minutes; early arrivals count as negative) and cancel rate.
+# artifact { title="Flight network: every route, every airport" } dashboard { columns=6 }
+# colspan=6
+query: nw_airports is delays_summary -> {
+  aggregate:
+    flight_count
+    per_day is flight_count / 92
+    airport_count
+    on_time_rate
+    avg_arrival_delay
+    cancel_rate
+  nest: airports is {
+    group_by:
+      origin
+      city is airport.origin_city
+      lat is airport.latitude
+      lon is airport.longitude
+    aggregate:
+      flight_count
+      per_day is flight_count / 92
+      on_time_rate
+      avg_arrival_delay
+      cancel_rate
+    order_by: flight_count desc
+  }
+}
+
+#" Every route out of every airport (routes_summary, May-July 2026): flights a day and late rate per destination,
+#" busiest first.
+query: nw_routes is routes_summary -> {
+  aggregate: route_count is count(concat(origin, dest))
+  nest: origins is {
+    group_by: origin
+    aggregate: flight_count
+    nest: dests is {
+      group_by: dest
+      aggregate:
+        flight_count
+        per_day is flight_count / 92
+        late_rate
+      order_by: flight_count desc
+    }
+    order_by: flight_count desc
+  }
+}
